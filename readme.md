@@ -35,8 +35,12 @@ sbt assembly
 3. Enable the extension in Otoroshi configuration:
 
 ```hocon
-otoroshi.admin-extensions.configurations.cloud-apim.extensions.Waf {
+otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
   enabled = true
+  integration {
+     max-cache-items = 10000
+     log = true
+  } 
 }
 ```
 
@@ -96,10 +100,10 @@ Two plugins are available:
    - Supports response body inspection
    - Can be used in blocking or monitoring mode
 
-2. **Cloud APIM WAF - Incoming Request Validator** (`IncomingRequestValidatorCloudApimWaf`): Lightweight plugin for access control
+2. **Cloud APIM WAF - Incoming Request Validator** (`IncomingRequestValidatorCloudApimWaf`): Global WAF plugin for Otoroshi
    - Only inspects incoming requests (no body inspection)
    - Always blocks on rule match
-   - Better performance for simple use cases
+   - Better performances for more traffic
 
 ### Adding to a Route
 
@@ -120,8 +124,21 @@ SecRuleEngine On
 You can also write custom rules:
 
 ```
+SecRule REQUEST_HEADERS:User-Agent "@pm firefox" "id:00001,phase:1,block,t:none,t:lowercase,msg:'someone used firefox to access',logdata:'someone used firefox to access',tag:'test',ver:'0.0.0-dev',status:403,severity:'CRITICAL'"
 SecRule REQUEST_URI "@contains /admin" "id:1001,phase:1,deny,status:403,msg:'Admin access denied'"
 SecRule ARGS "@rx <script>" "id:1002,phase:2,deny,status:403,msg:'XSS detected'"
+```
+
+or combine both
+
+```
+@import_preset crs
+
+SecRule REQUEST_HEADERS:User-Agent "@pm firefox" "id:00001,phase:1,block,t:none,t:lowercase,msg:'someone used firefox to access',logdata:'someone used firefox to access',tag:'test',ver:'0.0.0-dev',status:403,severity:'CRITICAL'"
+SecRule REQUEST_URI "@contains /admin" "id:1001,phase:1,deny,status:403,msg:'Admin access denied'"
+SecRule ARGS "@rx <script>" "id:1002,phase:2,deny,status:403,msg:'XSS detected'"
+
+SecRuleEngine On
 ```
 
 ## Analytics Events
