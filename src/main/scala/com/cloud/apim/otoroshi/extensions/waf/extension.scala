@@ -17,6 +17,7 @@ import otoroshi.next.plugins.api.NgPluginHttpRequest
 import otoroshi.security.IdGenerator
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimWafTrailEvent
 import play.api.libs.json.{JsArray, JsNull, JsValue, Json}
 import play.api.{Configuration, Logger}
 import play.api.mvc.{RequestHeader, Results}
@@ -65,7 +66,7 @@ class CloudApimWafIntegration(env: Env, configuration: Configuration) extends Se
   override def removeCachedProgram(key: String): Unit = cache.invalidate(key)
 
   override def audit(ruleId: Int, context: RequestContext, state: RuntimeState, phase: Int, msg: String, logdata: List[String]): Unit = {
-
+    CloudApimWafAuditEvent(ruleId, context, state, phase, msg, logdata).toAnalytics()(env)
   }
 }
 
@@ -139,12 +140,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |    return {
              |      id: extensionId,
              |      categories:[{
-             |        title: 'WAF Configs.',
+             |        title: 'Cloud APIM WAF',
              |        description: 'All the features provided by the Cloud APIM WAF extension',
              |        features: [
              |          {
-             |            title: 'WAF configs',
-             |            description: 'All your WAF configs',
+             |            title: 'Cloud APIM WAF configs',
+             |            description: 'All your Cloud APIM WAF configs',
              |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
              |            link: '/extensions/cloud-apim/waf/wafconfigs',
              |            display: () => true,
@@ -154,8 +155,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      }],
              |      features: [
              |        {
-             |          title: 'WAF configs',
-             |          description: 'All your WAF configs',
+             |          title: 'Cloud APIM WAF configs',
+             |          description: 'All your Cloud APIM WAF configs',
              |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
              |          link: '/extensions/cloud-apim/waf/wafconfigs',
              |          display: () => true,
@@ -164,8 +165,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      ],
              |      sidebarItems: [
              |        {
-             |          title: 'WAF configs',
-             |          text: 'All your WAF configs',
+             |          title: 'Cloud APIM WAF configs',
+             |          text: 'All your Cloud APIM WAF configs',
              |          path: 'extensions/cloud-apim/waf/wafconfigs',
              |          icon: 'atom'
              |        }
@@ -176,7 +177,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/wafconfigs`
              |          },
              |          env: React.createElement('span', { className: "fas fa-atom" }, null),
-             |          label: 'WAFs configs',
+             |          label: 'Cloud APIM WAFs configs',
              |          value: 'wafconfigs',
              |        }
              |      ],
@@ -227,12 +228,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
 }
 
 
-case class CloudApimWafAuditEvent(
-                                   block: Option[Disposition.Block],
-                                   events: List[MatchEvent],
-                                   request: NgPluginHttpRequest,
-                                   route: Option[NgRoute]
-                                 ) extends AnalyticEvent {
+case class CloudApimWafAuditEvent(ruleId: Int, context: RequestContext, state: RuntimeState, phase: Int, msg: String, logdata: List[String]) extends AnalyticEvent {
 
   override def `@service`: String            = "--"
   override def `@serviceId`: String          = "--"
@@ -253,10 +249,10 @@ case class CloudApimWafAuditEvent(
       "@serviceId" -> `@serviceId`,
       "@service"   -> `@service`,
       "@env"       -> "prod",
-      "events"     -> JsArray(events.map(e => e.json)),
-      "block"      -> block.map(_.json).getOrElse(JsNull).asValue,
-      "route"      -> route.map(_.json).getOrElse(JsNull).asValue,
-      "request"    -> request.json
+      "rule_id"     -> ruleId,
+      "phase"     -> phase,
+      "msg"     -> msg,
+      "logdata"     -> logdata,
     )
   }
 }

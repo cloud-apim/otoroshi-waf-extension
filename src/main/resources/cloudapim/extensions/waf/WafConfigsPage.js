@@ -1,26 +1,23 @@
 
-function input(type, label, props) {
-  return {
-    type: type,
-    props: { label: label, ...props },
-  };
-}
-
-class EventBrokerConnectionsPage extends Component {
+class WafConfigsPage extends Component {
 
   formSchema = {
     _loc: {
       type: 'location',
       props: {},
     },
-    id: { type: 'string', disabled: true, props: { label: 'Id', placeholder: '---' } },
+    id: {
+      type: 'string',
+      disabled: true,
+      props: { label: 'Id', placeholder: '---' }
+    },
     name: {
       type: 'string',
-      props: { label: 'Name', placeholder: 'My Awesome Provider' },
+      props: { label: 'Name', placeholder: 'My WAF Configuration' },
     },
     description: {
       type: 'string',
-      props: { label: 'Description', placeholder: 'Description of the Provider' },
+      props: { label: 'Description', placeholder: 'Description of the WAF configuration' },
     },
     metadata: {
       type: 'object',
@@ -30,81 +27,38 @@ class EventBrokerConnectionsPage extends Component {
       type: 'array',
       props: { label: 'Tags' },
     },
-    'kind': {
-      'type': 'select',
-      props: { label: 'Kind', possibleValues: [
-          { 'label': 'RabbitMQ', value: 'rabbitmq' },
-          { 'label': 'Kafka', value: 'kafka' },
-          { 'label': 'Pulsar', value: 'pulsar' },
-          { 'label': 'MQTT', value: 'mqtt' },
-          { 'label': 'Redis Pub/Sub', value: 'redis' },
-        ] }
+    enabled: {
+      type: 'bool',
+      props: { label: 'Enabled' },
     },
-    'settings': {
-      type: 'jsonobjectcode',
-      props: { label: 'Settings' },
+    block: {
+      type: 'bool',
+      props: { label: 'Block requests', help: 'Block requests when a rule matches' },
     },
-    'settings.servers': input('array', 'Server URIs'),
-    'settings.keyPass': input('password', 'Keystore/Truststore password'),
-    'settings.keystore': input('string', 'Keystore path'),
-    'settings.truststore': input('string', 'Truststore path'),
-    'settings.topic': input('string', 'Topic'),
-    'settings.hostValidation': input('bool', 'Hostname validation'),
-    'settings.mtlsConfig.mtls': input('bool', 'Custom TLS enabled'),
-    'settings.mtlsConfig.loose': input('bool', 'TLS loose'),
-    'settings.mtlsConfig.trustAll': input('bool', 'Trust all'),
-    'settings.mtlsConfig.certs': input('select', 'Client cert', {
-      placeholder: 'Choose a client certificate',
-      valuesFrom: '/bo/api/proxy/api/certificates',
-      transformer: (a) => ({
-        value: a.id,
-        label: a.name,
-      }),
-    }),
-    'settings.mtlsConfig.trustedCerts': input('select', 'Trusted certs', {
-      placeholder: 'Choose a trusted certificate',
-      valuesFrom: '/bo/api/proxy/api/certificates',
-      transformer: (a) => ({
-        value: a.id,
-        label: a.name,
-      }),
-     }),
-    'settings.securityProtocol': input('select', 'Security Protocol', { 
-      placeholder: 'Choose a security protocol',
-      possibleValues: [
-        { value: 'PLAINTEXT', label: "PLAINTEXT" },
-        { value: 'SSL', label: "SSL" },
-        { value: 'SASL_PLAINTEXT', label: "SASL_PLAINTEXT" },
-        { value: 'SASL_SSL', label: "SASL_SSL" },
-      ]
-    }),
-    'settings.saslConfig.username': input('string', 'Username'),
-    'settings.saslConfig.password': input('string', 'Password'),
-    'settings.saslConfig.mechanism': input('string', 'Auth. Mechanism'),
-    'settings.publisher_id': input('string', 'Publisher id'),
-    'settings.host': input('string', 'Host'),
-    'settings.port': input('number', 'Port'),
-    'settings.username': input('string', 'Username'),
-    'settings.password': input('string', 'Password'),
-    'settings.retained': input('bool', 'Retained'),
-    'settings.qos': input('number', 'Message QoS'),
-    'settings.uri': input('string', 'Server URI'),
-    'settings.tenant': input('string', 'Tenant'),
-    'settings.namespace': input('string', 'Namespace'),
-    'settings.auth.kind': input('select', 'Authentication kind', { 
-      possibleValues: [
-        { value: 'basic', label: "basic" },
-        { value: 'token', label: "token" },
-        { value: 'disabled', label: "disabled" },
-      ]
-     }),
-    'settings.auth.username': input('string', 'Username'),
-    'settings.auth.password': input('string', 'Password'),
-    'settings.uris': input('string', 'Server URIs'),
-    'settings.channel': input('string', 'Channel'),
-    'settings.virtual_host': input('string', 'Virtual host'),
-    'settings.queue': input('string', 'Queue name'),
-    'settings.routing_key': input('string', 'Routing key'),
+    inspect_input_body: {
+      type: 'bool',
+      props: { label: 'Inspect input body', help: 'Inspect the request body' },
+    },
+    inspect_output_body: {
+      type: 'bool',
+      props: { label: 'Inspect output body', help: 'Inspect the response body' },
+    },
+    input_body_limit: {
+      type: 'number',
+      props: { label: 'Input body limit', placeholder: '1024', suffix: 'bytes', help: 'Maximum size of the request body to inspect' },
+    },
+    output_body_limit: {
+      type: 'number',
+      props: { label: 'Output body limit', placeholder: '1024', suffix: 'bytes', help: 'Maximum size of the response body to inspect' },
+    },
+    output_body_mimetypes: {
+      type: 'array',
+      props: { label: 'Output body MIME types', placeholder: 'text/plain', help: 'MIME types to inspect in the response body' },
+    },
+    rules: {
+      type: 'array',
+      props: { label: 'Rules', placeholder: 'WAF rules to apply' },
+    },
   };
 
   columns = [
@@ -113,155 +67,75 @@ class EventBrokerConnectionsPage extends Component {
       filterId: 'name',
       content: (item) => item.name,
     },
-    { title: 'Kind', filterId: 'kind', content: (item) => item.kind },
+    {
+      title: 'Enabled',
+      filterId: 'enabled',
+      content: (item) => item.enabled ? 'Yes' : 'No',
+      style: { textAlign: 'center', width: 80 },
+    },
+    {
+      title: 'Block',
+      filterId: 'block',
+      content: (item) => item.block ? 'Yes' : 'No',
+      style: { textAlign: 'center', width: 80 },
+    },
   ];
 
-  formFlow = (state) => {
-    if (!state.kind) {
-      return [
-        '_loc',
-        'id',
-        'name',
-        'description',
-        '>>>Metadata and tags',
-        'tags',
-        'metadata',
-        '<<<Connection',
-        'kind',
-      ]
-    }
-    if (state.kind === "kafka") {
-      return [
-        '_loc',
-        'id',
-        'name',
-        'description',
-        '>>>Metadata and tags',
-        'tags',
-        'metadata',
-        '<<<Connection options',
-        'kind',
-        'settings.servers',
-        'settings.topic',
-        '>>>TLS',
-        'settings.keyPass',
-        'settings.keystore',
-        'settings.truststore',
-        'settings.hostValidation',
-        'settings.mtlsConfig.mtls',
-        'settings.mtlsConfig.loose',
-        'settings.mtlsConfig.trustAll',
-        'settings.mtlsConfig.certs',
-        'settings.mtlsConfig.trustedCerts',
-        '>>> Authentication',
-        'settings.securityProtocol',
-        'settings.saslConfig.username',
-        'settings.saslConfig.password',
-        'settings.saslConfig.mechanism',
-      ];
-    }
-    if (state.kind === "mqtt") {
-      return [
-        '_loc',
-        'id',
-        'name',
-        'description',
-        '>>>Metadata and tags',
-        'tags',
-        'metadata',
-        '<<<Connection options',
-        'kind',
-        'settings.publisher_id',
-        'settings.host',
-        'settings.port',
-        'settings.topic',
-        'settings.retained',
-        'settings.qos',
-        '>>>Authentication',
-        'settings.username',
-        'settings.password',
-      ];
-    }
-    if (state.kind === "pulsar") {
-      return [
-        '_loc',
-        'id',
-        'name',
-        'description',
-        '>>>Metadata and tags',
-        'tags',
-        'metadata',
-        '<<<Connection options',
-        'kind',
-        'settings.uri',
-        'settings.tenant',
-        'settings.namespace',
-        'settings.topic',
-        '>>>Authentication',
-        'settings.auth.kind',
-        'settings.auth.username',
-        'settings.auth.password',
-      ];
-    }
-    if (state.kind === "redis") {
-      return [
-        '_loc',
-        'id',
-        'name',
-        'description',
-        '>>>Metadata and tags',
-        'tags',
-        'metadata',
-        '<<<Connection options',
-        'kind',
-        'settings.uris',
-        'settings.channel',
-      ];
-    }
-    return [
-      '_loc',
-      'id',
-      'name',
-      'description',
-      '>>>Metadata and tags',
-      'tags',
-      'metadata',
-      '<<<Connection options',
-      'kind',
-      'settings.servers',
-      'settings.virtual_host',
-      'settings.queue',
-      'settings.routing_key',
-      '>>>Authentication',
-      'settings.username',
-      'settings.password',
-    ];
-  }
+  formFlow = [
+    '_loc',
+    'id',
+    'name',
+    'description',
+    '>>>Metadata and tags',
+    'tags',
+    'metadata',
+    '<<<Configuration',
+    'enabled',
+    'block',
+    '>>>Request inspection',
+    'inspect_input_body',
+    'input_body_limit',
+    '>>>Response inspection',
+    'inspect_output_body',
+    'output_body_limit',
+    'output_body_mimetypes',
+    '<<<Rules',
+    'rules',
+  ];
 
   componentDidMount() {
-    this.props.setTitle(`Event Broker Connections`);
+    this.props.setTitle(`WAF Configurations`);
   }
 
-  client = BackOfficeServices.apisClient('event-brokers.extensions.cloud-apim.com', 'v1', 'event-broker-connections');
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'waf-configs');
 
   render() {
     return (
       React.createElement(Table, {
         parentProps: this.props,
-        selfUrl: "extensions/cloud-apim/event-brokers/connections",
-        defaultTitle: "All event broker connections",
+        selfUrl: "extensions/cloud-apim/waf/wafconfigs",
+        defaultTitle: "All WAF configurations",
         defaultValue: () => {
           return {
-            id: 'connection_' + uuid(),
-            name: 'RabbitMQ connection',
-            description: 'An RabbitMQ connection',
+            id: 'waf-config_' + uuid(),
+            name: 'New WAF Configuration',
+            description: 'A new WAF configuration',
             tags: [],
             metadata: {},
-            kind: 'rabbitmq',
-            settings: {},
+            enabled: true,
+            block: true,
+            inspect_input_body: true,
+            inspect_output_body: true,
+            input_body_limit: null,
+            output_body_limit: null,
+            output_body_mimetypes: [],
+            rules: [
+              "@import_preset crs",
+              "SecRuleEngine On",
+            ],
           }
         },
-        itemName: "Event Broker Connection",
+        itemName: "WAF Configuration",
         formSchema: this.formSchema,
         formFlow: this.formFlow,
         columns: this.columns,
@@ -271,108 +145,15 @@ class EventBrokerConnectionsPage extends Component {
         deleteItem: this.client.delete,
         createItem: this.client.create,
         navigateTo: (item) => {
-          window.location = `/bo/dashboard/extensions/cloud-apim/event-brokers/connections/edit/${item.id}`
+          window.location = `/bo/dashboard/extensions/cloud-apim/waf/wafconfigs/edit/${item.id}`
         },
-        itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/event-brokers/connections/edit/${item.id}`,
+        itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/waf/wafconfigs/edit/${item.id}`,
         showActions: true,
         showLink: true,
         rowNavigation: true,
         extractKey: (item) => item.id,
         export: true,
-        kubernetesKind: "event-brokers.extensions.cloud-apim.com/EventBrokerConnection",
-        onStateChange: (state, oldState, update) => {
-          if (!_.isEqual(state.kind, oldState.kind)) {
-            if (state.kind === 'kafka') {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                kind: 'kafka',
-                settings: {
-                  'servers': ["127.0.0.1:9093"],
-                  'topic': 'topic',
-                  'securityProtocol': 'PLAINTEXT',
-                  saslConfig: {
-                    username: '',
-                    password: '',
-                    mechanism: 'PLAIN'
-                  }
-                },
-              });
-            } else if (state.kind === 'mqtt') {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                kind: 'mqtt',
-                settings: {
-                  'publisher_id': uuid(),
-                  'host': 'localhost',
-                  'port': 1883,
-                  'topic': 'topic',
-                  'username': '',
-                  'password': '',
-                  'qos': 0,
-                  'retained': true,
-                },
-              });
-            } else if (state.kind === 'pulsar') {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                kind: 'pulsar',
-                settings: {
-                  'uri': 'pulsar://localhost:6650',
-                  'tenant': 'tenant',
-                  'namespace': 'namespace',
-                  'topic': 'topic',
-                  'auth': {
-                    kind: 'basic',
-                    'username': '',
-                    'password': '',
-                  }
-                },
-              });
-            } else if (state.kind === 'redis') {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                kind: 'redis',
-                settings: {
-                  'uris': ['redis://username@password:localhost:6379'],
-                  'channel': '/',
-                },
-              });
-            } else {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                kind: 'rabbitmq',
-                settings: {
-                  'servers': ['localhost:5672'],
-                  'virtual_host': '/',
-                  'queue': 'queue',
-                  'routing_key': '',
-                  'username': '',
-                  'password': '',
-                },
-              });
-            }
-          }
-        }
+        kubernetesKind: "waf.extensions.cloud-apim.com/WafConfig",
       }, null)
     );
   }

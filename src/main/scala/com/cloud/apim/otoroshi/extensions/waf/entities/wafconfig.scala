@@ -66,8 +66,8 @@ object CloudApimWafConfig {
         block = json.select("block").asOpt[Boolean].getOrElse(true),
         inspectInputBody = json.select("inspect_input_body").asOpt[Boolean].getOrElse(true),
         inspectOutputBody = json.select("inspect_output_body").asOpt[Boolean].getOrElse(true),
-        inputBodyLimit = json.select("input_body_limit").asOpt[Long],
-        outputBodyLimit = json.select("output_body_limit").asOpt[Long],
+        inputBodyLimit = json.select("input_body_limit").asOpt[Long].filter(_ > 0L),
+        outputBodyLimit = json.select("output_body_limit").asOpt[Long].filter(_ > 0L),
         outputBodyMimetype = json.select("output_body_mimetypes").asOpt[Seq[String]].getOrElse(Seq.empty),
         rules = json.select("rules").asOpt[Seq[String]].getOrElse(Seq.empty),
       )

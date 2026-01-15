@@ -88,12 +88,30 @@ class CloudApimWaf extends NgRequestTransformer {
   override def transformsResponse: Boolean       = true
   override def transformsError: Boolean          = false
 
+  override def noJsForm: Boolean = true
+
+  override def configFlow: Seq[String] = Seq("ref")
+
+  override def configSchema: Option[JsObject] = Some(Json.obj(
+    "ref" -> Json.obj(
+      "type" -> "select",
+      "label" -> s"WAF Config.",
+      "props" -> Json.obj(
+        "optionsFrom" -> s"/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/waf-configs",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    )
+  ))
+
   def report(result: EngineResult, req: JsObject, route: NgRoute, blocking: Boolean)(implicit env: Env): Unit = {
     val b = result.disposition match {
       case Disposition.Continue => None
       case bl: Disposition.Block => Some(bl)
     }
-    CloudApimWafTrailEvent(b, result.events, req, route, blocking)
+    CloudApimWafTrailEvent(b, result.events, req, route, blocking).toAnalytics()
   }
 
   override def beforeRequest(
