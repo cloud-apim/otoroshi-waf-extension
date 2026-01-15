@@ -4,15 +4,18 @@ import akka.stream.Materializer
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.waf.entities.CloudApimWafConfig
 import com.cloud.apim.seclang.impl.engine.SecLangEngine
+import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.{Disposition, EngineResult, MatchEvent, RequestContext}
 import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.events.AnalyticEvent
 import otoroshi.next.models.NgRoute
 import otoroshi.next.plugins.api._
+import otoroshi.next.utils.JsonHelpers
 import otoroshi.security.IdGenerator
 import otoroshi.utils.http.RequestImplicits._
 import otoroshi.utils.syntax.implicits._
+import otoroshi.wasm.proxywasm.{NgCorazaWAF, NgCorazaWAFConfig}
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
@@ -49,18 +52,37 @@ object CloudApimWafConfigRef {
 }
 
 object RequestContextBuilder {
-  def apply(req: RequestHeader, body: Option[ByteString])(implicit env: Env): RequestContext = {
+  def request(req: RequestHeader, request: NgPluginHttpRequest, body: Option[ByteString])(implicit env: Env): RequestContext = {
     val conn = req.headers.get("Remote-Address").getOrElse("0.0.0.0:0")
     val connParts = conn.split(":")
     RequestContext(
-      method = req.method.toUpperCase,
-      uri = req.theUri.toString(),
+      method = request.method.toUpperCase,
+      uri = request.uri.toString,
       headers = com.cloud.apim.seclang.model.Headers(req.headers.toMap.mapValues(_.toList)),
       cookies = req.cookies.map(c => (c.name, c.value)).groupBy(_._1).mapValues(_.map(_._2)).mapValues(_.toList),
       query = req.queryString.mapValues(_.toList),
       body = body.map(b => com.cloud.apim.seclang.model.ByteString(b.utf8String)),
       status = None,
       statusTxt = None,
+      startTime = System.currentTimeMillis(),
+      remoteAddr = connParts.headOption.getOrElse("0.0.0.0"),
+      remotePort = connParts.lastOption.map(_.toInt).getOrElse(0),
+      protocol = req.version.toLowerCase,
+      secure = req.theSecured
+    )
+  }
+  def response(req: RequestHeader, response: NgPluginHttpResponse, body: Option[ByteString])(implicit env: Env): RequestContext = {
+    val conn = req.headers.get("Remote-Address").getOrElse("0.0.0.0:0")
+    val connParts = conn.split(":")
+    RequestContext(
+      method = req.method.toUpperCase,
+      uri = req.theUri.toString(),
+      headers = com.cloud.apim.seclang.model.Headers(response.headers.mapValues(v => List(v))),
+      cookies = req.cookies.map(c => (c.name, c.value)).groupBy(_._1).mapValues(_.map(_._2)).mapValues(_.toList),
+      query = req.queryString.mapValues(_.toList),
+      body = body.map(b => com.cloud.apim.seclang.model.ByteString(b.utf8String)),
+      status = Some(response.status),
+      statusTxt = StatusCodes.get(response.status),
       startTime = System.currentTimeMillis(),
       remoteAddr = connParts.headOption.getOrElse("0.0.0.0"),
       remotePort = connParts.lastOption.map(_.toInt).getOrElse(0),
@@ -111,7 +133,7 @@ class CloudApimWaf extends NgRequestTransformer {
       case Disposition.Continue => None
       case bl: Disposition.Block => Some(bl)
     }
-    CloudApimWafTrailEvent(b, result.events, req, route, blocking).toAnalytics()
+    CloudApimWafTrailEvent(b, result.events, req, Some(route), blocking).toAnalytics()
   }
 
   override def beforeRequest(
@@ -143,7 +165,7 @@ class CloudApimWaf extends NgRequestTransformer {
           ctx.otoroshiRequest.body
             .runFold(ByteString.empty)(_ ++ _)
             .flatMap { bytes =>
-              val req = RequestContextBuilder(ctx.request, config.inputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
+              val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, config.inputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
               val res = engine.evaluate(req, List(1, 2, 5))
               res.disposition match {
                 case Disposition.Continue if res.events.nonEmpty =>
@@ -161,7 +183,7 @@ class CloudApimWaf extends NgRequestTransformer {
               }
             }
         } else {
-          val req = RequestContextBuilder(ctx.request, None)
+          val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None)
           val res = engine.evaluate(req, List(1, 2, 5))
           res.disposition match {
             case Disposition.Continue if res.events.nonEmpty =>
@@ -194,7 +216,7 @@ class CloudApimWaf extends NgRequestTransformer {
           ctx.otoroshiResponse.body
             .runFold(ByteString.empty)(_ ++ _)
             .flatMap { bytes =>
-              val req = RequestContextBuilder(ctx.request, config.outputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
+              val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, config.outputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
               val res = engine.evaluate(req, List(3, 4, 5))
               res.disposition match {
                 case Disposition.Continue if res.events.nonEmpty =>
@@ -212,7 +234,7 @@ class CloudApimWaf extends NgRequestTransformer {
               }
             }
         } else {
-          val req = RequestContextBuilder(ctx.request, None)
+          val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None)
           val res = engine.evaluate(req, List(3, 4, 5))
           res.disposition match {
             case Disposition.Continue if res.events.nonEmpty =>
@@ -235,11 +257,60 @@ class CloudApimWaf extends NgRequestTransformer {
   }
 }
 
+class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
+
+  override def steps: Seq[NgStep]                          = Seq(NgStep.ValidateAccess)
+  override def categories: Seq[NgPluginCategory]           = Seq(NgPluginCategory.AccessControl)
+  override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
+  override def multiInstance: Boolean                      = true
+  override def core: Boolean                               = true
+  override def name: String                                = "Cloud APIM WAF - Incoming Request Validator"
+  override def description: Option[String]                 = "Cloud APIM WAF - Incoming Request Validator plugin".some
+  override def defaultConfigObject: Option[NgPluginConfig] = CloudApimWafConfigRef("none").some
+
+  def report(result: EngineResult, req: JsObject, blocking: Boolean)(implicit env: Env): Unit = {
+    val b = result.disposition match {
+      case Disposition.Continue => None
+      case bl: Disposition.Block => Some(bl)
+    }
+    CloudApimWafTrailEvent(b, result.events, req, None, blocking).toAnalytics()
+  }
+
+  override def access(
+                       ctx: NgIncomingRequestValidatorContext
+                     )(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+    ctx.config.select("ref").asOpt[String] match {
+      case None      => NgAccess.NgAllowed.vfuture
+      case Some(ref) => {
+        val ext = env.adminExtensions.extension[CloudApimWafExtension].get
+        ext.states.config(ref).filter(_.enabled) match {
+          case None => NgAccess.NgAllowed.vfuture
+          case Some(wafConfig) => {
+            val engine = ext.factory.engine(wafConfig.rules.toList)
+            val req = RequestContextBuilder.request(ctx.request, NgPluginHttpRequest.fromRequest(ctx.request), None)
+            val res = engine.evaluate(req, List(1, 2, 5))
+            res.disposition match {
+              case Disposition.Continue if res.events.nonEmpty =>
+                report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)
+                NgAccess.NgAllowed.vfuture
+              case Disposition.Continue =>
+                NgAccess.NgAllowed.vfuture
+              case Disposition.Block(_, _, _) =>
+                report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)
+                NgAccess.NgDenied(Results.Forbidden("")).vfuture
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
 case class CloudApimWafTrailEvent(
   block: Option[Disposition.Block],
   events: List[MatchEvent],
   request: JsObject,
-  route: NgRoute,
+  route: Option[NgRoute],
   blocking: Boolean,
 ) extends AnalyticEvent {
 
@@ -265,7 +336,7 @@ case class CloudApimWafTrailEvent(
       "blocking"   -> blocking,
       "events"     -> JsArray(events.map(e => e.json)),
       "block"      -> block.map(_.json).getOrElse(JsNull).asValue,
-      "route"      -> route.json,
+      "route"      -> route.map(_.json).getOrElse(JsNull).asValue,
     ) ++ request
   }
 }
