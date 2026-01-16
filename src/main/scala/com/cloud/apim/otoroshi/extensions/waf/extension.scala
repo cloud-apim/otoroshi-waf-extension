@@ -150,6 +150,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |    const uuid      = dependencies.uuid;
              |    const Table     = dependencies.Components.Inputs.Table;
              |    const SelectInput = dependencies.Components.Inputs.SelectInput;
+             |    const MonacoInput = dependencies.Components.Inputs.MonacoInput;
              |    const BackOfficeServices = dependencies.BackOfficeServices;
              |
              |    ${wafConfigsPageCode}

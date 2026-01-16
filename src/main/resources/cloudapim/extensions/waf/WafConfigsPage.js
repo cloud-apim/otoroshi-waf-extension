@@ -93,7 +93,7 @@ class WafConfigTester extends Component {
         React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
         React.createElement('div', { className: 'col-sm-10', style: { display: 'flex' } },
           React.createElement('div', { style: { display: 'flex', width: '100%', flexDirection: 'column' }},
-            React.createElement('textarea', { className: 'form-control', rows: 21, value: this.state.input, onChange: (e) => this.setState({ input: e.target.value }) }),
+            React.createElement(MonacoInput, { height: 400, editorOnly: true, language: 'json', value: this.state.input, onChange: (e) => this.setState({ input: e.target.value }) }),
             React.createElement('div', { style: { display: 'flex', width: '100%', flexDirection: 'row', justifyContent: 'flex-end', padding: 10 } },
               React.createElement('button', { type: 'button', className: 'btn btn-sm btn-success', onClick: this.send, disabled: this.state.calling },
                 React.createElement('i', { className: 'fas fa-play' }),
@@ -101,13 +101,25 @@ class WafConfigTester extends Component {
               ),
             ),
             this.state.result && React.createElement('div', { },
-              React.createElement('textarea', { rows: 15, className: 'form-control', value: this.state.result }, ''),
+              React.createElement(MonacoInput, { height: 400, editorOnly: true, language: 'json', value: this.state.result }, ''),
             )
           )
         )
       )
     ];
   }
+}
+
+function MonacoRule(props) {
+  const v = props.value[props.idx];
+  let height = 150;
+  if (v) {
+    height = (v.split("\n").length * 19) + 10
+  }
+  return React.createElement(MonacoInput, { ...props, label: '', height: height, language: 'ini', value: props.value[props.idx], onChange: (it) => {
+    props.value[props.idx] = it;
+    props.onChange(props.value);
+  } }, '')
 }
 
 class WafConfigsPage extends Component {
@@ -168,7 +180,7 @@ class WafConfigsPage extends Component {
     },
     rules: {
       type: 'array',
-      props: { label: 'Rules', placeholder: 'WAF rules to apply' },
+      props: { component: MonacoRule },
     },
     compile: {
       type: CompileButton,
