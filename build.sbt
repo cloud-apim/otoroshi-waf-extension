@@ -34,7 +34,7 @@ lazy val root = (project in file("."))
     assembly / test  := {},
     libraryDependencies ++= Seq(
       "fr.maif" %% "otoroshi" % "17.11.0" % "provided",
-      "com.cloud-apim" %% "seclang-engine-coreruleset" % "1.1.0" excludeAll(all: _*),
+      "com.cloud-apim" %% "seclang-engine-coreruleset" % "1.2.0" excludeAll(all: _*),
       munit % Test
     ),
     assembly / test  := {},
