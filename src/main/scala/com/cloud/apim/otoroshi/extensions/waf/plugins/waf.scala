@@ -13,6 +13,7 @@ import otoroshi.next.models.NgRoute
 import otoroshi.next.plugins.api._
 import otoroshi.next.utils.JsonHelpers
 import otoroshi.security.IdGenerator
+import otoroshi.utils.TypedMap
 import otoroshi.utils.http.RequestImplicits._
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
@@ -127,6 +128,13 @@ class CloudApimWaf extends NgRequestTransformer {
     )
   ))
 
+  def triggerFail2Ban(attrs: TypedMap, status: Int): Unit = {
+    attrs.update(otoroshi.plugins.Keys.ElCtxKey) {
+      case Some(elCtx) => elCtx + ("fail2ban-trigger-status" -> status.toString)
+      case None => Map("fail2ban-trigger-status" -> status.toString)
+    }
+  }
+
   def report(result: EngineResult, req: JsObject, route: NgRoute, blocking: Boolean)(implicit env: Env): Unit = {
     val b = result.disposition match {
       case Disposition.Continue => None
@@ -174,7 +182,8 @@ class CloudApimWaf extends NgRequestTransformer {
                   ctx.otoroshiRequest.copy(body = bytes.chunks(32 * 1024)).rightf
                 case Disposition.Block(status, _, _) if config.block =>
                   report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-                  Results.Status(status)("").leftf
+                  triggerFail2Ban(ctx.attrs, status)
+                  Results.Status(status)("").leftf // BLOCKING HERE !!!!
                 case Disposition.Block(_, _, _) if !config.block => {
                   report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
                   ctx.otoroshiRequest.copy(body = bytes.chunks(32 * 1024)).rightf
@@ -192,7 +201,8 @@ class CloudApimWaf extends NgRequestTransformer {
               ctx.otoroshiRequest.rightf
             case Disposition.Block(status, _, _) if config.block =>
               report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-              Results.Status(status)("").leftf
+              triggerFail2Ban(ctx.attrs, status)
+              Results.Status(status)("").leftf // BLOCKING HERE !!!!
             case Disposition.Block(_, _, _) if !config.block => {
               report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
               ctx.otoroshiRequest.rightf
@@ -225,7 +235,8 @@ class CloudApimWaf extends NgRequestTransformer {
                   ctx.otoroshiResponse.copy(body = bytes.chunks(32 * 1024)).rightf
                 case Disposition.Block(status, _, _) if config.block =>
                   report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-                  Results.Status(status)("").leftf
+                  triggerFail2Ban(ctx.attrs, status)
+                  Results.Status(status)("").leftf // BLOCKING HERE !!!!
                 case Disposition.Block(_, _, _) if !config.block => {
                   report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
                   ctx.otoroshiResponse.copy(body = bytes.chunks(32 * 1024)).rightf
@@ -243,7 +254,8 @@ class CloudApimWaf extends NgRequestTransformer {
               ctx.otoroshiResponse.rightf
             case Disposition.Block(status, _, _) if config.block =>
               report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-              Results.Status(status)("").leftf
+              triggerFail2Ban(ctx.attrs, status)
+              Results.Status(status)("").leftf // BLOCKING HERE !!!!
             case Disposition.Block(_, _, _) if !config.block => {
               report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
               ctx.otoroshiResponse.rightf
