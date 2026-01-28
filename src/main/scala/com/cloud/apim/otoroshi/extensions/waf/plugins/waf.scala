@@ -173,8 +173,10 @@ class CloudApimWaf extends NgRequestTransformer {
           ctx.otoroshiRequest.body
             .runFold(ByteString.empty)(_ ++ _)
             .flatMap { bytes =>
-              val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, config.inputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
-              val res = engine.evaluate(req, List(1, 2, 5))
+              val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
+                val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, config.inputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
+                engine.evaluate(req, List(1, 2, 5))
+              }
               res.disposition match {
                 case Disposition.Continue if res.events.nonEmpty =>
                   report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
@@ -205,8 +207,10 @@ class CloudApimWaf extends NgRequestTransformer {
               }
             }
         } else {
-          val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None)
-          val res = engine.evaluate(req, List(1, 2, 5))
+          val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
+            val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None)
+            engine.evaluate(req, List(1, 2, 5))
+          }
           res.disposition match {
             case Disposition.Continue if res.events.nonEmpty =>
               report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
@@ -252,8 +256,10 @@ class CloudApimWaf extends NgRequestTransformer {
           ctx.otoroshiResponse.body
             .runFold(ByteString.empty)(_ ++ _)
             .flatMap { bytes =>
-              val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, config.outputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
-              val res = engine.evaluate(req, List(3, 4, 5))
+              val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.response") {
+                val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, config.outputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
+                engine.evaluate(req, List(3, 4, 5))
+              }
               res.disposition match {
                 case Disposition.Continue if res.events.nonEmpty =>
                   report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
@@ -284,8 +290,10 @@ class CloudApimWaf extends NgRequestTransformer {
               }
             }
         } else {
-          val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None)
-          val res = engine.evaluate(req, List(3, 4, 5))
+          val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.response") {
+            val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None)
+            engine.evaluate(req, List(3, 4, 5))
+          }
           res.disposition match {
             case Disposition.Continue if res.events.nonEmpty =>
               report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
