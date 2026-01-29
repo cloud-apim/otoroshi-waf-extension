@@ -130,10 +130,7 @@ class CloudApimWaf extends NgRequestTransformer {
   ))
 
   def triggerFail2Ban(attrs: TypedMap, status: Int): Unit = {
-    attrs.update(otoroshi.plugins.Keys.ElCtxKey) {
-      case Some(elCtx) => elCtx + ("fail2ban-trigger-status" -> status.toString)
-      case None => Map("fail2ban-trigger-status" -> status.toString)
-    }
+    attrs.update(otoroshi.next.plugins.Fail2BanPlugin.Fail2BanTriggerStatusKey)(_ => status)
   }
 
   def report(result: EngineResult, req: JsObject, route: NgRoute, blocking: Boolean)(implicit env: Env): Unit = {
