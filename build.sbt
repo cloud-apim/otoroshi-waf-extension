@@ -33,7 +33,7 @@ lazy val root = (project in file("."))
     name := "otoroshi-waf-extension",
     assembly / test  := {},
     libraryDependencies ++= Seq(
-      "fr.maif" %% "otoroshi" % "17.13.0" % "provided",
+      "fr.maif" %% "otoroshi" % "17.14.0" % "provided",
       "com.cloud-apim" %% "seclang-engine-coreruleset" % "1.7.0" excludeAll(all: _*),
       munit % Test
     ),
