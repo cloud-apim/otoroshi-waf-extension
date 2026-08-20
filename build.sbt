@@ -51,7 +51,7 @@ lazy val root = (project in file("."))
       "fr.maif" %% "otoroshi" % "18.0.0-preview2" % "provided",
       // seclang-engine (and its coreruleset companion) is only published for scala 2.12 / 2.13,
       // scala 3 consumes the 2.13 artifact
-      ("com.cloud-apim" %% "seclang-engine-coreruleset" % "2.0.0").cross(CrossVersion.for3Use2_13).excludeAll(all: _*),
+      ("com.cloud-apim" %% "seclang-engine-coreruleset" % "2.0.1").cross(CrossVersion.for3Use2_13).excludeAll(all: _*),
       munit % Test
     ),
     assembly / test  := {},
