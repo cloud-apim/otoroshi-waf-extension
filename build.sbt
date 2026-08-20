@@ -25,6 +25,8 @@ lazy val slf4j = Seq(
 lazy val other = Seq(
   ExclusionRule("org.scala-lang"),
   ExclusionRule("com.typesafe.play"),
+  // play-json moved from com.typesafe.play to org.playframework with play 3
+  ExclusionRule("org.playframework"),
   ExclusionRule("io.opentelemetry"),
   ExclusionRule("com.github.blemale"),
   ExclusionRule("com.comcast"),
