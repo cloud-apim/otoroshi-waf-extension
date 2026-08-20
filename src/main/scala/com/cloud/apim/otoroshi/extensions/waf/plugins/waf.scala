@@ -1,27 +1,26 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.waf.entities.CloudApimWafConfig
 import com.cloud.apim.seclang.impl.engine.SecLangEngine
 import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.{Disposition, EngineResult, MatchEvent, RequestContext}
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.events.AnalyticEvent
 import otoroshi.gateway.Errors
 import otoroshi.next.models.NgRoute
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.utils.JsonHelpers
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
-import otoroshi.utils.http.RequestImplicits._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.http.RequestImplicits.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
-import play.api.mvc
-import play.api.mvc.{RequestHeader, Results}
+import play.api.mvc.{RequestHeader, Result, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
@@ -39,7 +38,7 @@ case class CloudApimWafConfigRef(ref: String) extends NgPluginConfig {
 }
 
 object CloudApimWafConfigRef {
-  val format = new Format[CloudApimWafConfigRef] {
+  val format: Format[CloudApimWafConfigRef] = new Format[CloudApimWafConfigRef] {
     override def writes(o: CloudApimWafConfigRef): JsValue             = Json.obj("ref" -> o.ref)
     override def reads(json: JsValue): JsResult[CloudApimWafConfigRef] = Try {
       CloudApimWafConfigRef(
@@ -53,15 +52,15 @@ object CloudApimWafConfigRef {
 }
 
 object RequestContextBuilder {
-  def request(req: RequestHeader, request: NgPluginHttpRequest, body: Option[ByteString])(implicit env: Env): RequestContext = {
+  def request(req: RequestHeader, request: NgPluginHttpRequest, body: Option[ByteString])(using env: Env): RequestContext = {
     val conn = req.headers.get("Remote-Address").getOrElse("0.0.0.0:0")
     val connParts = conn.split(":")
     RequestContext(
       method = request.method.toUpperCase,
       uri = req.uri,
-      headers = com.cloud.apim.seclang.model.Headers(req.headers.toMap.mapValues(_.toList)),
-      cookies = req.cookies.map(c => (c.name, c.value)).groupBy(_._1).mapValues(_.map(_._2)).mapValues(_.toList),
-      query = req.queryString.mapValues(_.toList),
+      headers = com.cloud.apim.seclang.model.Headers(req.headers.toMap.view.mapValues(_.toList).toMap),
+      cookies = req.cookies.groupBy(_.name).view.mapValues(_.map(_.value).toList).toMap,
+      query = req.queryString.view.mapValues(_.toList).toMap,
       body = body.map(b => com.cloud.apim.seclang.model.ByteString(b.utf8String)),
       status = None,
       statusTxt = None,
@@ -72,15 +71,15 @@ object RequestContextBuilder {
       secure = req.theSecured
     )
   }
-  def response(req: RequestHeader, response: NgPluginHttpResponse, body: Option[ByteString])(implicit env: Env): RequestContext = {
+  def response(req: RequestHeader, response: NgPluginHttpResponse, body: Option[ByteString])(using env: Env): RequestContext = {
     val conn = req.headers.get("Remote-Address").getOrElse("0.0.0.0:0")
     val connParts = conn.split(":")
     RequestContext(
       method = req.method.toUpperCase,
       uri = req.theUri.toString(),
-      headers = com.cloud.apim.seclang.model.Headers(response.headers.mapValues(v => List(v))),
-      cookies = req.cookies.map(c => (c.name, c.value)).groupBy(_._1).mapValues(_.map(_._2)).mapValues(_.toList),
-      query = req.queryString.mapValues(_.toList),
+      headers = com.cloud.apim.seclang.model.Headers(response.headers.view.mapValues(List(_)).toMap),
+      cookies = req.cookies.groupBy(_.name).view.mapValues(_.map(_.value).toList).toMap,
+      query = req.queryString.view.mapValues(_.toList).toMap,
       body = body.map(b => com.cloud.apim.seclang.model.ByteString(b.utf8String)),
       status = Some(response.status),
       statusTxt = StatusCodes.get(response.status),
@@ -118,9 +117,9 @@ class CloudApimWaf extends NgRequestTransformer {
   override def configSchema: Option[JsObject] = Some(Json.obj(
     "ref" -> Json.obj(
       "type" -> "select",
-      "label" -> s"WAF Config.",
+      "label" -> "WAF Config.",
       "props" -> Json.obj(
-        "optionsFrom" -> s"/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/waf-configs",
+        "optionsFrom" -> "/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/waf-configs",
         "optionsTransformer" -> Json.obj(
           "label" -> "name",
           "value" -> "id",
@@ -133,7 +132,7 @@ class CloudApimWaf extends NgRequestTransformer {
     attrs.update(otoroshi.next.plugins.Fail2BanPlugin.Fail2BanTriggerStatusKey)(_ => status)
   }
 
-  def report(result: EngineResult, req: JsObject, route: NgRoute, blocking: Boolean)(implicit env: Env): Unit = {
+  def report(result: EngineResult, req: JsObject, route: NgRoute, blocking: Boolean)(using env: Env): Unit = {
     val b = result.disposition match {
       case Disposition.Continue => None
       case bl: Disposition.Block => Some(bl)
@@ -143,7 +142,7 @@ class CloudApimWaf extends NgRequestTransformer {
 
   override def beforeRequest(
     ctx: NgBeforeRequestContext
-  )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
+  )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
     val config = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     val ext = env.adminExtensions.extension[CloudApimWafExtension].get
     ext.states.config(config.ref).filter(_.enabled).foreach { wafConfig =>
@@ -155,14 +154,14 @@ class CloudApimWaf extends NgRequestTransformer {
 
   override def afterRequest(
     ctx: NgAfterRequestContext
-  )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
+  )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey).foreach(_.close())
     ().vfuture
   }
 
   override def transformRequest(
     ctx: NgTransformerRequestContext
-  )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[mvc.Result, NgPluginHttpRequest]] = {
+  )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey) match {
       case Some(ContextualCloudApimWafConfig(engine, config)) => {
         val hasBody = ctx.request.theHasBody
@@ -197,7 +196,7 @@ class CloudApimWaf extends NgRequestTransformer {
                       emptyBody = true,
                     ).map(r => Left(r)) // BLOCKING HERE !!!!
                   //Results.Status(status)("").leftf
-                case Disposition.Block(_, _, _) if !config.block => {
+                case Disposition.Block(_, _, _) => {
                   report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
                   ctx.otoroshiRequest.copy(body = bytes.chunks(32 * 1024)).rightf
                 }
@@ -231,7 +230,7 @@ class CloudApimWaf extends NgRequestTransformer {
                   emptyBody = true,
                 ).map(r => Left(r)) // BLOCKING HERE !!!!
               //Results.Status(status)("").leftf
-            case Disposition.Block(_, _, _) if !config.block => {
+            case Disposition.Block(_, _, _) => {
               report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
               ctx.otoroshiRequest.rightf
             }
@@ -244,7 +243,7 @@ class CloudApimWaf extends NgRequestTransformer {
 
   override def transformResponse(
     ctx: NgTransformerResponseContext
-  )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[mvc.Result, NgPluginHttpResponse]] = {
+  )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey) match {
       case Some(ContextualCloudApimWafConfig(_, config)) if ctx.otoroshiResponse.contentType.nonEmpty && config.outputBodyMimetypes.nonEmpty && !config.outputBodyMimetypes.contains(ctx.otoroshiResponse.contentType.get) => ctx.otoroshiResponse.rightf
       case Some(ContextualCloudApimWafConfig(engine, config)) => {
@@ -280,7 +279,7 @@ class CloudApimWaf extends NgRequestTransformer {
                       emptyBody = true,
                     ).map(r => Left(r)) // BLOCKING HERE !!!!
                   // Results.Status(status)("").leftf
-                case Disposition.Block(_, _, _) if !config.block => {
+                case Disposition.Block(_, _, _) => {
                   report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
                   ctx.otoroshiResponse.copy(body = bytes.chunks(32 * 1024)).rightf
                 }
@@ -314,7 +313,7 @@ class CloudApimWaf extends NgRequestTransformer {
                   emptyBody = true,
                 ).map(r => Left(r)) // BLOCKING HERE !!!!
               // Results.Status(status)("").leftf
-            case Disposition.Block(_, _, _) if !config.block => {
+            case Disposition.Block(_, _, _) => {
               report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
               ctx.otoroshiResponse.rightf
             }
@@ -337,7 +336,7 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
   override def description: Option[String]                 = "Cloud APIM WAF - Incoming Request Validator plugin".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimWafConfigRef("none").some
 
-  def report(result: EngineResult, req: JsObject, blocking: Boolean)(implicit env: Env): Unit = {
+  def report(result: EngineResult, req: JsObject, blocking: Boolean)(using env: Env): Unit = {
     val b = result.disposition match {
       case Disposition.Continue => None
       case bl: Disposition.Block => Some(bl)
@@ -346,8 +345,8 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
   }
 
   override def access(
-                       ctx: NgIncomingRequestValidatorContext
-                     )(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+    ctx: NgIncomingRequestValidatorContext
+  )(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     ctx.config.select("ref").asOpt[String] match {
       case None      => NgAccess.NgAllowed.vfuture
       case Some(ref) => {
@@ -367,11 +366,11 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
               case Disposition.Block(_, _, _) =>
                 report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)
                 NgAccess.NgDenied(Results.Forbidden("")).vfuture
-              }
             }
           }
         }
       }
+    }
   }
 }
 
@@ -393,7 +392,7 @@ case class CloudApimWafTrailEvent(
 
   private val timestamp = DateTime.now()
 
-  override def toJson(implicit env: Env): JsValue = {
+  override def toJson(using _env: Env): JsValue = {
     Json.obj(
       "@id"        -> `@id`,
       "@timestamp" -> play.api.libs.json.JodaWrites.JodaDateTimeNumberWrites.writes(timestamp),
