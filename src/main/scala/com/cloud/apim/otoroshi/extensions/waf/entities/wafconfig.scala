@@ -1,14 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.waf.entities
 
-import otoroshi.api._
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
-import otoroshi.next.extensions._
+import otoroshi.models.*
+import otoroshi.next.extensions.*
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.*
+import play.api.libs.json.*
 
 import scala.util.{Failure, Success, Try}
 
@@ -38,7 +38,7 @@ case class CloudApimWafConfig(
 }
 
 object CloudApimWafConfig {
-  val format = new Format[CloudApimWafConfig] {
+  val format: Format[CloudApimWafConfig] = new Format[CloudApimWafConfig] {
     override def writes(o: CloudApimWafConfig): JsValue             = o.location.jsonWithKey ++ Json.obj(
       "id"          -> o.id,
       "name"        -> o.name,
@@ -90,7 +90,7 @@ object CloudApimWafConfig {
         extractIdf = c => datastores.wafConfigDatastore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, _, _) => {
           CloudApimWafConfig(
             id = IdGenerator.namedId("waf-config", env),
             name = "WAF Config",
@@ -115,8 +115,8 @@ trait CloudApimWafConfigDatastore extends BasicStore[CloudApimWafConfig]
 class KvCloudApimWafConfigDatastore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
   extends CloudApimWafConfigDatastore
     with RedisLikeStore[CloudApimWafConfig] {
-  override def fmt: Format[CloudApimWafConfig]      = CloudApimWafConfig.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
-  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:wafconfigs:$id"
-  override def extractId(value: CloudApimWafConfig): String    = value.id
+  override def fmt: Format[CloudApimWafConfig]              = CloudApimWafConfig.format
+  override def redisLike(using env: Env): RedisLike        = redisCli
+  override def key(id: String): String                     = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:wafconfigs:$id"
+  override def extractId(value: CloudApimWafConfig): String = value.id
 }

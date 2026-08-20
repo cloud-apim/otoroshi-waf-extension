@@ -1,34 +1,35 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf
 
-import akka.stream.scaladsl.{Source, StreamConverters}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.waf.entities._
+import com.cloud.apim.otoroshi.extensions.waf.entities.*
 import com.cloud.apim.seclang.impl.utils.StatusCodes
-import com.cloud.apim.seclang.model._
+import com.cloud.apim.seclang.model.*
 import com.cloud.apim.seclang.scaladsl.SecLang
 import com.cloud.apim.seclang.scaladsl.coreruleset.EmbeddedCRSPreset
 import com.github.blemale.scaffeine.Scaffeine
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
+import org.apache.pekko.util.ByteString
 import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.events.AnalyticEvent
-import otoroshi.models._
-import otoroshi.next.extensions._
+import otoroshi.models.*
+import otoroshi.next.extensions.*
 import otoroshi.security.IdGenerator
 import otoroshi.utils.cache.types.UnboundedTrieMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsObject, JsValue, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.api.{Configuration, Logger}
 
-import scala.concurrent.Future
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
 class WafExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val wafConfigDatastore: CloudApimWafConfigDatastore = new KvCloudApimWafConfigDatastore(extensionId, env.datastores.redis, env)
 }
 
-class WafExtensionState(env: Env) {
+class WafExtensionState() {
 
   private val _configs = new UnboundedTrieMap[String, CloudApimWafConfig]()
   def config(id: String): Option[CloudApimWafConfig] = _configs.get(id)
@@ -46,9 +47,9 @@ class CloudApimWafIntegration(env: Env, configuration: Configuration) extends Se
 
   private val cache = Scaffeine()
     .expireAfter[String, (CompiledProgram, FiniteDuration)](
-      create = (key, value) => value._2,
-      update = (key, value, currentDuration) => currentDuration,
-      read = (key, value, currentDuration) => currentDuration
+      create = (_, value) => value._2,
+      update = (_, _, currentDuration) => currentDuration,
+      read = (_, _, currentDuration) => currentDuration
     )
     .maximumSize(maxCacheItems)
     .build[String, (CompiledProgram, FiniteDuration)]()
@@ -66,16 +67,16 @@ class CloudApimWafIntegration(env: Env, configuration: Configuration) extends Se
   override def removeCachedProgram(key: String): Unit = cache.invalidate(key)
 
   override def audit(ruleId: Int, context: RequestContext, state: RuntimeState, phase: Int, msg: String, logdata: List[String]): Unit = {
-    CloudApimWafAuditEvent(ruleId, context, state, phase, msg, logdata).toAnalytics()(env)
+    CloudApimWafAuditEvent(ruleId, context, state, phase, msg, logdata).toAnalytics()(using env)
   }
 }
 
 class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
   private lazy val datastores = new WafExtensionDatastores(env, id)
-  lazy val states = new WafExtensionState(env)
+  lazy val states = new WafExtensionState()
   private val logger = Logger("cloud-apim-waf-extension")
-  private val presets = Map("crs" -> EmbeddedCRSPreset.embedded)
+  private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
   private val integration = new CloudApimWafIntegration(env, configuration)
 
@@ -100,8 +101,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   )
 
   override def syncStates(): Future[Unit] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val ev = env
+    given ExecutionContext = env.otoroshiExecutionContext
+    given Env              = env
     for {
       configs <- datastores.wafConfigDatastore.findAllAndFillSecrets()
     } yield {
@@ -117,8 +118,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   }
 
   def getResourceCode(path: String): String = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
+    given ExecutionContext = env.otoroshiExecutionContext
+    given Materializer     = env.otoroshiMaterializer
     env.environment.resourceAsStream(path)
       .map(stream => StreamConverters.fromInputStream(() => stream).runFold(ByteString.empty)(_++_).awaitf(10.seconds).utf8String)
       .getOrElse(s"'resource ${path} not found !'")
@@ -130,13 +131,13 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
       path = "/extensions/assets/cloud-apim/extensions/waf/icon.svg",
-      handle = (ctx: AdminExtensionRouterContext[AdminExtensionAssetRoute], req: RequestHeader) => {
+      handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
         Results.Ok(imgCode).as("image/svg+xml").vfuture
       }
     ),
     AdminExtensionAssetRoute(
       path = "/extensions/assets/cloud-apim/extensions/waf/extension.js",
-      handle = (ctx: AdminExtensionRouterContext[AdminExtensionAssetRoute], req: RequestHeader) => {
+      handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
         Results.Ok(
           s"""(function() {
              |  const extensionId = "${id.value}";
@@ -232,20 +233,19 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       method = "POST",
       path = "/extensions/cloud-apim/extensions/waf/utils/_compile",
       wantsBody = true,
-      handle = handleCompile
+      handle = (_, _, _, body) => handleCompile(body)
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
       path = "/extensions/cloud-apim/extensions/waf/utils/_test",
       wantsBody = true,
-      handle = handleTest
+      handle = (_, _, _, body) => handleTest(body)
     ),
   )
 
-  def handleCompile(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ExecutionContext = env.otoroshiExecutionContext
+    given Materializer     = env.otoroshiMaterializer
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -267,10 +267,9 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleTest(body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ExecutionContext = env.otoroshiExecutionContext
+    given Materializer     = env.otoroshiMaterializer
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -282,9 +281,9 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
         val requestCtx = RequestContext(
           method = request.select("method").asOptString.getOrElse("GET"),
           uri = request.select("uri").asOptString.getOrElse("/"),
-          headers = com.cloud.apim.seclang.model.Headers(request.select("headers").asOpt[Map[String, String]].map(_.mapValues(v => List(v))).getOrElse(Map.empty)),
-          cookies = request.select("cookies").asOpt[Map[String, String]].map(_.mapValues(v => List(v))).getOrElse(Map.empty),
-          query = request.select("query").asOpt[Map[String, String]].map(_.mapValues(v => List(v))).getOrElse(Map.empty),
+          headers = com.cloud.apim.seclang.model.Headers(request.select("headers").asOpt[Map[String, String]].map(_.view.mapValues(List(_)).toMap).getOrElse(Map.empty)),
+          cookies = request.select("cookies").asOpt[Map[String, String]].map(_.view.mapValues(List(_)).toMap).getOrElse(Map.empty),
+          query = request.select("query").asOpt[Map[String, String]].map(_.view.mapValues(List(_)).toMap).getOrElse(Map.empty),
           body = request.select("body").asOpt[String].map(s => com.cloud.apim.seclang.model.ByteString(s)),
           status = status,
           statusTxt = statusTxt,
@@ -318,7 +317,7 @@ case class CloudApimWafAuditEvent(ruleId: Int, context: RequestContext, state: R
 
   private val timestamp = DateTime.now()
 
-  override def toJson(implicit env: Env): JsValue = {
+  override def toJson(using _env: Env): JsValue = {
     Json.obj(
       "@id"        -> `@id`,
       "@timestamp" -> play.api.libs.json.JodaWrites.JodaDateTimeNumberWrites.writes(timestamp),

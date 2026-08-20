@@ -19,8 +19,8 @@ This extension is built on top of of the following open-source Cloud APIM librar
 
 ## Requirements
 
-- Otoroshi 17.11.0 or later
-- Java 11 or later
+- Otoroshi 18.0.0 or later
+- Java 17 or later
 
 ## Installation
 
@@ -30,7 +30,7 @@ This extension is built on top of of the following open-source Cloud APIM librar
 sbt assembly
 ```
 
-2. Copy the generated JAR (`target/scala-2.12/otoroshi-waf-extension-assembly_2.12-dev.jar`) to the Otoroshi classpath.
+2. Copy the generated JAR (`target/scala-3.8.4/otoroshi-waf-extension-assembly_3-dev.jar`) to the Otoroshi classpath.
 
 3. Enable the extension in Otoroshi configuration:
 
