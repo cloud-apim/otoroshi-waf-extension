@@ -18,13 +18,11 @@ lazy val slf4j = Seq(
   ExclusionRule("ch.qos.logback")
 )
 
-// everything listed here is already on the otoroshi classpath at runtime, but published for
-// scala 3 while seclang-engine is published for scala 2.13. keeping both would either duplicate
-// classes in the assembly or make sbt fail on conflicting cross-version suffixes, so the scala 3
-// flavor provided by otoroshi wins.
+// everything listed here is already on the otoroshi classpath at runtime, in the exact same
+// version, so the copy provided by otoroshi wins and we avoid shipping duplicate classes in
+// the assembly. all of it is scala 3 on both sides now.
 lazy val other = Seq(
   ExclusionRule("org.scala-lang"),
-  ExclusionRule("com.typesafe.play"),
   // play-json moved from com.typesafe.play to org.playframework with play 3
   ExclusionRule("org.playframework"),
   ExclusionRule("io.opentelemetry"),
@@ -51,9 +49,7 @@ lazy val root = (project in file("."))
     ),
     libraryDependencies ++= Seq(
       "fr.maif" %% "otoroshi" % "18.0.0-preview2" % "provided",
-      // seclang-engine (and its coreruleset companion) is only published for scala 2.12 / 2.13,
-      // scala 3 consumes the 2.13 artifact
-      ("com.cloud-apim" %% "seclang-engine-coreruleset" % "2.0.1").cross(CrossVersion.for3Use2_13).excludeAll(all: _*),
+      "com.cloud-apim" %% "seclang-engine-coreruleset" % "2.1.0" excludeAll (all: _*),
       munit % Test
     ),
     assembly / test  := {},
