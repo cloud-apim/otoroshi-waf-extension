@@ -361,7 +361,7 @@ class ThreatFeedsPage extends Component {
       type: 'select',
       props: {
         label: 'Format',
-        options: [
+        possibleValues: [
           { label: 'One address or CIDR per line', value: 'cidr_lines' },
           { label: 'CSV', value: 'csv' },
           { label: 'JSON array', value: 'json_array' },
@@ -386,7 +386,7 @@ class ThreatFeedsPage extends Component {
       props: {
         label: 'Action',
         help: "'block' lets this feed deny on its own — reserve it for sources you trust",
-        options: [
+        possibleValues: [
           { label: 'Block', value: 'block' },
           { label: 'Monitor', value: 'monitor' },
         ],
@@ -578,7 +578,7 @@ class CrowdSecBouncersPage extends Component {
     enabled: { type: 'bool', props: { label: 'Enabled' } },
     lapi_url: { type: 'string', props: { label: 'LAPI url', placeholder: 'http://127.0.0.1:8080' } },
     api_key: {
-      type: 'string',
+      type: 'password',
       props: { label: 'Bouncer api key', help: 'From `cscli bouncers add`. Use a vault reference rather than the raw key.' },
     },
     poll_interval_seconds: { type: 'number', props: { label: 'Poll interval', suffix: 'seconds' } },
@@ -589,7 +589,7 @@ class CrowdSecBouncersPage extends Component {
       type: 'select',
       props: {
         label: 'Action',
-        options: [
+        possibleValues: [
           { label: 'Block', value: 'block' },
           { label: 'Monitor', value: 'monitor' },
         ],
@@ -599,7 +599,7 @@ class CrowdSecBouncersPage extends Component {
     tag: { type: 'string', props: { label: 'Tag' } },
     push_enabled: { type: 'bool', props: { label: 'Report detections back', help: 'Turns Otoroshi into a CrowdSec detector' } },
     push_machine_id: { type: 'string', props: { label: 'Machine id', help: 'From `cscli machines add` — a bouncer key cannot write alerts' } },
-    push_password: { type: 'string', props: { label: 'Machine password' } },
+    push_password: { type: 'password', props: { label: 'Machine password' } },
     push_scenario: { type: 'string', props: { label: 'Scenario name' } },
     push_interval_seconds: { type: 'number', props: { label: 'Push interval', suffix: 'seconds' } },
     push_max_batch: { type: 'number', props: { label: 'Max alerts per push' } },

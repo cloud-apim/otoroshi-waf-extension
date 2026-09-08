@@ -250,7 +250,11 @@ class IncomingRequestValidatorCloudApimIpReputation extends NgIncomingRequestVal
     "Global IP reputation check, evaluated before routing".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimIpReputationConfig.default.some
 
-  override def noJsForm: Boolean              = true
+  // deliberately NOT noJsForm: incoming request validators are read only from
+  // globalConfig.plugins.config.incoming_request_validators and never from route.plugins, so
+  // offering this one in the route designer would let someone add a plugin that silently never
+  // runs. Otoroshi's own incoming request validators leave noJsForm at its default for the same
+  // reason. The schema below is still published on /api/plugins/all for tooling.
   override def configFlow: Seq[String]        = CloudApimIpReputationConfig.configFlow
   override def configSchema: Option[JsObject] = CloudApimIpReputationConfig.configSchema.some
 
