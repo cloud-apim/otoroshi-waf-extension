@@ -20,6 +20,87 @@ function reputationAgo(millis) {
   return Math.round(seconds / 3600) + 'h ago';
 }
 
+// Otoroshi themes its UI through css variables and flips them between dark (default) and
+// [data-theme="light"]. Bootstrap's own colour utilities are NOT flipped — .card, .table and
+// .badge bg-* keep a white background whatever the theme, which is why anything built with them
+// is unreadable in the default dark UI. Everything below is driven by Otoroshi's variables so both
+// themes follow for free, with the two accents that need a per-theme correction called out.
+function ensureSuiteStyles() {
+  if (document.getElementById('cloud-apim-suite-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'cloud-apim-suite-styles';
+  style.textContent = [
+    '.suite-panel { background: var(--bg-color_level2); color: var(--color_level2);',
+    '  border: 1px solid var(--border-color); border-radius: 4px; padding: 14px 16px; margin-bottom: 10px; }',
+    '.suite-title { color: var(--color_level3); font-size: 17px; font-weight: 600; margin-bottom: 6px; }',
+    '.suite-meta { opacity: 0.65; font-size: 12px; word-break: break-all; }',
+    '.suite-badge { display: inline-block; border: 1px solid var(--suite-accent);',
+    '  color: var(--suite-accent); background: transparent; border-radius: 3px; padding: 1px 7px;',
+    '  margin-right: 6px; font-size: 11px; letter-spacing: 0.02em; white-space: nowrap; }',
+    '.suite-badge.suite-neutral { color: var(--color_level2); }',
+    '.suite-notice { background: var(--bg-color_level3); color: var(--color_level2);',
+    '  border: 1px solid var(--border-color); border-left: 3px solid var(--suite-accent);',
+    '  border-radius: 3px; padding: 8px 12px; margin-bottom: 8px; }',
+    '.suite-rows { border: 1px solid var(--border-color); border-radius: 3px; overflow: hidden; margin-bottom: 8px; }',
+    '.suite-row { display: flex; gap: 12px; padding: 5px 10px; }',
+    '.suite-row:nth-child(even) { background: var(--bg-color_level3); }',
+    '.suite-row > span:first-child { flex: none; opacity: 0.65; }',
+    '.suite-row > span:last-child { color: var(--color_level3); word-break: break-all; }',
+    '.suite-code { max-height: 260px; overflow: auto; background: var(--bg-color_level3);',
+    '  color: var(--color_level2); border: 1px solid var(--border-color); border-radius: 3px;',
+    '  padding: 8px 10px; margin-bottom: 0; }',
+    '.suite-neutral { --suite-accent: var(--border-color-strong); }',
+    '.suite-info { --suite-accent: var(--color-blue); }',
+    '.suite-success { --suite-accent: var(--color-green); }',
+    '.suite-warning { --suite-accent: var(--color-primary); }',
+    '.suite-danger { --suite-accent: var(--color-red); }',
+    '/* those three accents are tuned for a dark ground and lose too much contrast on a near-white one */',
+    '[data-theme="light"] .suite-warning { --suite-accent: #8a5d00; }',
+    '[data-theme="light"] .suite-success { --suite-accent: #2c7048; }',
+    '[data-theme="light"] .suite-info { --suite-accent: #0b6b79; }',
+  ].join('\n');
+  document.head.appendChild(style);
+}
+
+ensureSuiteStyles();
+
+const suiteTone = (tone) => 'suite-' + (tone || 'neutral');
+
+/** A panel, replacing .card — which paints itself white whatever the theme. */
+function suitePanel(key, children, extraStyle) {
+  return React.createElement('div', { key: key, className: 'suite-panel', style: extraStyle || {} }, children);
+}
+
+/** An outline pill: the accent carries both border and text, so it reads on any surface. */
+function suiteBadge(key, label, tone) {
+  return React.createElement('span', { key: key, className: 'suite-badge ' + suiteTone(tone) }, label);
+}
+
+/** A notice, replacing .alert — accent on the left edge instead of a light fill. */
+function suiteNotice(key, tone, content) {
+  return React.createElement('div', { key: key, className: 'suite-notice ' + suiteTone(tone) }, content);
+}
+
+/** Label/value rows, replacing .table — whose cells force a white background. */
+function suiteRows(rows, labelWidth) {
+  return React.createElement(
+    'div',
+    { className: 'suite-rows' },
+    rows.map((row) =>
+      React.createElement(
+        'div',
+        { key: row[0], className: 'suite-row' },
+        React.createElement('span', { style: { width: labelWidth || 190 } }, row[0]),
+        React.createElement('span', {}, row[1])
+      )
+    )
+  );
+}
+
+function suiteCode(key, text) {
+  return React.createElement('pre', { key: key, className: 'suite-code' }, text);
+}
+
 class ThreatFeedStatus extends Component {
   state = { status: null, refreshing: false, error: null };
 
@@ -82,22 +163,7 @@ class ThreatFeedStatus extends Component {
         React.createElement(
           'div',
           { className: 'col-sm-10' },
-          React.createElement(
-            'table',
-            { className: 'table table-sm', style: { marginBottom: 8 } },
-            React.createElement(
-              'tbody',
-              {},
-              rows.map((row) =>
-                React.createElement(
-                  'tr',
-                  { key: row[0] },
-                  React.createElement('td', { style: { width: 180, opacity: 0.7 } }, row[0]),
-                  React.createElement('td', {}, row[1])
-                )
-              )
-            )
-          ),
+          suiteRows(rows, 190),
           React.createElement(
             'button',
             { className: 'btn btn-sm btn-success', type: 'button', onClick: this.refresh, disabled: this.state.refreshing },
@@ -128,7 +194,7 @@ class ThreatFeedStatus extends Component {
           React.createElement(
             'div',
             { className: 'col-sm-10' },
-            React.createElement('div', { className: 'alert alert-danger', role: 'alert' }, error)
+            suiteNotice('err', 'danger', error)
           )
         ),
     ];
@@ -178,20 +244,14 @@ class ReputationLookup extends Component {
           React.createElement(
             'div',
             { className: 'col-sm-10' },
-            React.createElement(
-              'div',
-              { className: verdict.hits.length ? 'alert alert-warning' : 'alert alert-success', role: 'alert' },
+            suiteNotice(
+              'verdict',
+              verdict.hits.length ? (verdict.blocking ? 'danger' : 'warning') : 'success',
               verdict.hits.length
                 ? 'score ' + verdict.score + (verdict.blocking ? ' — would be denied' : ' — would be reported only')
                 : 'no match in any enabled source'
             ),
-            verdict.hits.length
-              ? React.createElement(
-                  'pre',
-                  { style: { maxHeight: 260, overflow: 'auto' } },
-                  JSON.stringify(verdict.hits, null, 2)
-                )
-              : null
+            verdict.hits.length ? suiteCode('hits', JSON.stringify(verdict.hits, null, 2)) : null
           )
         ),
     ];
@@ -225,77 +285,60 @@ class ThreatFeedCatalogPage extends Component {
 
   renderEntry = (entry) => {
     const createdId = this.state.created[entry.id];
-    const badges = [];
+    const badges = [suiteBadge('cat', entry.category, 'neutral')];
     badges.push(
-      React.createElement('span', { className: 'badge bg-secondary', key: 'cat', style: { marginRight: 6 } }, entry.category)
+      suiteBadge('act', entry.action + ' · weight ' + entry.weight, entry.action === 'block' ? 'danger' : 'info')
     );
-    badges.push(
-      React.createElement(
-        'span',
-        { className: entry.action === 'block' ? 'badge bg-danger' : 'badge bg-info', key: 'act', style: { marginRight: 6 } },
-        entry.action + ' · weight ' + entry.weight
-      )
-    );
-    if (entry.requires_auth)
-      badges.push(
-        React.createElement('span', { className: 'badge bg-warning', key: 'auth', style: { marginRight: 6 } }, 'needs credentials')
-      );
-    if (entry.manual_url)
-      badges.push(
-        React.createElement('span', { className: 'badge bg-warning', key: 'url', style: { marginRight: 6 } }, 'url must be set manually')
-      );
-    return React.createElement(
-      'div',
-      { className: 'card mb-2', key: entry.id },
+    if (entry.requires_auth) badges.push(suiteBadge('auth', 'needs credentials', 'warning'));
+    if (entry.manual_url) badges.push(suiteBadge('url', 'url must be set manually', 'warning'));
+
+    return suitePanel(entry.id, [
+      React.createElement('div', { key: 'head', className: 'suite-title' }, entry.name),
+      React.createElement('div', { key: 'badges', style: { marginBottom: 8 } }, badges),
+      React.createElement('div', { key: 'desc', style: { marginBottom: 8 } }, entry.description),
+      entry.notes ? suiteNotice('notes', 'warning', entry.notes) : null,
+      entry.auth_hint ? suiteNotice('auth', 'info', entry.auth_hint) : null,
       React.createElement(
         'div',
-        { className: 'card-body' },
-        React.createElement('h5', { className: 'card-title', style: { marginBottom: 4 } }, entry.name),
-        React.createElement('div', { style: { marginBottom: 8 } }, badges),
-        React.createElement('p', { className: 'card-text', style: { marginBottom: 8 } }, entry.description),
-        entry.notes
-          ? React.createElement('div', { className: 'alert alert-warning', style: { padding: '6px 10px' } }, entry.notes)
-          : null,
-        entry.auth_hint
-          ? React.createElement('div', { className: 'alert alert-info', style: { padding: '6px 10px' } }, entry.auth_hint)
-          : null,
-        React.createElement(
-          'div',
-          { style: { opacity: 0.7, fontSize: 12, marginBottom: 8, wordBreak: 'break-all' } },
-          (entry.url || 'no url — set it on the feed') + ' · ' + entry.format + ' · ' + entry.licence
-        ),
-        createdId
-          ? React.createElement(
-              'a',
-              { className: 'btn btn-sm btn-primary', href: '/bo/dashboard/extensions/cloud-apim/waf/threatfeeds/edit/' + createdId },
-              React.createElement('i', { className: 'fas fa-arrow-right' }, null),
-              ' Open the created feed'
-            )
-          : React.createElement(
-              'button',
-              {
-                className: 'btn btn-sm btn-success',
-                type: 'button',
-                disabled: this.state.creating === entry.id,
-                onClick: () => this.create(entry),
-              },
-              React.createElement('i', { className: 'fas fa-plus' }, null),
-              this.state.creating === entry.id ? ' Creating…' : ' Create a feed from this source'
-            )
-      )
-    );
+        { key: 'meta', className: 'suite-meta', style: { marginBottom: 10 } },
+        (entry.url || 'no url — set it on the feed') + ' · ' + entry.format + ' · ' + entry.licence
+      ),
+      createdId
+        ? React.createElement(
+            'a',
+            {
+              key: 'open',
+              className: 'btn btn-sm btn-success',
+              href: '/bo/dashboard/extensions/cloud-apim/waf/threatfeeds/edit/' + createdId,
+            },
+            React.createElement('i', { className: 'fas fa-arrow-right' }, null),
+            ' Open the created feed'
+          )
+        : React.createElement(
+            'button',
+            {
+              key: 'create',
+              className: 'btn btn-sm btn-success',
+              type: 'button',
+              disabled: this.state.creating === entry.id,
+              onClick: () => this.create(entry),
+            },
+            React.createElement('i', { className: 'fas fa-plus' }, null),
+            this.state.creating === entry.id ? ' Creating…' : ' Create a feed from this source'
+          ),
+    ]);
   };
 
   render() {
     return React.createElement(
       'div',
       {},
-      React.createElement(
-        'div',
-        { className: 'alert alert-info' },
+      suiteNotice(
+        'intro',
+        'info',
         'Creating a feed copies this source into an editable Threat feed entity. Sources marked as needing credentials or a manual url are created disabled — fill in what is missing, then enable them. Verify every url and licence against the provider before enabling in production.'
       ),
-      this.state.error ? React.createElement('div', { className: 'alert alert-danger' }, this.state.error) : null,
+      this.state.error ? suiteNotice('error', 'danger', this.state.error) : null,
       this.state.entries.map(this.renderEntry)
     );
   }
@@ -500,22 +543,7 @@ class CrowdSecStatus extends Component {
         React.createElement(
           'div',
           { className: 'col-sm-10' },
-          React.createElement(
-            'table',
-            { className: 'table table-sm', style: { marginBottom: 8 } },
-            React.createElement(
-              'tbody',
-              {},
-              rows.map((row) =>
-                React.createElement(
-                  'tr',
-                  { key: row[0] },
-                  React.createElement('td', { style: { width: 220, opacity: 0.7 } }, row[0]),
-                  React.createElement('td', {}, row[1])
-                )
-              )
-            )
-          ),
+          suiteRows(rows, 220),
           React.createElement(
             'button',
             { className: 'btn btn-sm btn-success', type: 'button', onClick: this.sync, disabled: this.state.syncing },
@@ -532,7 +560,7 @@ class CrowdSecStatus extends Component {
           React.createElement(
             'div',
             { className: 'col-sm-10' },
-            React.createElement('div', { className: 'alert alert-danger', role: 'alert' }, error)
+            suiteNotice('err', 'danger', error)
           )
         ),
     ];

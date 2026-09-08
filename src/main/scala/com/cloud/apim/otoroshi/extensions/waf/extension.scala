@@ -175,7 +175,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |    return {
              |      id: extensionId,
              |      categories:[{
-             |        title: 'Cloud APIM - Security Suite',
+             |        title: 'Security Suite',
              |        description: 'Web application firewall, ip reputation and threat intelligence for Otoroshi',
              |        features: [
              |          {

@@ -132,7 +132,7 @@ object CloudApimIpReputationConfig {
 
 object CloudApimSecuritySuite {
   /** The single plugin-picker category every module of the suite declares. */
-  val category: NgPluginCategory = NgPluginCategory.Custom("Cloud APIM - Security Suite")
+  val category: NgPluginCategory = NgPluginCategory.Custom("Security Suite")
 }
 
 private[plugins] object ReputationSupport {
