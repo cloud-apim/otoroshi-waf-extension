@@ -45,6 +45,10 @@ jobs:
       - name: build
         run: npm run build
 
+      # one-time repository setup required before this can succeed:
+      #   Settings -> Pages -> Source: "GitHub Actions"
+      # (configure-pages has an `enablement` option, but it needs a PAT rather than GITHUB_TOKEN,
+      #  so it is not worth a managed secret for a setting you flip once)
       - name: configure pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
