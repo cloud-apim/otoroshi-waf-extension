@@ -45,8 +45,8 @@ jobs:
       - name: build
         run: npm run build
 
-      # one-time repository setup required before this can succeed:
-      #   Settings -> Pages -> Source: "GitHub Actions"
+      # requires Settings -> Pages -> Source: "GitHub Actions" on the repository. Already set
+      # here; a fork needs to do it once before its first run.
       # (configure-pages has an `enablement` option, but it needs a PAT rather than GITHUB_TOKEN,
       #  so it is not worth a managed secret for a setting you flip once)
       - name: configure pages
@@ -70,4 +70,4 @@ jobs:
     steps:
       - name: deploy to github pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
