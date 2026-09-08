@@ -23,12 +23,14 @@ import scala.util.{Random, Try}
 class ReputationDatastores(env: Env, extensionId: AdminExtensionId) {
   val threatFeedDatastore: ThreatFeedDatastore           = new KvThreatFeedDatastore(extensionId, env.datastores.redis, env)
   val crowdSecBouncerDatastore: CrowdSecBouncerDatastore = new KvCrowdSecBouncerDatastore(extensionId, env.datastores.redis, env)
+  val asnDatabaseDatastore: AsnDatabaseDatastore        = new KvAsnDatabaseDatastore(extensionId, env.datastores.redis, env)
 }
 
 class ReputationState {
 
   private val _feeds    = new UnboundedTrieMap[String, ThreatFeed]()
   private val _bouncers = new UnboundedTrieMap[String, CrowdSecBouncer]()
+  private val _asn      = new UnboundedTrieMap[String, AsnDatabase]()
 
   val registry: ReputationRegistry = new ReputationRegistry()
 
@@ -36,6 +38,12 @@ class ReputationState {
   def allThreatFeeds(): Seq[ThreatFeed]          = _feeds.values.toSeq
   def updateThreatFeeds(values: Seq[ThreatFeed]): Unit = {
     _feeds.addAll(values.map(v => (v.id, v))).remAll(_feeds.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  def asnDatabase(id: String): Option[AsnDatabase] = _asn.get(id)
+  def allAsnDatabases(): Seq[AsnDatabase]         = _asn.values.toSeq
+  def updateAsnDatabases(values: Seq[AsnDatabase]): Unit = {
+    _asn.addAll(values.map(v => (v.id, v))).remAll(_asn.keySet.toSeq.diff(values.map(_.id)))
   }
 
   def crowdSecBouncer(id: String): Option[CrowdSecBouncer] = _bouncers.get(id)
@@ -68,7 +76,8 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
   private val http: ReputationHttpClient = new EnvHttpClient(env)
 
   val states: ReputationState  = new ReputationState()
-  val refresher: FeedRefresher = new FeedRefresher(http, states.registry, logger)
+  val refresher: FeedRefresher   = new FeedRefresher(http, states.registry, logger)
+  val asnRefresher: AsnRefresher = new AsnRefresher(http, states.registry, logger)
   val crowdsec: CrowdSecClient = new CrowdSecClient(http, states.registry, logger)
 
   private val ticker   = new AtomicReference[Option[Cancellable]](None)
@@ -125,9 +134,12 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
     for {
       feeds    <- datastores.threatFeedDatastore.findAllAndFillSecrets()
       bouncers <- datastores.crowdSecBouncerDatastore.findAllAndFillSecrets()
+      asnDbs   <- datastores.asnDatabaseDatastore.findAllAndFillSecrets()
     } yield {
       states.updateThreatFeeds(feeds)
       states.updateCrowdSecBouncers(bouncers)
+      states.updateAsnDatabases(asnDbs)
+      states.registry.retainAsnSnapshots(asnDbs.map(_.id).toSet)
       // drop the runtime index of anything that no longer exists
       states.registry.retainSnapshots(feeds.map(_.id).toSet)
       val bouncerIds = bouncers.map(_.id).toSet
@@ -139,7 +151,8 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
 
   def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = Seq(
     AdminExtensionEntity(ThreatFeed.resource(env, datastores, states)),
-    AdminExtensionEntity(CrowdSecBouncer.resource(env, datastores, states))
+    AdminExtensionEntity(CrowdSecBouncer.resource(env, datastores, states)),
+    AdminExtensionEntity(AsnDatabase.resource(env, datastores, states))
   )
 
   // -----------------------------------------------------------------------------------------------
@@ -151,6 +164,9 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
       val now = System.currentTimeMillis()
       states.allThreatFeeds().filter(_.usable).foreach { feed =>
         guard(s"feed:${feed.id}", refresher.isDue(feed, now))(refresher.refresh(feed).map(_ => ()))
+      }
+      states.allAsnDatabases().filter(_.usable).foreach { db =>
+        guard(s"asn:${db.id}", asnRefresher.isDue(db, now))(asnRefresher.refresh(db).map(_ => ()))
       }
       states.allCrowdSecBouncers().foreach { bouncer =>
         guard(s"pull:${bouncer.id}", bouncer.pullUsable && crowdsec.isPullDue(bouncer, now))(
@@ -183,7 +199,7 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
                 else feedIds.flatMap(states.threatFeed).filter(_.enabled)
     val bouncers = if (bouncerIds.isEmpty) states.allCrowdSecBouncers().filter(_.enabled)
                    else bouncerIds.flatMap(states.crowdSecBouncer).filter(_.enabled)
-    states.registry.lookup(ip, feeds, bouncers)
+    states.registry.lookup(ip, feeds, bouncers, states.allAsnDatabases().filter(_.enabled))
   }
 
   /**
@@ -279,6 +295,15 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
         "previous" -> states.registry.previousSnapshot(feed.id).map(_.json).getOrElse(JsNull).asValue
       )
     }
+    val asn = states.allAsnDatabases().map { db =>
+      Json.obj(
+        "id"       -> db.id,
+        "name"     -> db.name,
+        "enabled"  -> db.enabled,
+        "url"      -> db.url,
+        "snapshot" -> states.registry.asnSnapshot(db.id).map(_.json).getOrElse(JsNull).asValue
+      )
+    }
     val bouncers = states.allCrowdSecBouncers().map { bouncer =>
       Json.obj(
         "id"            -> bouncer.id,
@@ -292,7 +317,7 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
         "store"         -> states.registry.crowdSecStoreOpt(bouncer.id).map(_.status).getOrElse(JsNull).asValue
       )
     }
-    Json.obj("feeds" -> JsArray(feeds), "crowdsec" -> JsArray(bouncers))
+    Json.obj("feeds" -> JsArray(feeds), "crowdsec" -> JsArray(bouncers), "asn" -> JsArray(asn))
   }
 
   private def handleTemplate(body: JsValue): Future[Result] = {
@@ -302,7 +327,16 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
     }
   }
 
+  private def handleRefreshAsn(): Future[Result] = {
+    val dbs = states.allAsnDatabases().filter(_.usable)
+    if (dbs.isEmpty) Results.Ok(Json.obj("done" -> false, "error" -> "no usable asn database")).vfuture
+    else Future.sequence(dbs.map(asnRefresher.refresh)).map { snaps =>
+      Results.Ok(Json.obj("done" -> true, "snapshots" -> JsArray(snaps.map(_.json))))
+    }
+  }
+
   private def handleRefresh(body: JsValue): Future[Result] = {
+    if (body.select("asn").asOpt[Boolean].contains(true)) return handleRefreshAsn()
     val requested = body.select("feed").asOptString
     val feeds     = requested match {
       case Some(id) => states.threatFeed(id).toSeq

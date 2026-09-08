@@ -67,7 +67,7 @@ All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authent
 | `GET` | `/_catalog` | — | The curated source catalog |
 | `GET` | `/_status` | — | Every feed and bouncer with its runtime state |
 | `POST` | `/_template` | `{"entry":"tor-exit-nodes"}` | Build a `ThreatFeed` from a catalog entry |
-| `POST` | `/_refresh` | `{"feed":"<id>"}` or `{}` | Refresh one feed, or all of them |
+| `POST` | `/_refresh` | `{"feed":"<id>"}`, `{}`, or `{"asn":true}` | Refresh one feed, all of them, or the ASN table |
 | `POST` | `/_rollback` | `{"feed":"<id>"}` | Restore the previous snapshot |
 | `POST` | `/_lookup` | `{"ip":"1.2.3.4"}` | Evaluate an address against every enabled source |
 | `POST` | `/_crowdsec_sync` | `{"bouncer":"<id>"}` or `{}` | Sync one bouncer, or all of them |

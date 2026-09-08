@@ -6,7 +6,7 @@ description: Every field of WafConfig, ThreatFeed and CrowdSecBouncer.
 
 # Entity reference
 
-All four entities are ordinary Otoroshi entities: full CRUD in the admin UI, the admin API,
+All five entities are ordinary Otoroshi entities: full CRUD in the admin UI, the admin API,
 import/export, and Kubernetes CRDs. They share the API group `waf.extensions.cloud-apim.com/v1` and
 carry the usual `_loc`, `id`, `name`, `description`, `tags` and `metadata` fields.
 
@@ -82,6 +82,35 @@ carry the usual `_loc`, `id`, `name`, `description`, `tags` and `metadata` field
 | `push_decision_duration` | string | `4h` |
 | `push_waf_detections` | boolean | `false` |
 | `push_waf_monitored` | boolean | `false` |
+
+## AsnDatabase
+
+`asn-databases` · `waf.extensions.cloud-apim.com/AsnDatabase`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `url` | string | `https://iptoasn.com/data/ip2asn-v4.tsv.gz` |
+| `gzip` | boolean | `true` |
+| `format` | `iptoasn_tsv` | `iptoasn_tsv` |
+| `refresh_interval_seconds` | number | `86400` |
+| `timeout_millis` | number | `120000` |
+| `max_entries` | number | `1500000` |
+| `categories` | AsnCategory[] | cdn (0), vpn (30), hosting (15) |
+
+### AsnCategory
+
+| Field | Type | Default |
+|---|---|---|
+| `name` | string | — |
+| `weight` | number | `0` |
+| `action` | `block` \| `monitor` | `monitor` |
+| `tag` | string | `asn:<name>` |
+| `org_contains` | string[] | `[]` — case-insensitive substrings of the organisation name |
+| `asns` | number[] | `[]` — explicit AS numbers, matched first |
+
+The list is **ordered**: the first matching category wins. See
+[ASN classification](../reputation/asn.mdx#order-is-the-whole-trick).
 
 ## ThreatPolicy
 

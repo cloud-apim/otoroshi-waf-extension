@@ -16,7 +16,14 @@ final case class HttpCall(
     followRedirects: Boolean = true
 )
 
-final case class HttpResult(status: Int, body: String, headers: Map[String, Seq[String]]) {
+/**
+ * The bytes are kept raw and decoded lazily.
+ *
+ * Most feeds are text, but an ASN table ships as a gzipped file — decoding that to a String on the
+ * way in would corrupt it before anyone got the chance to decompress it.
+ */
+final case class HttpResult(status: Int, bodyBytes: Array[Byte], headers: Map[String, Seq[String]]) {
+  lazy val body: String = new String(bodyBytes, java.nio.charset.StandardCharsets.UTF_8)
   def header(name: String): Option[String] =
     headers.collectFirst { case (key, values) if key.equalsIgnoreCase(name) => values }.flatMap(_.headOption)
   def isSuccess: Boolean = status >= 200 && status < 300
@@ -49,7 +56,7 @@ class EnvHttpClient(env: Env) extends ReputationHttpClient {
       case None       => base
     }
     prepared.execute(request.method.toUpperCase).map { response =>
-      HttpResult(response.status, response.body, response.headers.view.mapValues(_.toSeq).toMap)
+      HttpResult(response.status, response.bodyAsBytes.toArray, response.headers.view.mapValues(_.toSeq).toMap)
     }
   }
 }

@@ -30,7 +30,7 @@ class JdkHttpClient(using ec: ExecutionContext) extends ReputationHttpClient {
       case None       => HttpRequest.BodyPublishers.noBody()
     }
     builder.method(request.method.toUpperCase, publisher)
-    val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+    val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray())
     HttpResult(
       response.statusCode(),
       response.body(),

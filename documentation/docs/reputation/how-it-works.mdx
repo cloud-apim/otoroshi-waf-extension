@@ -16,6 +16,7 @@ Two kinds of source contribute:
 
 - **[Threat feeds](./threat-feeds.mdx)** — lists of addresses or netblocks fetched on a schedule
 - **[CrowdSec](./crowdsec.mdx)** — decisions streamed from a Local API
+- **[ASN classification](./asn.mdx)** — what kind of network the caller sits on
 
 Each source carries a **weight** (0–100) and an **action** (`block` or `monitor`). When a request
 arrives, every enabled source is consulted and the matches are collected into a verdict:

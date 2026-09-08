@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.waf.reputation
 
-import com.cloud.apim.otoroshi.extensions.waf.entities.{CrowdSecBouncer, ThreatFeed}
+import com.cloud.apim.otoroshi.extensions.waf.entities.{AsnDatabase, CrowdSecBouncer, ThreatFeed}
 import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
 
@@ -190,6 +190,7 @@ final class CrowdSecStore {
 final class ReputationRegistry {
 
   private val snapshots = new TrieMap[String, FeedSnapshot]()
+  private val asnSnapshots = new TrieMap[String, AsnSnapshot]()
   private val previous  = new TrieMap[String, FeedSnapshot]()
   private val bouncers  = new TrieMap[String, CrowdSecStore]()
 
@@ -229,12 +230,22 @@ final class ReputationRegistry {
     previous.keySet.diff(ids).foreach(previous.remove)
   }
 
+  def asnSnapshot(id: String): Option[AsnSnapshot]       = asnSnapshots.get(id)
+  def putAsnSnapshot(id: String, snap: AsnSnapshot): Unit = { asnSnapshots.put(id, snap); () }
+  def allAsnSnapshots: Map[String, AsnSnapshot]           = asnSnapshots.readOnlySnapshot().toMap
+  def retainAsnSnapshots(ids: Set[String]): Unit          = asnSnapshots.keySet.diff(ids).foreach(asnSnapshots.remove)
+
   def crowdSecStore(bouncerId: String): CrowdSecStore  = bouncers.getOrElseUpdate(bouncerId, new CrowdSecStore())
   def crowdSecStoreOpt(id: String): Option[CrowdSecStore] = bouncers.get(id)
   def allCrowdSecStores: Map[String, CrowdSecStore]    = bouncers.readOnlySnapshot().toMap
   def retainCrowdSecStores(ids: Set[String]): Unit     = bouncers.keySet.diff(ids).foreach(bouncers.remove)
 
-  def lookup(ip: String, feeds: Seq[ThreatFeed], crowdsec: Seq[CrowdSecBouncer]): ReputationVerdict = {
+  def lookup(
+      ip: String,
+      feeds: Seq[ThreatFeed],
+      crowdsec: Seq[CrowdSecBouncer],
+      asnDatabases: Seq[AsnDatabase] = Seq.empty
+  ): ReputationVerdict = {
     if (ip.isEmpty) ReputationVerdict.empty(ip)
     else {
       val feedHits = feeds.iterator.flatMap { feed =>
@@ -263,12 +274,27 @@ final class ReputationRegistry {
           )
         }
       }
-      ReputationVerdict(ip, (feedHits ++ crowdSecHits).toList)
+      // the network the caller sits on: a signal, deliberately never a verdict on its own
+      val asnHits = asnDatabases.iterator.flatMap { db =>
+        asnSnapshots.get(db.id).flatMap(_.ranges.get(ip)).map(db.classify).filter(m => m.weight > 0 || m.blocking).map { m =>
+          ReputationHit(
+            kind = "asn",
+            sourceId = db.id,
+            sourceName = db.name,
+            tag = m.tag,
+            weight = m.weight,
+            blocking = m.blocking,
+            detail = Some(s"AS${m.record.asn} ${m.record.org}${m.category.map(c => s" — $c").getOrElse("")}")
+          )
+        }
+      }
+      ReputationVerdict(ip, (feedHits ++ crowdSecHits ++ asnHits).toList)
     }
   }
 
   def status: JsValue = Json.obj(
     "feeds"    -> JsArray(allSnapshots.map(_.json)),
-    "crowdsec" -> JsObject(allCrowdSecStores.view.mapValues(_.status).toMap)
+    "crowdsec" -> JsObject(allCrowdSecStores.view.mapValues(_.status).toMap),
+    "asn"      -> JsObject(allAsnSnapshots.view.mapValues(_.json).toMap)
   )
 }

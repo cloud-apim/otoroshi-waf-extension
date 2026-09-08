@@ -739,6 +739,322 @@ class CrowdSecBouncersPage extends Component {
   }
 }
 
+
+class AsnStatus extends Component {
+  state = { status: null, refreshing: false, error: null };
+
+  componentDidMount() {
+    this.load();
+  }
+
+  load = () => {
+    reputationCall('/_status').then((r) => {
+      const all = (r && r.asn) || [];
+      const id = this.props.rawValue && this.props.rawValue.id;
+      this.setState({ status: all.filter((d) => d.id === id)[0] || null });
+    });
+  };
+
+  refresh = () => {
+    this.setState({ refreshing: true, error: null });
+    reputationCall('/_refresh', { asn: true }).then((r) => {
+      this.setState({ refreshing: false });
+      if (!r.done) this.setState({ error: r.error || 'refresh failed' });
+      this.load();
+    });
+  };
+
+  render() {
+    const snap = this.state.status && this.state.status.snapshot;
+    const rows = [];
+    if (snap) {
+      rows.push(['Networks indexed', String(snap.entries)]);
+      rows.push(['Rejected rows', String(snap.rejected)]);
+      rows.push(['Last refresh', reputationAgo(snap.fetched_at)]);
+    } else {
+      rows.push(['Status', 'never refreshed on this node yet']);
+    }
+    const error = this.state.error || (snap && snap.error);
+    return [
+      React.createElement(
+        'div',
+        { className: 'row mb-3', key: 'status' },
+        React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Table'),
+        React.createElement(
+          'div',
+          { className: 'col-sm-10' },
+          suiteRows(rows, 190),
+          suiteNotice(
+            'cost',
+            'info',
+            'The table is a few hundred thousand networks and is fetched in full. Once a day is plenty — it changes slowly.'
+          ),
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-success', type: 'button', onClick: this.refresh, disabled: this.state.refreshing },
+            React.createElement('i', { className: 'fas fa-sync' }, null),
+            this.state.refreshing ? ' Refreshing…' : ' Refresh now'
+          )
+        )
+      ),
+      error &&
+        React.createElement(
+          'div',
+          { className: 'row mb-3', key: 'error' },
+          React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
+          React.createElement('div', { className: 'col-sm-10' }, suiteNotice('err', 'danger', error))
+        ),
+    ];
+  }
+}
+
+class AsnCategoriesEditor extends Component {
+  change = (idx, field, value) => {
+    this.props.onChange((this.props.value || []).map((c, i) => (i === idx ? Object.assign({}, c, { [field]: value }) : c)));
+  };
+
+  move = (idx, delta) => {
+    const cats = (this.props.value || []).slice();
+    const to = idx + delta;
+    if (to < 0 || to >= cats.length) return;
+    const tmp = cats[idx];
+    cats[idx] = cats[to];
+    cats[to] = tmp;
+    this.props.onChange(cats);
+  };
+
+  add = () =>
+    this.props.onChange(
+      (this.props.value || []).concat([{ name: 'new-category', weight: 10, action: 'monitor', org_contains: [], asns: [] }])
+    );
+
+  remove = (idx) => this.props.onChange((this.props.value || []).filter((_, i) => i !== idx));
+
+  list = (idx, field, label, help, parse) =>
+    React.createElement(
+      'div',
+      { key: field, style: { display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 260 } },
+      React.createElement('span', { className: 'suite-meta' }, label),
+      React.createElement('input', {
+        type: 'text',
+        className: 'form-control',
+        placeholder: help,
+        value: ((this.props.value || [])[idx][field] || []).join(', '),
+        onChange: (e) =>
+          this.change(
+            idx,
+            field,
+            e.target.value
+              .split(',')
+              .map((v) => v.trim())
+              .filter((v) => v.length)
+              .map(parse)
+              .filter((v) => v === 0 || v)
+          ),
+      })
+    );
+
+  renderCategory = (cat, idx, all) =>
+    suitePanel('cat-' + idx, [
+      React.createElement(
+        'div',
+        { key: 'top', style: { display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 } },
+        React.createElement(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+          React.createElement('span', { className: 'suite-meta' }, 'Category'),
+          React.createElement('input', {
+            type: 'text',
+            className: 'form-control',
+            style: { width: 150 },
+            value: cat.name,
+            onChange: (e) => this.change(idx, 'name', e.target.value),
+          })
+        ),
+        React.createElement(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+          React.createElement('span', { className: 'suite-meta' }, 'Weight'),
+          React.createElement('input', {
+            type: 'number',
+            className: 'form-control',
+            style: { width: 100 },
+            value: cat.weight,
+            onChange: (e) => this.change(idx, 'weight', parseInt(e.target.value || '0', 10)),
+          })
+        ),
+        React.createElement(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+          React.createElement('span', { className: 'suite-meta' }, 'Action'),
+          React.createElement(
+            'select',
+            {
+              className: 'form-control',
+              style: { width: 130 },
+              value: cat.action || 'monitor',
+              onChange: (e) => this.change(idx, 'action', e.target.value),
+            },
+            React.createElement('option', { value: 'monitor' }, 'Monitor'),
+            React.createElement('option', { value: 'block' }, 'Block')
+          )
+        ),
+        React.createElement(
+          'div',
+          { style: { display: 'flex', gap: 4, marginLeft: 'auto' } },
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-primary', type: 'button', disabled: idx === 0, onClick: () => this.move(idx, -1) },
+            React.createElement('i', { className: 'fas fa-arrow-up' }, null)
+          ),
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-primary', type: 'button', disabled: idx === all.length - 1, onClick: () => this.move(idx, 1) },
+            React.createElement('i', { className: 'fas fa-arrow-down' }, null)
+          ),
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-danger', type: 'button', onClick: () => this.remove(idx) },
+            React.createElement('i', { className: 'fas fa-trash' }, null)
+          )
+        )
+      ),
+      React.createElement(
+        'div',
+        { key: 'match', style: { display: 'flex', gap: 12, flexWrap: 'wrap' } },
+        this.list(idx, 'org_contains', 'Organisation name contains', 'amazon, ovh, hosting', (v) => v),
+        this.list(idx, 'asns', 'AS numbers', '16509, 24940', (v) => parseInt(v, 10))
+      ),
+      cat.action === 'block'
+        ? suiteNotice(
+            'warn-' + idx,
+            'warning',
+            'Blocking on a network class refuses every legitimate server-to-server caller from it too. Reserve it for classes you are sure about.'
+          )
+        : null,
+    ]);
+
+  render() {
+    const cats = this.props.value || [];
+    return React.createElement(
+      'div',
+      { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Categories'),
+      React.createElement(
+        'div',
+        { className: 'col-sm-10' },
+        suiteNotice(
+          'order',
+          'info',
+          'Order matters: the first category that matches wins. "CLOUDFLARENET" contains "cloud", which is why the CDN category has to sit above hosting.'
+        ),
+        cats.map((c, i) => this.renderCategory(c, i, cats)),
+        React.createElement(
+          'button',
+          { className: 'btn btn-sm btn-success', type: 'button', onClick: this.add },
+          React.createElement('i', { className: 'fas fa-plus' }, null),
+          ' Add a category'
+        )
+      )
+    );
+  }
+}
+
+class AsnDatabasesPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id', placeholder: '---' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    url: { type: 'string', props: { label: 'Url' } },
+    gzip: { type: 'bool', props: { label: 'Gzipped payload', help: 'The published tables ship as .tsv.gz' } },
+    format: {
+      type: 'select',
+      props: { label: 'Format', possibleValues: [{ label: 'iptoasn TSV', value: 'iptoasn_tsv' }] },
+    },
+    refresh_interval_seconds: { type: 'number', props: { label: 'Refresh interval', suffix: 'seconds' } },
+    timeout_millis: { type: 'number', props: { label: 'Timeout', suffix: 'ms' } },
+    max_entries: { type: 'number', props: { label: 'Max entries' } },
+    categories: { type: AsnCategoriesEditor, props: {} },
+    status: { type: AsnStatus, props: {} },
+    lookup: { type: ReputationLookup, props: {} },
+  };
+
+  columns = [
+    { title: 'Name', filterId: 'name', content: (item) => item.name },
+    { title: 'Enabled', filterId: 'enabled', content: (item) => (item.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Categories', content: (item) => (item.categories || []).map((c) => c.name).join(', ') },
+  ];
+
+  formFlow = [
+    '_loc', 'id', 'name', 'description',
+    '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<Source', 'enabled', 'url', 'gzip', 'format', 'refresh_interval_seconds', 'timeout_millis', 'max_entries',
+    '<<<Classification', 'categories',
+    '<<<Status', 'status',
+    '>>>Test', 'lookup',
+  ];
+
+  componentDidMount() {
+    this.props.setTitle('ASN databases');
+  }
+
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'asn-databases');
+
+  render() {
+    return React.createElement(
+      Table,
+      {
+        parentProps: this.props,
+        selfUrl: 'extensions/cloud-apim/waf/asndatabases',
+        defaultTitle: 'All ASN databases',
+        defaultValue: () => ({
+          id: 'asn-database_' + uuid(),
+          name: 'ASN database',
+          description: 'Resolves callers to their network, and classifies that network',
+          tags: [],
+          metadata: {},
+          enabled: true,
+          url: 'https://iptoasn.com/data/ip2asn-v4.tsv.gz',
+          gzip: true,
+          format: 'iptoasn_tsv',
+          refresh_interval_seconds: 86400,
+          timeout_millis: 120000,
+          max_entries: 1500000,
+          categories: [
+            { name: 'cdn', weight: 0, action: 'monitor', org_contains: ['cloudflare', 'fastly', 'akamai'], asns: [13335, 54113, 20940] },
+            { name: 'vpn', weight: 30, action: 'monitor', org_contains: ['nordvpn', 'mullvad', 'm247', 'vpn'], asns: [9009] },
+            { name: 'hosting', weight: 15, action: 'monitor', org_contains: ['amazon', 'google', 'ovh', 'hetzner', 'hosting', 'cloud'], asns: [16509, 15169, 16276, 24940, 14061] },
+          ],
+        }),
+        itemName: 'ASN database',
+        formSchema: this.formSchema,
+        formFlow: this.formFlow,
+        columns: this.columns,
+        stayAfterSave: true,
+        fetchItems: (paginationState) => this.client.findAll(),
+        updateItem: this.client.update,
+        deleteItem: this.client.delete,
+        createItem: this.client.create,
+        navigateTo: (item) => {
+          window.location = `/bo/dashboard/extensions/cloud-apim/waf/asndatabases/edit/${item.id}`;
+        },
+        itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/waf/asndatabases/edit/${item.id}`,
+        showActions: true,
+        showLink: true,
+        rowNavigation: true,
+        extractKey: (item) => item.id,
+        export: true,
+        kubernetesKind: 'waf.extensions.cloud-apim.com/AsnDatabase',
+      },
+      null
+    );
+  }
+}
+
 const ReputationFeatures = [
   {
     title: 'Threat feeds',
@@ -757,6 +1073,14 @@ const ReputationFeatures = [
     icon: () => 'fa-book',
   },
   {
+    title: 'ASN databases',
+    description: 'Resolve callers to their network, and classify it',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/asndatabases',
+    display: () => true,
+    icon: () => 'fa-project-diagram',
+  },
+  {
     title: 'CrowdSec bouncers',
     description: 'CrowdSec Local API connections, in both directions',
     absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
@@ -769,6 +1093,7 @@ const ReputationFeatures = [
 const ReputationSidebarItems = [
   { title: 'Threat feeds', text: 'IP reputation feeds', path: 'extensions/cloud-apim/waf/threatfeeds', icon: 'shield-alt' },
   { title: 'Threat feed catalog', text: 'Curated sources', path: 'extensions/cloud-apim/waf/threatfeedcatalog', icon: 'book' },
+  { title: 'ASN databases', text: 'Network classification', path: 'extensions/cloud-apim/waf/asndatabases', icon: 'project-diagram' },
   { title: 'CrowdSec bouncers', text: 'CrowdSec connections', path: 'extensions/cloud-apim/waf/crowdsecbouncers', icon: 'crow' },
 ];
 
@@ -800,6 +1125,18 @@ const ReputationSearchItems = [
 ];
 
 const ReputationRoutes = [
+  {
+    path: '/extensions/cloud-apim/waf/asndatabases/:taction/:titem',
+    component: (props) => React.createElement(AsnDatabasesPage, props, null),
+  },
+  {
+    path: '/extensions/cloud-apim/waf/asndatabases/:taction',
+    component: (props) => React.createElement(AsnDatabasesPage, props, null),
+  },
+  {
+    path: '/extensions/cloud-apim/waf/asndatabases',
+    component: (props) => React.createElement(AsnDatabasesPage, props, null),
+  },
   {
     path: '/extensions/cloud-apim/waf/threatfeedcatalog',
     component: (props) => React.createElement(ThreatFeedCatalogPage, props, null),
