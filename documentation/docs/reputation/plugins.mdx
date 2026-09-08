@@ -32,6 +32,7 @@ A route plugin, evaluated during access validation — before the WAF reads any 
 | `status` | `403` | Status returned on a denial |
 | `feeds` | `[]` | Feed ids to consult. **Empty means every enabled feed** |
 | `crowdsec` | `[]` | Bouncer ids to consult. **Empty means every enabled bouncer** |
+| *(none)* | — | ASN databases are not listed here: every enabled one is consulted. See the note below |
 | `report_to_crowdsec` | `false` | Push denials back to CrowdSec as alerts |
 | `passthrough` | `[]` | Addresses and CIDRs that bypass reputation entirely |
 
@@ -41,6 +42,16 @@ the score reaches `score_threshold`.
 :::tip Empty lists mean "everything"
 Leaving `feeds` and `crowdsec` empty is the usual setup — sources are enabled or disabled on the
 entity, and every route inherits that. Name ids explicitly only when a route needs a different set.
+:::
+
+:::note ASN databases are always consulted
+[ASN classification](./asn.mdx) has no plugin of its own — it is a third source inside this one.
+Every **enabled** `AsnDatabase` is consulted on every evaluation, and unlike `feeds` and `crowdsec`
+there is no per-route list to narrow it.
+
+That is deliberate rather than an oversight: ASN ships as a low weight and never blocks on its own,
+so it is a signal you want everywhere or nowhere. Disable the database itself to switch it off,
+or set every category to weight `0`.
 :::
 
 ## Cloud APIM Security Suite - IP reputation (Incoming Request Validator)

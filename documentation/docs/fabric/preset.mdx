@@ -22,7 +22,7 @@ at request time, into the whole chain with explicit ordering indices.
 |---|---|---|---|
 | 1 | Threat gate | access validation | `1.0` |
 | 2 | Bot guard | access validation | `2.0` |
-| 3 | IP reputation | access validation | `3.0` |
+| 3 | IP reputation — feeds, CrowdSec and ASN | access validation | `3.0` |
 | 4 | Cloud APIM WAF | request transformation | `1.0` |
 | 5 | Threat response | request transformation | `900.0` |
 
@@ -67,6 +67,7 @@ the preset carry it.
 | `waf_config` | *(empty)* | Required for the WAF section to expand at all. |
 | `gate` · `bots` · `reputation` · `waf` · `response` | `true` | Section switches. |
 | `reputation_mode` | `block` | `monitor` scores without ever denying on its own, leaving the decision to the response. |
+| *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 
 A section switched off expands into **nothing**, not into a disabled slot. A plugin that is present
@@ -94,7 +95,8 @@ The preset covers the common shape. Build the chain slot by slot when you need:
 - **more than one IP reputation slot**, for instance a strict set of feeds on `/admin` and a
   permissive one elsewhere;
 - **the full reputation configuration** — score thresholds, explicit feed lists, CrowdSec reporting,
-  passthrough ranges. The preset only exposes the mode;
+  passthrough ranges. The preset only exposes the mode. (ASN databases are not per-route in either
+  case: every enabled one is always consulted.);
 - **the WAF's fabric weights** (`block_weight`, `match_weight`) tuned away from their defaults;
 - **fabric plugins interleaved with your own**, where a custom plugin has to sit between two of them.
 

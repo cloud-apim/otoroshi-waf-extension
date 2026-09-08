@@ -1,12 +1,14 @@
 # Cloud APIM - Security Suite for Otoroshi
 
 A security extension for [Otoroshi](https://www.otoroshi.io/): a JVM-native web application firewall
-speaking ModSecurity SecLang with the OWASP Core Rule Set embedded, plus ip reputation fed by threat
-intelligence feeds and CrowdSec.
+speaking ModSecurity SecLang with the OWASP Core Rule Set embedded, ip reputation fed by threat
+intelligence feeds, CrowdSec and the public routing table, bot and AI-crawler control with an
+embedded proof-of-work challenge — and a decision fabric that makes those detectors feed one shared
+judgement instead of each blocking on its own.
 
 📖 **[Full documentation](https://cloud-apim.github.io/otoroshi-waf-extension/)**
 
-This extension is built on top of of the following open-source Cloud APIM libraries:
+This extension is built on top of the following open-source Cloud APIM libraries:
 
 - [seclang-engine](https://github.com/cloud-apim/seclang-engine) - A JVM-native implementation of the ModSecurity SecLang DSL
 - [seclang-engine-coreruleset](https://github.com/cloud-apim/seclang-engine-coreruleset) - The OWASP Core Rule Set (CRS) packaged for seclang-engine
@@ -26,12 +28,30 @@ This extension is built on top of of the following open-source Cloud APIM librar
 
 - **Threat intelligence feeds**: Match callers against blocklists and cloud provider ranges, with a catalog of 14 curated sources
 - **CrowdSec integration**: Consume decisions from a Local API, and report WAF detections back as alerts
+- **ASN classification**: Resolve the caller to its network from the public routing table, shipped as a low weight and never as a block — a datacenter is not a verdict
 - **Weighted scoring**: Sources carry a weight and an action, so weak signals accumulate instead of forcing a binary judgement
 - **Nothing blocking on the request path**: In-memory range index, scheduled refreshes, fail-open on every external dependency
 
-### Both
+### Decision fabric
+
+- **One shared threat score**: Detectors contribute weighted signals rather than each blocking alone, so a request is judged on the accumulation instead of on whichever check happens to fire first
+- **Graded response**: A threat policy maps score tiers to `log`, `tarpit`, `challenge`, `deny` or `ban` — and defaults to dry run, recording what it would have done and enforcing nothing
+- **Cluster-wide bans**: A shared ban store and a cross-request ledger, so a caller banned on one node is banned on every node
+- **Correlated incidents**: Normalised ECS-shaped events grouped into one incident rather than nine thousand alerts
+- **One preset plugin**: Lays the whole chain down on a route in the one order that makes it work, with each section switchable
+
+### Bots and automated traffic
+
+- **Embedded proof-of-work challenge**: Self-contained, no third party and no external call, with the difficulty scaled by the caller's score
+- **Pluggable CAPTCHA backends**: Friendly Captcha and captcha.eu for a European deployment, Turnstile and hCaptcha otherwise, all behind one mechanism
+- **Verified crawlers**: Forward-confirmed reverse DNS over 27 known signatures, which turns a forged `Googlebot` from a suspicion into a demonstrated lie
+- **AI crawler policy**: Per-category rules, actually enforced, with a matching `robots.txt` and `llms.txt` generated from them
+- **Honeypots**: Decoy paths and canary tokens, evaluated before routing
+
+### Everywhere
 
 - **Analytics events**: Every detection is an Otoroshi analytic event, routable through any data exporter
+- **Backwards compatible**: Entities and plugins that predate the security suite are unchanged, and keep working without being edited
 
 ## Requirements
 

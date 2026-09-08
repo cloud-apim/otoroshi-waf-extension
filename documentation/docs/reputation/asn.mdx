@@ -71,6 +71,18 @@ and the table costs a few tens of megabytes of heap. Once a day is plenty; routi
 
 A failed refresh keeps the previous table, like every other source here.
 
+## How it reaches a request
+
+There is **no ASN plugin**. The classification is a third source inside
+[IP reputation](./plugins.mdx) — the route plugin and the global validator both consult it, and so
+does the [preset](../fabric/preset.mdx) through its reputation section.
+
+One consequence worth knowing: where `feeds` and `crowdsec` can be narrowed to a list of ids per
+route, **every enabled ASN database is consulted, always**. There is no per-route selection. Given
+that ASN ships as a low weight and never blocks on its own, a signal you want on one route is
+almost always a signal you want on all of them — and the switch is the `enabled` flag on the
+database itself.
+
 ## Reading the result
 
 An ASN hit appears in the reputation verdict alongside feed and CrowdSec hits:
