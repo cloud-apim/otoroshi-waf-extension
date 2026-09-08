@@ -1,6 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf
 
 import com.cloud.apim.otoroshi.extensions.waf.entities.*
+import com.cloud.apim.otoroshi.extensions.waf.reputation.ReputationModule
 import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.*
 import com.cloud.apim.seclang.scaladsl.SecLang
@@ -75,6 +76,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
   private lazy val datastores = new WafExtensionDatastores(env, id)
   lazy val states = new WafExtensionState()
+  // ip reputation lives in its own module so the waf entities, plugins and storage keys stay untouched
+  lazy val reputation = new ReputationModule(env, id, configuration)
   private val logger = Logger("cloud-apim-waf-extension")
   private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
@@ -83,15 +86,17 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   val factory = SecLang.factory(presets, config, integration)
 
   override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.Waf")
-  override def name: String = "WAF Extension"
-  override def description: Option[String] = "This extensions provides a JVM implementation of a WAF providing ModSecurity Seclang support and including the CRS for Otoroshi".some
+  override def name: String = "Cloud APIM - Security Suite"
+  override def description: Option[String] = "A security suite for Otoroshi: a JVM implementation of a WAF with ModSecurity SecLang support and the OWASP CRS, plus ip reputation from threat intelligence feeds and CrowdSec".some
   override def enabled: Boolean = env.isDev || configuration.getOptional[Boolean]("enabled").getOrElse(false)
 
   override def start(): Unit = {
-    logger.info("the 'WAF Extension' is enabled !")
+    logger.info("the 'Cloud APIM - Security Suite' extension is enabled !")
+    reputation.start()
   }
 
   override def stop(): Unit = {
+    reputation.stop()
   }
 
   override def frontendExtensions(): Seq[AdminExtensionFrontendExtension] = Seq(
@@ -105,6 +110,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     given Env              = env
     for {
       configs <- datastores.wafConfigDatastore.findAllAndFillSecrets()
+      _       <- reputation.syncStates()
     } yield {
       states.updateConfigs(configs)
       ()
@@ -114,7 +120,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   override def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = {
     Seq(
       AdminExtensionEntity(CloudApimWafConfig.resource(env, datastores, states)),
-    )
+    ) ++ reputation.entities()
   }
 
   def getResourceCode(path: String): String = {
@@ -127,12 +133,20 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
   lazy val wafConfigsPageCode = getResourceCode("cloudapim/extensions/waf/WafConfigsPage.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/waf/icon.svg")
+  lazy val reputationPagesCode = getResourceCode("cloudapim/extensions/waf/ReputationPages.js")
+  lazy val reputationImgCode = getResourceCode("cloudapim/extensions/waf/reputation-icon.svg")
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
       path = "/extensions/assets/cloud-apim/extensions/waf/icon.svg",
       handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
         Results.Ok(imgCode).as("image/svg+xml").vfuture
+      }
+    ),
+    AdminExtensionAssetRoute(
+      path = "/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg",
+      handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
+        Results.Ok(reputationImgCode).as("image/svg+xml").vfuture
       }
     ),
     AdminExtensionAssetRoute(
@@ -156,39 +170,44 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |
              |    ${wafConfigsPageCode}
              |
+             |    ${reputationPagesCode}
+             |
              |    return {
              |      id: extensionId,
              |      categories:[{
-             |        title: 'WAF',
-             |        description: 'All the features provided by the Cloud APIM WAF extension',
+             |        title: 'Cloud APIM - Security Suite',
+             |        description: 'Web application firewall, ip reputation and threat intelligence for Otoroshi',
              |        features: [
              |          {
-             |            title: 'Cloud APIM WAF configs',
-             |            description: 'All your Cloud APIM WAF configs',
+             |            title: 'WAF configs',
+             |            description: 'ModSecurity SecLang rules and the OWASP Core Rule Set',
              |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
              |            link: '/extensions/cloud-apim/waf/wafconfigs',
              |            display: () => true,
              |            icon: () => 'fa-atom',
-             |          }
+             |          },
+             |          ...ReputationFeatures
              |        ]
              |      }],
              |      features: [
              |        {
-             |          title: 'Cloud APIM WAF configs',
-             |          description: 'All your Cloud APIM WAF configs',
+             |          title: 'WAF configs',
+             |          description: 'ModSecurity SecLang rules and the OWASP Core Rule Set',
              |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
              |          link: '/extensions/cloud-apim/waf/wafconfigs',
              |          display: () => true,
              |          icon: () => 'fa-atom',
-             |        }
+             |        },
+             |        ...ReputationFeatures
              |      ],
              |      sidebarItems: [
              |        {
-             |          title: 'Cloud APIM WAF configs',
-             |          text: 'All your Cloud APIM WAF configs',
+             |          title: 'WAF configs',
+             |          text: 'ModSecurity SecLang rules and the OWASP Core Rule Set',
              |          path: 'extensions/cloud-apim/waf/wafconfigs',
              |          icon: 'atom'
-             |        }
+             |        },
+             |        ...ReputationSidebarItems
              |      ],
              |      searchItems: [
              |        {
@@ -196,9 +215,10 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/wafconfigs`
              |          },
              |          env: React.createElement('span', { className: "fas fa-atom" }, null),
-             |          label: 'Cloud APIM WAFs configs',
+             |          label: 'Cloud APIM Security Suite - WAF configs',
              |          value: 'wafconfigs',
-             |        }
+             |        },
+             |        ...ReputationSearchItems
              |      ],
              |      routes: [
              |        {
@@ -218,7 +238,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          component: (props) => {
              |            return React.createElement(WafConfigsPage, props, null)
              |          }
-             |        }
+             |        },
+             |        ...ReputationRoutes
              |      ]
              |    }
              |  });
@@ -241,7 +262,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleTest(body)
     ),
-  )
+  ) ++ reputation.backofficeAuthRoutes()
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext

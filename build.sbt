@@ -50,7 +50,10 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "fr.maif" %% "otoroshi" % "18.0.0-preview2" % "provided",
       "com.cloud-apim" %% "seclang-engine-coreruleset" % "2.1.0" excludeAll (all: _*),
-      munit % Test
+      munit % Test,
+      // the crowdsec integration suite drives a real Local API in a container; it skips itself
+      // when no docker daemon is reachable, so `sbt test` stays runnable without one
+      testcontainers % Test
     ),
     assembly / test  := {},
     assembly / assemblyJarName := "otoroshi-waf-extension-assembly_3-dev.jar",
