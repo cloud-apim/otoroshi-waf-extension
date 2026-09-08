@@ -69,7 +69,8 @@ final case class ThreatPolicy(
     tiers: Seq[ThreatTier] = ThreatTier.default,
     exemptions: Seq[String] = Seq.empty,
     banIdentity: String = "auto",
-    wafBlockWeight: Int = 50
+    wafBlockWeight: Int = 50,
+    challengeProvider: Option[String] = None
 ) extends EntityLocationSupport {
 
   override def internalId: String               = id
@@ -107,7 +108,8 @@ object ThreatPolicy {
       "tiers"            -> JsArray(o.tiers.map(_.json)),
       "exemptions"       -> o.exemptions,
       "ban_identity"     -> o.banIdentity,
-      "waf_block_weight" -> o.wafBlockWeight
+      "waf_block_weight"   -> o.wafBlockWeight,
+      "challenge_provider" -> o.challengeProvider
     )
 
     override def reads(json: JsValue): JsResult[ThreatPolicy] = Try {
@@ -123,7 +125,8 @@ object ThreatPolicy {
         tiers = json.select("tiers").asOpt[JsArray].map(_.value.toSeq.map(ThreatTier.read)).getOrElse(ThreatTier.default),
         exemptions = json.select("exemptions").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         banIdentity = json.select("ban_identity").asOpt[String].getOrElse("auto"),
-        wafBlockWeight = json.select("waf_block_weight").asOpt[Int].getOrElse(50)
+        wafBlockWeight = json.select("waf_block_weight").asOpt[Int].getOrElse(50),
+        challengeProvider = json.select("challenge_provider").asOpt[String].filter(_.trim.nonEmpty)
       )
     } match {
       case Failure(ex)    => JsError(ex.getMessage)

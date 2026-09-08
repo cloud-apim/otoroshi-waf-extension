@@ -15,6 +15,7 @@ import scala.concurrent.{ExecutionContext, Future}
  * need — and makes both of them testable without a Redis, an `Env` or a container.
  */
 trait SharedStateStore {
+  def set(key: String, value: String, ttlMillis: Option[Long]): Future[Unit]
   def hset(key: String, field: String, value: String): Future[Unit]
   def hgetall(key: String): Future[Map[String, String]]
   def hdel(key: String, fields: Seq[String]): Future[Unit]
@@ -27,6 +28,9 @@ trait SharedStateStore {
 
 /** Production implementation, over whichever RedisLike the module resolved. */
 class RedisSharedStateStore(redis: () => RedisLike)(using ec: ExecutionContext) extends SharedStateStore {
+
+  override def set(key: String, value: String, ttlMillis: Option[Long]): Future[Unit] =
+    redis().setBS(key, ByteString(value), None, ttlMillis).map(_ => ())
 
   override def hset(key: String, field: String, value: String): Future[Unit] =
     redis().hsetBS(key, field, ByteString(value)).map(_ => ())
@@ -64,6 +68,12 @@ class InMemorySharedStateStore extends SharedStateStore {
     case Some(at) if at <= System.currentTimeMillis() =>
       values.remove(key); hashes.remove(key); expiries.remove(key); false
     case _                                            => true
+  }
+
+  override def set(key: String, value: String, ttlMillis: Option[Long]): Future[Unit] = {
+    values.put(key, value)
+    ttlMillis.foreach(ms => expiries.put(key, System.currentTimeMillis() + ms))
+    ().vfuture
   }
 
   override def hset(key: String, field: String, value: String): Future[Unit] = {

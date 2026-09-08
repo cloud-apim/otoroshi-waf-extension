@@ -1,5 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.waf.security
 
+import com.cloud.apim.otoroshi.extensions.waf.challenge.ChallengeService
+import com.cloud.apim.otoroshi.extensions.waf.bots.{BotVerificationSettings, BotVerifier}
+import com.cloud.apim.otoroshi.extensions.waf.entities.*
 import com.cloud.apim.otoroshi.extensions.waf.reputation.WafDetectionRelay
 import org.apache.pekko.actor.Cancellable
 import org.apache.pekko.stream.Materializer
@@ -23,10 +26,39 @@ import scala.util.Try
 class SecurityDatastores(env: Env, extensionId: AdminExtensionId) {
   val threatPolicyDatastore: ThreatPolicyDatastore =
     new KvThreatPolicyDatastore(extensionId, env.datastores.redis, env)
+  val challengeProviderDatastore: ChallengeProviderDatastore =
+    new KvChallengeProviderDatastore(extensionId, env.datastores.redis, env)
+  val botPolicyDatastore: BotPolicyDatastore =
+    new KvBotPolicyDatastore(extensionId, env.datastores.redis, env)
+  val honeypotPolicyDatastore: HoneypotPolicyDatastore =
+    new KvHoneypotPolicyDatastore(extensionId, env.datastores.redis, env)
 }
 
 class SecurityState {
-  private val _policies = new UnboundedTrieMap[String, ThreatPolicy]()
+  private val _policies   = new UnboundedTrieMap[String, ThreatPolicy]()
+  private val _challenges = new UnboundedTrieMap[String, ChallengeProvider]()
+  private val _bots       = new UnboundedTrieMap[String, BotPolicy]()
+  private val _honeypots  = new UnboundedTrieMap[String, HoneypotPolicy]()
+
+  def botPolicy(id: String): Option[BotPolicy] = _bots.get(id)
+  def allBotPolicies(): Seq[BotPolicy]         = _bots.values.toSeq
+  def updateBotPolicies(values: Seq[BotPolicy]): Unit = {
+    _bots.addAll(values.map(v => (v.id, v))).remAll(_bots.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  def honeypotPolicy(id: String): Option[HoneypotPolicy] = _honeypots.get(id)
+  def allHoneypotPolicies(): Seq[HoneypotPolicy]         = _honeypots.values.toSeq
+  def updateHoneypotPolicies(values: Seq[HoneypotPolicy]): Unit = {
+    _honeypots.addAll(values.map(v => (v.id, v))).remAll(_honeypots.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+
+  def challengeProvider(id: String): Option[ChallengeProvider] = _challenges.get(id)
+  def allChallengeProviders(): Seq[ChallengeProvider]          = _challenges.values.toSeq
+  def updateChallengeProviders(values: Seq[ChallengeProvider]): Unit = {
+    _challenges.addAll(values.map(v => (v.id, v))).remAll(_challenges.keySet.toSeq.diff(values.map(_.id)))
+  }
+
   def threatPolicy(id: String): Option[ThreatPolicy] = _policies.get(id)
   def allThreatPolicies(): Seq[ThreatPolicy]         = _policies.values.toSeq
   def updateThreatPolicies(values: Seq[ThreatPolicy]): Unit = {
@@ -96,6 +128,32 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
   val bans: BanStore                = new BanStore(s"$keyPrefix:bans", sharedState, nodeId, logger)
   val ledger: ThreatLedger          = new ThreatLedger(s"$keyPrefix:ledger", sharedState, bans, () => ledgerSettings, logger)
   val incidents: IncidentCorrelator = new IncidentCorrelator(() => incidentWindow)
+  val challenges: ChallengeService  = new ChallengeService(
+    sharedState,
+    new com.cloud.apim.otoroshi.extensions.waf.reputation.EnvHttpClient(env),
+    s"$keyPrefix:challenges",
+    logger
+  )
+
+  private val botSettings = BotVerificationSettings(
+    enabled = configuration.getOptional[Boolean]("security.bots.verify").getOrElse(true),
+    positiveTtl = configuration.getOptional[Long]("security.bots.positive-ttl-seconds").getOrElse(21600L).seconds,
+    negativeTtl = configuration.getOptional[Long]("security.bots.negative-ttl-seconds").getOrElse(900L).seconds
+  )
+
+  val botVerifier: BotVerifier = new BotVerifier(() => botSettings, logger)
+
+  def botPolicy(id: Option[String]): Option[BotPolicy] =
+    id.flatMap(states.botPolicy).orElse(states.allBotPolicies().headOption).filter(_.enabled)
+
+  def honeypotPolicy(id: Option[String]): Option[HoneypotPolicy] =
+    id.flatMap(states.honeypotPolicy).orElse(states.allHoneypotPolicies().headOption).filter(_.enabled)
+
+  def challengeProvider(id: Option[String]): Option[ChallengeProvider] =
+    id.flatMap(states.challengeProvider).filter(_.usable)
+
+  /** The signing secret for clearance cookies, falling back to the gateway's own. */
+  def challengeSecret(provider: ChallengeProvider): String = provider.secretOr(env.otoroshiSecret)
 
   private val relaySettings: RelaySettings = RelaySettings(
     correlate = configuration.getOptional[Boolean]("security.relay.correlate-waf-events").getOrElse(true),
@@ -174,14 +232,25 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
 
   def syncStates(): Future[Unit] = {
     given Env = env
-    datastores.threatPolicyDatastore.findAllAndFillSecrets().map { policies =>
+    for {
+      policies   <- datastores.threatPolicyDatastore.findAllAndFillSecrets()
+      challenges <- datastores.challengeProviderDatastore.findAllAndFillSecrets()
+      bots       <- datastores.botPolicyDatastore.findAllAndFillSecrets()
+      honeypots  <- datastores.honeypotPolicyDatastore.findAllAndFillSecrets()
+    } yield {
       states.updateThreatPolicies(policies)
+      states.updateChallengeProviders(challenges)
+      states.updateBotPolicies(bots)
+      states.updateHoneypotPolicies(honeypots)
       ()
     }
   }
 
   def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = Seq(
-    AdminExtensionEntity(ThreatPolicy.resource(env, datastores, states))
+    AdminExtensionEntity(ThreatPolicy.resource(env, datastores, states)),
+    AdminExtensionEntity(ChallengeProvider.resource(env, datastores, states)),
+    AdminExtensionEntity(BotPolicy.resource(env, datastores, states)),
+    AdminExtensionEntity(HoneypotPolicy.resource(env, datastores, states))
   )
 
   private def tick(): Unit = {
@@ -258,6 +327,30 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "GET",
+      path = s"$basePath/_bot_catalog",
+      wantsBody = false,
+      handle = (_, _, _, _) => Results.Ok(com.cloud.apim.otoroshi.extensions.waf.bots.BotCatalog.json).vfuture
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_robots_txt",
+      wantsBody = true,
+      handle = (_, _, _, body) => withJsonBody(body)(handleRobots)
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = s"$basePath/_challenge_presets",
+      wantsBody = false,
+      handle = (_, _, _, _) => Results.Ok(ChallengePresets.json).vfuture
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_challenge_from_preset",
+      wantsBody = true,
+      handle = (_, _, _, body) => withJsonBody(body)(handleChallengePreset)
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
       path = s"$basePath/_bans",
       wantsBody = false,
       handle = (_, _, _, _) => Results.Ok(Json.obj("bans" -> JsArray(bans.all.map(_.json)))).vfuture
@@ -319,6 +412,23 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
         value <- (json \ "value").asOpt[String]
       } yield IdentityRef(kind, value)
     }.orElse((json \ "ip").asOpt[String].map(IdentityRef(IdentityRef.Ip, _)))
+
+  private def handleRobots(body: JsValue): Future[Result] = {
+    botPolicy((body \ "policy").asOpt[String]) match {
+      case None         => Results.Ok(Json.obj("done" -> false, "error" -> "no bot policy")).vfuture
+      case Some(policy) =>
+        Results.Ok(Json.obj("done" -> true, "robots_txt" -> policy.robotsTxt, "llms_txt" -> policy.llmsTxt)).vfuture
+    }
+  }
+
+  private def handleChallengePreset(body: JsValue): Future[Result] = {
+    (body \ "preset").asOpt[String].flatMap(ChallengePresets.find) match {
+      case None         => Results.Ok(Json.obj("done" -> false, "error" -> "unknown preset")).vfuture
+      case Some(preset) =>
+        val provider = ChallengePresets.apply(preset, IdGenerator.namedId("challenge-provider", env))
+        Results.Ok(Json.obj("done" -> true, "provider" -> provider.json)).vfuture
+    }
+  }
 
   private def handleBan(body: JsValue): Future[Result] = refFrom(body) match {
     case None      => Results.Ok(Json.obj("done" -> false, "error" -> "no identity provided")).vfuture

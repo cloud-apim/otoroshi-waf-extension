@@ -408,6 +408,424 @@ class SecurityDashboardPage extends Component {
   }
 }
 
+
+// A generic editor for an array of flat objects, described by a field spec.
+// Used by bot rules and canary tokens rather than writing a bespoke component for each.
+function suiteListEditor(label, help, fields, makeEmpty) {
+  return class extends Component {
+    change = (idx, key, value) =>
+      this.props.onChange((this.props.value || []).map((r, i) => (i === idx ? Object.assign({}, r, { [key]: value }) : r)));
+    add = () => this.props.onChange((this.props.value || []).concat([makeEmpty()]));
+    remove = (idx) => this.props.onChange((this.props.value || []).filter((_, i) => i !== idx));
+
+    field = (row, idx, f) => {
+      const common = {
+        className: 'form-control',
+        style: { width: f.width || 160 },
+        value: row[f.key] === undefined || row[f.key] === null ? '' : row[f.key],
+        placeholder: f.placeholder || '',
+        onChange: (e) =>
+          this.change(idx, f.key, f.type === 'number' ? parseInt(e.target.value || '0', 10) : e.target.value),
+      };
+      const input =
+        f.type === 'select'
+          ? React.createElement(
+              'select',
+              common,
+              (f.options || []).map((o) => React.createElement('option', { key: o, value: o }, o))
+            )
+          : React.createElement('input', Object.assign({ type: f.type === 'number' ? 'number' : 'text' }, common));
+      return React.createElement(
+        'div',
+        { key: f.key, style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+        React.createElement('span', { className: 'suite-meta' }, f.label),
+        input
+      );
+    };
+
+    render() {
+      const rows = this.props.value || [];
+      return React.createElement(
+        'div',
+        { className: 'row mb-3' },
+        React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, label),
+        React.createElement(
+          'div',
+          { className: 'col-sm-10' },
+          help ? suiteNotice('help', 'info', help) : null,
+          rows.map((row, idx) =>
+            suitePanel('row-' + idx, [
+              React.createElement(
+                'div',
+                { key: 'f', style: { display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' } },
+                fields.map((f) => this.field(row, idx, f)),
+                React.createElement(
+                  'button',
+                  { className: 'btn btn-sm btn-danger', type: 'button', style: { marginLeft: 'auto' }, onClick: () => this.remove(idx) },
+                  React.createElement('i', { className: 'fas fa-trash' }, null)
+                )
+              ),
+            ], { marginBottom: 8 })
+          ),
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-success', type: 'button', onClick: this.add },
+            React.createElement('i', { className: 'fas fa-plus' }, null),
+            ' Add'
+          )
+        )
+      );
+    }
+  };
+}
+
+const BotRulesEditor = suiteListEditor(
+  'Rules',
+  'A name rule wins over a category rule. To challenge a crawler, give it a weight that reaches a challenge tier in your threat policy — there is one challenge implementation and it lives there.',
+  [
+    { key: 'target', label: 'Target', width: 220, placeholder: 'category:ai or name:gptbot' },
+    { key: 'action', label: 'Action', type: 'select', width: 140, options: ['allow', 'monitor', 'deny'] },
+    { key: 'weight', label: 'Weight', type: 'number', width: 110 },
+  ],
+  () => ({ target: 'category:ai', action: 'monitor', weight: 0 })
+);
+
+const CanariesEditor = suiteListEditor(
+  'Canary tokens',
+  'A value nobody can hold without having taken it. Plant a fake apikey or record id, and presenting it becomes proof rather than suspicion.',
+  [
+    { key: 'value', label: 'Value', width: 240, placeholder: 'CANARY-a1b2c3' },
+    { key: 'description', label: 'Description', width: 240, placeholder: 'planted in the public config' },
+    { key: 'where', label: 'Look in', type: 'select', width: 130, options: ['any', 'header', 'query', 'path'] },
+  ],
+  () => ({ value: '', description: '', where: 'any' })
+);
+
+class BotSignaturesSummary extends Component {
+  render() {
+    const sigs = this.props.value || [];
+    const byCategory = {};
+    sigs.forEach((s) => {
+      byCategory[s.category] = byCategory[s.category] || [];
+      byCategory[s.category].push(s);
+    });
+    return React.createElement(
+      'div',
+      { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Known bots'),
+      React.createElement(
+        'div',
+        { className: 'col-sm-10' },
+        suiteNotice(
+          'sig',
+          'info',
+          sigs.length + ' signatures. Edit them through the admin api or the export — a form is the wrong tool for a catalog this size.'
+        ),
+        Object.keys(byCategory).sort().map((cat) =>
+          suitePanel('cat-' + cat, [
+            React.createElement('div', { key: 't', className: 'suite-title' }, cat + ' (' + byCategory[cat].length + ')'),
+            React.createElement(
+              'div',
+              { key: 'b' },
+              byCategory[cat].map((s) =>
+                suiteBadge('s-' + s.name, s.name + (s.verifiable ? ' ✓' : ''), s.verifiable ? 'success' : 'neutral')
+              )
+            ),
+            React.createElement(
+              'div',
+              { key: 'l', className: 'suite-meta', style: { marginTop: 8 } },
+              '✓ publishes a way to verify it. The rest can only be identified by a string they choose to send.'
+            ),
+          ], { marginBottom: 8 })
+        )
+      )
+    );
+  }
+}
+
+class RobotsPreview extends Component {
+  state = { txt: null };
+  load = () => {
+    securityCall('/_robots_txt', { policy: this.props.rawValue && this.props.rawValue.id }).then((r) =>
+      this.setState({ txt: r.done ? r.robots_txt : r.error })
+    );
+  };
+  render() {
+    return [
+      React.createElement(
+        'div',
+        { className: 'row mb-3', key: 'b' },
+        React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'robots.txt'),
+        React.createElement(
+          'div',
+          { className: 'col-sm-10' },
+          suiteNotice(
+            'gen',
+            'info',
+            'Generated from the rules above, so the file and the gateway cannot drift apart. Serve it with Otoroshi\'s own Robots plugin.'
+          ),
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-success', type: 'button', onClick: this.load },
+            React.createElement('i', { className: 'fas fa-file-alt' }, null),
+            ' Generate'
+          ),
+          this.state.txt ? suiteCode('txt', this.state.txt) : null
+        )
+      ),
+    ];
+  }
+}
+
+class ChallengePresetPicker extends Component {
+  state = { entries: [], created: null, error: null };
+  componentDidMount() {
+    securityCall('/_challenge_presets').then((r) => this.setState({ entries: (r && r.entries) || [] }));
+  }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'challenge-providers');
+  create = (entry) => {
+    securityCall('/_challenge_from_preset', { preset: entry.id })
+      .then((r) => {
+        if (!r.done) throw new Error(r.error);
+        return this.client.create(r.provider);
+      })
+      .then((c) => this.setState({ created: c.id }))
+      .catch((e) => this.setState({ error: String(e.message || e) }));
+  };
+  render() {
+    return React.createElement(
+      'div',
+      {},
+      suiteNotice(
+        'intro',
+        'info',
+        'The built-in proof of work needs none of this. These are for deployments whose procurement requires a named product — every one is created disabled until you paste your own keys in.'
+      ),
+      this.state.error ? suiteNotice('err', 'danger', this.state.error) : null,
+      this.state.created
+        ? suiteNotice('ok', 'success', 'Created. Open it from the Challenge providers list to add your keys.')
+        : null,
+      this.state.entries.map((e) =>
+        suitePanel(e.id, [
+          React.createElement('div', { key: 't', className: 'suite-title' }, e.name),
+          React.createElement('div', { key: 'o', style: { marginBottom: 8 } }, suiteBadge('o-' + e.id, e.origin, 'neutral')),
+          React.createElement('div', { key: 'd', style: { marginBottom: 8 } }, e.description),
+          e.notes ? suiteNotice('n-' + e.id, 'warning', e.notes) : null,
+          React.createElement(
+            'button',
+            { key: 'c', className: 'btn btn-sm btn-success', type: 'button', onClick: () => this.create(e) },
+            React.createElement('i', { className: 'fas fa-plus' }, null),
+            ' Create a provider from this preset'
+          ),
+        ])
+      )
+    );
+  }
+}
+
+class ChallengeProvidersPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    kind: {
+      type: 'select',
+      props: {
+        label: 'Kind',
+        help: 'pow is self-contained: no third party, no external script, no personal data',
+        possibleValues: [{ label: 'Proof of work (built in)', value: 'pow' }, { label: 'Vendor widget', value: 'vendor' }],
+      },
+    },
+    difficulty_floor: { type: 'number', props: { label: 'Difficulty floor', help: 'Leading zero bits at score 0' } },
+    difficulty_ceiling: { type: 'number', props: { label: 'Difficulty ceiling', help: 'At score 100. Each bit doubles the work.' } },
+    challenge_ttl_seconds: { type: 'number', props: { label: 'Puzzle lifetime', suffix: 'seconds' } },
+    clearance_ttl_seconds: { type: 'number', props: { label: 'Clearance lifetime', suffix: 'seconds' } },
+    cookie_name: { type: 'string', props: { label: 'Cookie name' } },
+    secret: { type: 'password', props: { label: 'Signing secret', help: 'Defaults to the Otoroshi secret. Use a vault reference.' } },
+    bind_ip: { type: 'bool', props: { label: 'Bind clearance to the address' } },
+    bind_ua: { type: 'bool', props: { label: 'Bind clearance to the user agent' } },
+    widget_script_url: { type: 'string', props: { label: 'Widget script url' } },
+    widget_html: { type: 'string', props: { label: 'Widget html', help: '__SITE_KEY__ is replaced' } },
+    response_field: { type: 'string', props: { label: 'Response field name' } },
+    verify_url: { type: 'string', props: { label: 'Siteverify url' } },
+    site_key: { type: 'string', props: { label: 'Site key' } },
+    secret_key: { type: 'password', props: { label: 'Secret key' } },
+    title: { type: 'string', props: { label: 'Page title' } },
+    message: { type: 'string', props: { label: 'Page message' } },
+  };
+  columns = [
+    { title: 'Name', filterId: 'name', content: (i) => i.name },
+    { title: 'Kind', filterId: 'kind', content: (i) => i.kind, style: { width: 100 } },
+    { title: 'Enabled', content: (i) => (i.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+  ];
+  formFlow = [
+    '_loc', 'id', 'name', 'description', '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<Challenge', 'enabled', 'kind', 'title', 'message',
+    '>>>Proof of work', 'difficulty_floor', 'difficulty_ceiling', 'challenge_ttl_seconds',
+    '>>>Clearance', 'clearance_ttl_seconds', 'cookie_name', 'secret', 'bind_ip', 'bind_ua',
+    '>>>Vendor widget', 'widget_script_url', 'widget_html', 'response_field', 'verify_url', 'site_key', 'secret_key',
+  ];
+  componentDidMount() { this.props.setTitle('Challenge providers'); }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'challenge-providers');
+  render() {
+    return React.createElement(Table, {
+      parentProps: this.props,
+      selfUrl: 'extensions/cloud-apim/waf/challengeproviders',
+      defaultTitle: 'All challenge providers',
+      defaultValue: () => ({
+        id: 'challenge-provider_' + uuid(), name: 'Proof of work',
+        description: 'Self-contained proof-of-work challenge, no third party involved',
+        tags: [], metadata: {}, enabled: true, kind: 'pow',
+        difficulty_floor: 18, difficulty_ceiling: 24, challenge_ttl_seconds: 300,
+        clearance_ttl_seconds: 1800, cookie_name: 'cloud-apim-clearance', secret: '',
+        bind_ip: true, bind_ua: true, widget_script_url: '', widget_html: '', response_field: '',
+        verify_url: '', site_key: '', secret_key: '',
+        title: 'Checking your browser',
+        message: 'This will take a moment. No data about you leaves this page.',
+      }),
+      itemName: 'Challenge provider',
+      formSchema: this.formSchema, formFlow: this.formFlow, columns: this.columns,
+      stayAfterSave: true,
+      fetchItems: () => this.client.findAll(),
+      updateItem: this.client.update, deleteItem: this.client.delete, createItem: this.client.create,
+      navigateTo: (i) => { window.location = `/bo/dashboard/extensions/cloud-apim/waf/challengeproviders/edit/${i.id}`; },
+      itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/challengeproviders/edit/${i.id}`,
+      showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
+      kubernetesKind: 'waf.extensions.cloud-apim.com/ChallengeProvider',
+    }, null);
+  }
+}
+
+class ChallengePresetsPage extends Component {
+  componentDidMount() { this.props.setTitle('Challenge presets'); }
+  render() { return React.createElement(ChallengePresetPicker, this.props, null); }
+}
+
+class BotPoliciesPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    verify_known_bots: { type: 'bool', props: { label: 'Verify claimed crawlers', help: 'Forward-confirmed reverse DNS' } },
+    verified_bypass: { type: 'bool', props: { label: 'Get out of a verified crawler\'s way' } },
+    impersonator_weight: { type: 'number', props: { label: 'Impersonator weight', help: 'A failed verification is a demonstrated lie' } },
+    impersonator_action: { type: 'select', props: { label: 'Impersonator action', possibleValues: [{ label: 'Deny', value: 'deny' }, { label: 'Score only', value: 'monitor' }] } },
+    unknown_bot_weight: { type: 'number', props: { label: 'Unknown bot weight' } },
+    deny_status: { type: 'number', props: { label: 'Denied status' } },
+    rules: { type: BotRulesEditor, props: {} },
+    signatures: { type: BotSignaturesSummary, props: {} },
+    robots_extra: { type: 'text', props: { label: 'Extra robots.txt directives' } },
+    llms_txt: { type: 'text', props: { label: 'llms.txt content' } },
+    robots: { type: RobotsPreview, props: {} },
+  };
+  columns = [
+    { title: 'Name', filterId: 'name', content: (i) => i.name },
+    { title: 'Enabled', content: (i) => (i.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Rules', content: (i) => (i.rules || []).map((r) => r.target + '→' + r.action).join(', ') },
+  ];
+  formFlow = [
+    '_loc', 'id', 'name', 'description', '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<Verification', 'enabled', 'verify_known_bots', 'verified_bypass', 'impersonator_weight', 'impersonator_action',
+    '<<<Policy', 'rules', 'unknown_bot_weight', 'deny_status',
+    '<<<Declarations', 'robots_extra', 'llms_txt', 'robots',
+    '>>>Known bots', 'signatures',
+  ];
+  componentDidMount() { this.props.setTitle('Bot policies'); }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'bot-policies');
+  render() {
+    return React.createElement(Table, {
+      parentProps: this.props,
+      selfUrl: 'extensions/cloud-apim/waf/botpolicies',
+      defaultTitle: 'All bot policies',
+      defaultValue: () => ({
+        id: 'bot-policy_' + uuid(), name: 'Bot policy',
+        description: 'Verify the crawlers that claim to be somebody, and decide what the rest may do',
+        tags: [], metadata: {}, enabled: true,
+        rules: [
+          { target: 'category:search', action: 'allow', weight: 0 },
+          { target: 'category:monitoring', action: 'allow', weight: 0 },
+          { target: 'category:ai', action: 'monitor', weight: 0 },
+          { target: 'category:seo', action: 'monitor', weight: 10 },
+        ],
+        verify_known_bots: true, verified_bypass: true, impersonator_weight: 60,
+        impersonator_action: 'deny', unknown_bot_weight: 0, deny_status: 403,
+        robots_extra: '', llms_txt: '',
+      }),
+      itemName: 'Bot policy',
+      formSchema: this.formSchema, formFlow: this.formFlow, columns: this.columns,
+      stayAfterSave: true,
+      fetchItems: () => this.client.findAll(),
+      updateItem: this.client.update, deleteItem: this.client.delete, createItem: this.client.create,
+      navigateTo: (i) => { window.location = `/bo/dashboard/extensions/cloud-apim/waf/botpolicies/edit/${i.id}`; },
+      itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/botpolicies/edit/${i.id}`,
+      showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
+      kubernetesKind: 'waf.extensions.cloud-apim.com/BotPolicy',
+    }, null);
+  }
+}
+
+class HoneypotPoliciesPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    paths: { type: 'array', props: { label: 'Paths', help: 'Exact, or a trailing * for a prefix. Keep them unambiguous.' } },
+    weight: { type: 'number', props: { label: 'Weight' } },
+    action: { type: 'select', props: { label: 'Action', possibleValues: [{ label: 'Deny', value: 'deny' }, { label: 'Ban', value: 'ban' }, { label: 'Score only', value: 'monitor' }] } },
+    ban_for_seconds: { type: 'number', props: { label: 'Ban for', suffix: 'seconds' } },
+    status: { type: 'number', props: { label: 'Status', help: '404 by default — a 403 would confirm something is there' } },
+    canaries: { type: CanariesEditor, props: {} },
+  };
+  columns = [
+    { title: 'Name', filterId: 'name', content: (i) => i.name },
+    { title: 'Enabled', content: (i) => (i.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Paths', content: (i) => String((i.paths || []).length) + ' paths', style: { width: 110 } },
+    { title: 'Action', content: (i) => i.action, style: { width: 90 } },
+  ];
+  formFlow = [
+    '_loc', 'id', 'name', 'description', '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<Paths', 'enabled', 'paths', '>>>Response', 'action', 'status', 'weight', 'ban_for_seconds',
+    '<<<Canary tokens', 'canaries',
+  ];
+  componentDidMount() { this.props.setTitle('Honeypots'); }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'honeypot-policies');
+  render() {
+    return React.createElement(Table, {
+      parentProps: this.props,
+      selfUrl: 'extensions/cloud-apim/waf/honeypots',
+      defaultTitle: 'All honeypot policies',
+      defaultValue: () => ({
+        id: 'honeypot-policy_' + uuid(), name: 'Honeypot policy',
+        description: 'Paths nobody legitimate asks for, and values nobody legitimate holds',
+        tags: [], metadata: {}, enabled: true,
+        paths: ['/.env', '/.git/config', '/wp-login.php', '/wp-admin*', '/phpmyadmin*', '/actuator/env'],
+        weight: 100, action: 'deny', ban_for_seconds: 86400, status: 404, canaries: [],
+      }),
+      itemName: 'Honeypot policy',
+      formSchema: this.formSchema, formFlow: this.formFlow, columns: this.columns,
+      stayAfterSave: true,
+      fetchItems: () => this.client.findAll(),
+      updateItem: this.client.update, deleteItem: this.client.delete, createItem: this.client.create,
+      navigateTo: (i) => { window.location = `/bo/dashboard/extensions/cloud-apim/waf/honeypots/edit/${i.id}`; },
+      itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/honeypots/edit/${i.id}`,
+      showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
+      kubernetesKind: 'waf.extensions.cloud-apim.com/HoneypotPolicy',
+    }, null);
+  }
+}
+
 const SecurityFeatures = [
   {
     title: 'Threat policies',
@@ -416,6 +834,30 @@ const SecurityFeatures = [
     link: '/extensions/cloud-apim/waf/threatpolicies',
     display: () => true,
     icon: () => 'fa-sliders-h',
+  },
+  {
+    title: 'Challenge providers',
+    description: 'Proof of work, and vendor widgets for procurement',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/challengeproviders',
+    display: () => true,
+    icon: () => 'fa-puzzle-piece',
+  },
+  {
+    title: 'Bot policies',
+    description: 'Verify crawlers, and decide what AI agents may do',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/botpolicies',
+    display: () => true,
+    icon: () => 'fa-robot',
+  },
+  {
+    title: 'Honeypots',
+    description: 'Paths and canary tokens that prove intent',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/honeypots',
+    display: () => true,
+    icon: () => 'fa-bug',
   },
   {
     title: 'Bans & incidents',
@@ -429,6 +871,10 @@ const SecurityFeatures = [
 
 const SecuritySidebarItems = [
   { title: 'Threat policies', text: 'Score to action', path: 'extensions/cloud-apim/waf/threatpolicies', icon: 'sliders-h' },
+  { title: 'Challenge providers', text: 'Proof of work and widgets', path: 'extensions/cloud-apim/waf/challengeproviders', icon: 'puzzle-piece' },
+  { title: 'Challenge presets', text: 'Vendor presets', path: 'extensions/cloud-apim/waf/challengepresets', icon: 'store' },
+  { title: 'Bot policies', text: 'Crawlers and AI agents', path: 'extensions/cloud-apim/waf/botpolicies', icon: 'robot' },
+  { title: 'Honeypots', text: 'Paths and canary tokens', path: 'extensions/cloud-apim/waf/honeypots', icon: 'bug' },
   { title: 'Bans & incidents', text: 'Live security state', path: 'extensions/cloud-apim/waf/security', icon: 'gavel' },
 ];
 
@@ -451,8 +897,20 @@ const SecuritySearchItems = [
   },
 ];
 
+function suiteEntityRoutes(path, page) {
+  return [
+    { path: '/extensions/cloud-apim/waf/' + path + '/:taction/:titem', component: (props) => React.createElement(page, props, null) },
+    { path: '/extensions/cloud-apim/waf/' + path + '/:taction', component: (props) => React.createElement(page, props, null) },
+    { path: '/extensions/cloud-apim/waf/' + path, component: (props) => React.createElement(page, props, null) },
+  ];
+}
+
 const SecurityRoutes = [
   { path: '/extensions/cloud-apim/waf/security', component: (props) => React.createElement(SecurityDashboardPage, props, null) },
+  { path: '/extensions/cloud-apim/waf/challengepresets', component: (props) => React.createElement(ChallengePresetsPage, props, null) },
+  ...suiteEntityRoutes('challengeproviders', ChallengeProvidersPage),
+  ...suiteEntityRoutes('botpolicies', BotPoliciesPage),
+  ...suiteEntityRoutes('honeypots', HoneypotPoliciesPage),
   {
     path: '/extensions/cloud-apim/waf/threatpolicies/:taction/:titem',
     component: (props) => React.createElement(ThreatPoliciesPage, props, null),

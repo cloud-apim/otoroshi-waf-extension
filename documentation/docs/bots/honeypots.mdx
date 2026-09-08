@@ -1,0 +1,74 @@
+---
+sidebar_position: 3
+title: Honeypots and canaries
+description: The cheapest detection there is, and the one with almost no false positives.
+---
+
+# Honeypots and canaries
+
+A request for `/.env` is not ambiguous. No browser makes it, no API client of yours makes it, and
+there is no innocent reason to ask. That makes it the rarest thing in security: evidence rather than
+suspicion.
+
+**Cloud APIM - Security Suite → Honeypots.**
+
+## It runs before routing
+
+The plugin is an **incoming request validator**, not a route plugin, and that is not an
+implementation detail: `/wp-login.php` and `/.git/config` match no route, so a route-level plugin
+would never see the requests this exists to catch.
+
+Like the other global validators it is configured in the global configuration JSON —
+see [the note on global plugins](../reference/plugins.mdx#global-plugins-are-not-route-plugins):
+
+```json
+{
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimHoneypot",
+  "enabled": true,
+  "config": { "policy": "honeypot-policy_..." }
+}
+```
+
+## Paths
+
+The shipped list is deliberately short and unambiguous — `/.env`, `/.git/config`, `/wp-login.php`,
+`/wp-admin*`, `/phpmyadmin*`, `/actuator/env` and a handful more. A trailing `*` is a prefix match;
+everything else is exact.
+
+Resist lengthening it. The property that makes honeypots worth having is a false-positive rate of
+essentially zero, and a broad list trades that away for coverage the WAF already provides.
+
+| Field | Default | Note |
+|---|---|---|
+| `weight` | `100` | Near-certain evidence deserves the top of the scale |
+| `action` | `deny` | `ban` is opt-in — banning on a first hit is a decision, not a default |
+| `status` | `404` | See below |
+
+:::tip Answer 404, not 403
+A `403` tells the scanner that something is there and that you are protecting it. A `404` says
+nothing at all. The default is deliberate.
+:::
+
+## Canary tokens
+
+The same idea applied to values instead of paths. Plant a fake apikey in a public config, or a
+record id that exists in no database. Presenting it is proof: there is no way to hold that value
+except by having taken it.
+
+```json
+{
+  "canaries": [
+    { "value": "CANARY-a1b2c3", "description": "planted in the public sample config", "where": "any" },
+    { "value": "ak_live_deadbeef", "description": "fake key in the docs repo", "where": "header" }
+  ]
+}
+```
+
+`where` narrows the search to `header`, `query` or `path` — or `any`, which checks the URI and the
+headers. An empty value never matches anything.
+
+## What it feeds
+
+A hit contributes a signal at the configured weight, records an incident, and charges the
+[ledger](../fabric/bans.mdx#the-ledger) — so a scanner sweeping your estate accumulates towards a
+ban even when each individual probe is merely denied.

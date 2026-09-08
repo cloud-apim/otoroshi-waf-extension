@@ -19,11 +19,12 @@ sealed trait ThreatAction {
 object ThreatAction {
   case object Allow  extends ThreatAction { val name = "allow"  }
   case object Log    extends ThreatAction { val name = "log"    }
-  case object Tarpit extends ThreatAction { val name = "tarpit" }
+  case object Tarpit    extends ThreatAction { val name = "tarpit" }
+  case object Challenge extends ThreatAction { val name = "challenge" }
   case object Deny   extends ThreatAction { val name = "deny";  override def denies = true }
   case object Ban    extends ThreatAction { val name = "ban";   override def denies = true }
 
-  val all: Seq[ThreatAction] = Seq(Allow, Log, Tarpit, Deny, Ban)
+  val all: Seq[ThreatAction] = Seq(Allow, Log, Challenge, Tarpit, Deny, Ban)
 
   def parse(raw: String): Option[ThreatAction] =
     all.find(_.name.equalsIgnoreCase(raw.trim))

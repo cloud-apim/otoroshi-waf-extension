@@ -1,15 +1,18 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 
+import com.cloud.apim.otoroshi.extensions.waf.challenge.{Interstitial, Pow}
+import com.cloud.apim.otoroshi.extensions.waf.entities.ChallengeProvider
 import com.cloud.apim.otoroshi.extensions.waf.security.*
 import org.apache.pekko.stream.Materializer
 import otoroshi.env.Env
 import otoroshi.gateway.Errors
 import otoroshi.next.plugins.api.*
 import otoroshi.utils.TypedMap
+import otoroshi.utils.http.RequestImplicits.*
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
 import play.api.libs.json.*
-import play.api.mvc.{RequestHeader, Result, Results}
+import play.api.mvc.{Cookie, RequestHeader, Result, Results}
 
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -196,37 +199,135 @@ class CloudApimThreatResponse extends NgRequestTransformer {
     ThreatSupport.module match {
       case None      => ctx.otoroshiRequest.rightf
       case Some(mod) =>
-        // the gate already acted on this request; acting twice would double-count and double-log
-        if (ctx.attrs.get(ThreatKeys.DecisionKey).isDefined) {
-          ctx.otoroshiRequest.rightf
-        } else {
-          // richer than at access time: the apikey plugin has run by now
-          val identity = ThreatSupport.identityOf(ctx.request, ctx.attrs)
-          val policy   = mod.policyOrDefault(config.policy)
-          if (policy.isExempt(identity.ip)) {
-            ctx.otoroshiRequest.rightf
-          } else {
-            val score = ThreatBus.start(ctx.attrs, identity)
-            policy.tierFor(score.score) match {
-              case None                if score.isEmpty => ctx.otoroshiRequest.rightf
-              case None                                 =>
-                // below every tier: still worth recording, that is what tuning reads
-                record(mod, ctx, identity, score, ThreatDecision(ThreatAction.Allow, score.score, None, policy.dryRun, "below every tier"), policy)
-                ctx.otoroshiRequest.rightf
-              case Some((index, tier))                  =>
-                val decision = ThreatDecision(
-                  action = tier.resolvedAction,
-                  score = score.score,
-                  tier = Some(index),
-                  dryRun = policy.dryRun,
-                  reason = s"score ${score.score} reached tier ${tier.minScore} (${tier.action})"
-                )
-                ctx.attrs.put(ThreatKeys.DecisionKey -> decision)
-                apply(mod, ctx, identity, score, decision, tier, policy)
-            }
-          }
+        // a challenge answer comes back as a post to the very same url, so it is picked up before
+        // anything else — the caller is mid-verification, not making a fresh request
+        ctx.request.headers.get(Interstitial.submissionHeader) match {
+          case Some(raw) => handleSubmission(mod, ctx, config, raw)
+          case None      => evaluate(mod, ctx, config)
         }
     }
+  }
+
+  private def evaluate(
+      mod: SecurityModule,
+      ctx: NgTransformerRequestContext,
+      config: CloudApimThreatConfig
+  )(using env: Env, ec: ExecutionContext): Future[Either[Result, NgPluginHttpRequest]] = {
+    // the gate already acted on this request; acting twice would double-count and double-log
+    if (ctx.attrs.get(ThreatKeys.DecisionKey).isDefined) {
+      ctx.otoroshiRequest.rightf
+    } else {
+      // richer than at access time: the apikey plugin has run by now
+      val identity = ThreatSupport.identityOf(ctx.request, ctx.attrs)
+      val policy   = mod.policyOrDefault(config.policy)
+      if (policy.isExempt(identity.ip)) {
+        ctx.otoroshiRequest.rightf
+      } else {
+        val score = ThreatBus.start(ctx.attrs, identity)
+        policy.tierFor(score.score) match {
+          case None if score.isEmpty => ctx.otoroshiRequest.rightf
+          case None                  =>
+            // below every tier: still worth recording, that is what tuning reads
+            record(
+              mod, ctx, identity, score,
+              ThreatDecision(ThreatAction.Allow, score.score, None, policy.dryRun, "below every tier"),
+              policy
+            )
+            ctx.otoroshiRequest.rightf
+          case Some((index, tier))   =>
+            val decision = ThreatDecision(
+              action = tier.resolvedAction,
+              score = score.score,
+              tier = Some(index),
+              dryRun = policy.dryRun,
+              reason = s"score ${score.score} reached tier ${tier.minScore} (${tier.action})"
+            )
+            ctx.attrs.put(ThreatKeys.DecisionKey -> decision)
+            apply(mod, ctx, identity, score, decision, tier, policy)
+        }
+      }
+    }
+  }
+
+  /**
+   * Verifies a challenge answer and grants clearance.
+   *
+   * Answers with 204 and the cookie: the interstitial reloads, and the reloaded request carries the
+   * cookie and sails through. A failed answer is refused rather than retried silently, so a broken
+   * or hostile solver cannot spin here for free.
+   */
+  private def handleSubmission(
+      mod: SecurityModule,
+      ctx: NgTransformerRequestContext,
+      config: CloudApimThreatConfig,
+      raw: String
+  )(using env: Env, ec: ExecutionContext): Future[Either[Result, NgPluginHttpRequest]] = {
+    val policy   = mod.policyOrDefault(config.policy)
+    val identity = ThreatSupport.identityOf(ctx.request, ctx.attrs)
+    val ua       = ctx.request.headers.get("User-Agent")
+    mod.challengeProvider(policy.challengeProvider) match {
+      case None           => ThreatSupport.denyT(403, ctx).map(Left.apply)
+      case Some(provider) =>
+        val submission = Try(Json.parse(raw)).getOrElse(Json.obj())
+        mod.challenges.verify(provider, submission, Some(identity.ip), ua).map {
+          case Left(reason)     =>
+            mod.record(
+              category = "challenge",
+              identity = identity,
+              decision = ThreatDecision(ThreatAction.Deny, 0, None, policy.dryRun, s"challenge failed: $reason"),
+              tags = Seq("challenge:failed"),
+              signals = JsArray(Seq.empty),
+              routeId = ctx.route.id.some,
+              routeName = ctx.route.name.some,
+              message = s"challenge answer refused: $reason"
+            )
+            Left(Results.Forbidden(""))
+          case Right(clearance) =>
+            mod.record(
+              category = "challenge",
+              identity = identity,
+              decision = ThreatDecision(ThreatAction.Allow, clearance.score, None, policy.dryRun, "challenge passed"),
+              tags = Seq("challenge:passed"),
+              signals = JsArray(Seq.empty),
+              routeId = ctx.route.id.some,
+              routeName = ctx.route.name.some,
+              message = "challenge passed, clearance granted"
+            )
+            Left(
+              Results.NoContent.withCookies(
+                Cookie(
+                  name = provider.cookieName,
+                  value = Pow.signClearance(clearance, mod.challengeSecret(provider)),
+                  maxAge = Some(provider.clearanceTtl.toSeconds.toInt),
+                  path = "/",
+                  secure = ctx.request.theSecured,
+                  httpOnly = true,
+                  sameSite = Some(Cookie.SameSite.Lax)
+                )
+              )
+            )
+        }
+    }
+  }
+
+  /** True when this caller already holds valid clearance, so the tier is satisfied. */
+  private def hasClearance(
+      mod: SecurityModule,
+      ctx: NgTransformerRequestContext,
+      provider: ChallengeProvider,
+      identity: ClientIdentity
+  )(using env: Env): Boolean = {
+    ctx.request.cookies
+      .get(provider.cookieName)
+      .flatMap { cookie =>
+        Pow.verifyClearance(
+          cookie.value,
+          mod.challengeSecret(provider),
+          Some(identity.ip),
+          ctx.request.headers.get("User-Agent")
+        )
+      }
+      .isDefined
   }
 
   private def record(
@@ -262,7 +363,24 @@ class CloudApimThreatResponse extends NgRequestTransformer {
       policy: ThreatPolicy
   )(using env: Env, ec: ExecutionContext): Future[Either[Result, NgPluginHttpRequest]] = {
     record(mod, ctx, identity, score, decision, policy)
-    if (!decision.enforced) {
+    if (decision.action == ThreatAction.Challenge) {
+      // a challenge is neither an allow nor a deny: it is a question, and it is skipped entirely
+      // when the caller has already answered one recently
+      mod.challengeProvider(policy.challengeProvider) match {
+        case None                                              => ctx.otoroshiRequest.rightf
+        case Some(_) if policy.dryRun                          => ctx.otoroshiRequest.rightf
+        case Some(provider) if hasClearance(mod, ctx, provider, identity) => ctx.otoroshiRequest.rightf
+        case Some(provider)                                    =>
+          mod.challenges.issue(provider, score.score).map { issued =>
+            Left(
+              Results
+                .Ok(Interstitial.render(provider, issued))
+                .as("text/html; charset=utf-8")
+                .withHeaders("Cache-Control" -> "no-store")
+            )
+          }
+      }
+    } else if (!decision.enforced) {
       // dry run, or a non-denying action: the request goes through either way
       decision.action match {
         case ThreatAction.Tarpit if !policy.dryRun =>

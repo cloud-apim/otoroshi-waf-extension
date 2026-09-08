@@ -1,0 +1,74 @@
+---
+sidebar_position: 2
+title: Crawlers and AI agents
+description: Proving a crawler is who it says it is, and deciding what the rest may do.
+---
+
+# Crawlers and AI agents
+
+**Cloud APIM - Security Suite → Bot policies.**
+
+## Verification is the valuable half
+
+`Googlebot` is the most forged user-agent string on the web. A policy built on the string alone is a
+policy anyone can opt into by typing eleven characters.
+
+For the crawlers that publish a verification method, the policy does **forward-confirmed reverse
+DNS**: resolve the address to a name, check the name belongs to the operator, then resolve that name
+back and check it returns to the same address. One direction alone proves nothing — a reverse record
+is set by whoever owns the address block.
+
+Three outcomes:
+
+| Outcome | What it means | Default |
+|---|---|---|
+| **Verified** | It is who it says | Get out of its way |
+| **Impersonator** | A demonstrated lie, not a heuristic | Weight 60, and denied |
+| **Unknown** | Not resolved yet, or no method published | The category rule applies |
+
+:::note Why a first request always says "unknown"
+DNS blocks, and the request path is not allowed to block. The first request from an address
+schedules the lookup and answers `unknown`; the next one has the answer. A crawler makes thousands
+of requests, so being one request late costs nothing — while a per-request DNS round trip would
+cost everything.
+
+A DNS failure yields `unknown`, never `impersonator`. A resolver problem is not evidence.
+:::
+
+## AI crawlers
+
+The catalog covers the ones people actually ask about — GPTBot, ClaudeBot, CCBot, PerplexityBot,
+Bytespider, Amazonbot, Google-Extended, Applebot-Extended and more.
+
+**None of them publishes a verification method.** That is itself the finding: any policy on an AI
+crawler rests entirely on a string it chooses to send, and enforcement at the gateway is what makes
+a `robots.txt` line more than a polite request.
+
+```json
+{
+  "rules": [
+    { "target": "category:search", "action": "allow", "weight": 0 },
+    { "target": "category:ai", "action": "deny", "weight": 0 },
+    { "target": "name:ccbot", "action": "allow", "weight": 0 }
+  ]
+}
+```
+
+A `name:` rule beats a `category:` rule, so the example above blocks AI crawlers except CCBot.
+
+Actions are `allow`, `monitor` and `deny`. **There is no `challenge` action here** — to challenge a
+crawler, give it a weight that reaches a `challenge` tier in your
+[threat policy](../fabric/policies.mdx). One challenge implementation, one place to reason about it.
+
+The shipped defaults **deny nothing**: a policy that starts blocking crawlers the moment you install
+it is a trap.
+
+## robots.txt, generated
+
+The policy generates the `robots.txt` matching what it actually enforces, so the file and the
+gateway cannot drift apart — which is the usual failure of a `robots.txt` nobody enforces.
+
+Press **Generate** on the policy page, or `POST /_robots_txt`. Serve the result with Otoroshi's own
+Robots plugin; this extension deliberately does not duplicate the serving.
+
+An `llms_txt` field is carried alongside for the same purpose.

@@ -110,6 +110,10 @@ All under `/extensions/cloud-apim/extensions/waf/security`, backoffice-authentic
 | `POST` | `/_unban` | `{"ref":"ip:1.2.3.4"}` or `{"all":true}` | Lift one or all |
 | `POST` | `/_ledger` | `{}`, `{"ref":"..."}`, or `{"ref":"...","forget":true}` | Inspect or clear the cross-request memory |
 | `POST` | `/_simulate` | `{"score":75,"policy":"..."}` | What a policy would do at that score |
+| `GET` | `/_challenge_presets` | — | Ready-to-edit vendor challenge settings |
+| `POST` | `/_challenge_from_preset` | `{"preset":"friendly-captcha"}` | Build a provider from a preset |
+| `GET` | `/_bot_catalog` | — | Every known bot signature |
+| `POST` | `/_robots_txt` | `{"policy":"<id>"}` | The robots.txt a bot policy enforces |
 
 `_status` is the one to monitor — `shared_state.dedicated_redis: false` means bans are only shared
 between nodes if the Otoroshi storage backend is.

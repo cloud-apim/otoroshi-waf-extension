@@ -1,0 +1,108 @@
+---
+sidebar_position: 1
+title: Challenges
+description: Making a suspect caller prove something, instead of guessing whether to refuse them.
+---
+
+# Challenges
+
+Between "log it" and "refuse it" there is a third option: **ask**. A challenge costs a real visitor
+a fraction of a second, once, and costs an automated client CPU on every single request. That
+asymmetry is the whole point.
+
+**Cloud APIM - Security Suite → Challenge providers.**
+
+## Proof of work, built in
+
+The default kind is `pow` and it involves nobody else: the browser computes a hashcash-style
+SHA-256 puzzle, we verify the answer, and a signed cookie grants clearance for a while.
+
+No third-party service. No external script. No personal data. No consent banner. That is what makes
+it deployable in European enterprise and public-sector contexts where a CAPTCHA vendor is a
+procurement conversation rather than a config change.
+
+| Field | Default | What it does |
+|---|---|---|
+| `difficulty_floor` | `18` | Leading zero bits demanded at score 0 |
+| `difficulty_ceiling` | `24` | At score 100 |
+| `challenge_ttl_seconds` | `300` | How long a puzzle stays solvable |
+| `clearance_ttl_seconds` | `1800` | How long a solved challenge lasts |
+| `bind_ip` / `bind_ua` | `true` | Clearance is tied to the caller who earned it |
+
+**Difficulty scales with the threat score.** Each bit doubles the expected work, so the range is
+deliberately narrow — roughly a quarter of a second to a few seconds on a phone. A wider range is
+not "more secure", it is a denial of service against your own users.
+
+:::note Two properties worth knowing
+**Puzzles are one-shot.** A challenge is stored and consumed on use, so a solution cannot be
+replayed. A stateless, self-signed challenge could be solved once and reused forever across the
+cluster, which turns the whole scheme into a formality.
+
+**Clearance is bound to the caller.** Without that, a scraping farm solves once and shares the
+cookie across every worker.
+:::
+
+## Wiring it up
+
+A challenge is a [threat policy](../fabric/policies.mdx) tier action:
+
+```json
+{
+  "challenge_provider": "challenge-provider_...",
+  "tiers": [
+    { "min_score": 40, "action": "log" },
+    { "min_score": 60, "action": "challenge" },
+    { "min_score": 90, "action": "ban" }
+  ]
+}
+```
+
+The threat response plugin serves the interstitial, the browser solves it and posts the answer back
+to the same URL, and the reloaded request carries the clearance cookie.
+
+:::caution The answer comes back through the route
+The solution is posted to the same URL it was challenged on, so anything that would refuse that
+request before the response plugin sees it — an authentication plugin, for instance — also refuses
+the answer. Challenges belong in front of public routes.
+:::
+
+## Vendor backends
+
+For deployments whose procurement requires a named product. Set the kind to `vendor` and fill in a
+widget script, the response field name, a siteverify URL and your keys.
+
+There is deliberately **no per-vendor code**: a vendor is a handful of URLs and field names, which
+makes adding one a configuration change and stops this extension shipping hardcoded endpoints that
+quietly rot.
+
+**Cloud APIM - Security Suite → Challenge presets** ships ready-to-edit settings:
+
+| Preset | Operated from | Note |
+|---|---|---|
+| Friendly Captcha | Germany (Munich) | Proof-of-work based, GDPR by default — the closest commercial equivalent to the built-in kind |
+| captcha.eu | Austria | Endpoints are not shipped: take them from your dashboard |
+| Cloudflare Turnstile | United States | Strong behavioural signals; check your privacy posture |
+| hCaptcha | United States | |
+
+Every preset is created **disabled**. A challenge that cannot verify would lock out every caller it
+challenges, so one without keys must not be able to run.
+
+:::note An unverifiable answer is not a passed challenge
+Vendor verification fails **closed**: if the provider cannot be reached, the answer is refused.
+That is the opposite of the rule everywhere else in this extension, and deliberately so — failing
+open here would mean anyone could pass a challenge by blocking one outbound request.
+:::
+
+## What is not here
+
+**An image or interactive puzzle of our own.** Distorted text is solved at over 99% by commodity
+models, human solver farms cost about a dollar per thousand, and a visual puzzle without an audio
+alternative excludes blind users — a legal exposure under the European Accessibility Act, not just
+an ethical one. It would be security theatre with a liability attached.
+
+**Behavioural risk scoring.** What makes the big vendors work is a view of traffic across hundreds
+of thousands of sites. That is a data problem, not a code problem.
+
+We do not need it: the gateway already sees every request, the WAF verdicts, the reputation feeds
+and the ledger. The risk engine is [the fabric](../fabric/overview.mdx). What a CAPTCHA adds here is
+friction, not judgement.

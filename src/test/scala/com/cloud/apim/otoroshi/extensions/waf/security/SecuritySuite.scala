@@ -171,7 +171,9 @@ class ThreatDecisionSuite extends munit.FunSuite {
   test("actions parse case-insensitively and reject nonsense") {
     assertEquals(ThreatAction.parse("BAN"), Some(ThreatAction.Ban))
     assertEquals(ThreatAction.parse(" tarpit "), Some(ThreatAction.Tarpit))
-    assertEquals(ThreatAction.parse("challenge"), None, "challenge has no module behind it yet")
+    assertEquals(ThreatAction.parse("CHALLENGE"), Some(ThreatAction.Challenge))
+    assertEquals(ThreatAction.parse("throttle"), None, "throttle has no module behind it yet")
+    assertEquals(ThreatAction.parse("obliterate"), None)
   }
 }
 

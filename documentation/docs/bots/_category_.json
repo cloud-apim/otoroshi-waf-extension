@@ -1,0 +1,8 @@
+{
+  "label": "Bots and challenges",
+  "position": 6,
+  "link": {
+    "type": "generated-index",
+    "description": "Proof of work, verified crawlers, AI crawler policy, and the decoys that catch scanners before anything else does."
+  }
+}

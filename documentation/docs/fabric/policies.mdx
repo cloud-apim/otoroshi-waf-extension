@@ -45,10 +45,12 @@ still recorded — that record is what tuning reads.
 | `deny` | Refuse this request with `status` |
 | `ban` | Refuse it **and** ban the caller for `ban_for_seconds` |
 
-:::caution `challenge` and `throttle` are not available
-Both appear in the roadmap and neither has a module behind it yet. They are deliberately absent from
-the action list rather than accepted and ignored, which would let you configure a tier that silently
-does nothing.
+| `challenge` | Ask the caller to prove something before proceeding. See [challenges](../bots/challenge.mdx) |
+
+:::caution `throttle` is not available
+It appears in the roadmap and has no module behind it yet. It is deliberately absent from the action
+list rather than accepted and ignored, which would let you configure a tier that silently does
+nothing.
 :::
 
 ## Who gets banned

@@ -1,0 +1,100 @@
+---
+sidebar_position: 5
+title: ASN classification
+description: Resolving a caller to its network, and what that is worth — which is less than it looks.
+---
+
+# ASN classification
+
+Every address belongs to an autonomous system — a network operator. Knowing which one tells you
+something useful about the caller: a request from a residential ISP and a request from a datacenter
+are not the same kind of request, even when they look identical.
+
+**Cloud APIM - Security Suite → ASN databases.**
+
+## The signal, and its limit
+
+Most scraping and credential-stuffing traffic leaves a hosting ASN. That makes it a
+disproportionately effective signal — and a disproportionately dangerous one, because **every
+legitimate server-to-server integration you have comes from a hosting ASN too**.
+
+So it ships as a low weight and never as a block:
+
+| Category | Weight | Action | Why |
+|---|---|---|---|
+| `cdn` | 0 | monitor | Cloudflare, Fastly, Akamai. Traffic through a CDN is normal; the score should not move |
+| `vpn` | 30 | monitor | Networks whose address space is mostly VPN exits |
+| `hosting` | 15 | monitor | The big clouds and hosters. A hint, not a verdict |
+
+:::caution Never make this a blocking category on its own
+The entity lets you set `action: block` per category, and the UI warns when you do. There are
+legitimate uses — refusing VPN exits on an internal admin route, say. Applying it to `hosting` on a
+public API refuses every partner integration you have.
+
+It belongs on the [threat score](../fabric/overview.mdx) as one weighted signal among several. That
+is what the fabric is for.
+:::
+
+## Order is the whole trick
+
+Classification tries each category in order and takes the first match, by AS number first, then by a
+substring of the organisation name.
+
+The order is not cosmetic. `CLOUDFLARENET` contains the string `cloud`, so if `hosting` came first,
+every request through Cloudflare would be classified as hosting. `cdn` sits above it for exactly
+that reason, and the UI lets you move categories up and down for exactly that reason.
+
+The same applies to `vpn` above `hosting`: M247 is a hosting company whose address space is largely
+VPN exits, and the useful classification is the second one.
+
+## The table
+
+| Field | Default |
+|---|---|
+| `url` | `https://iptoasn.com/data/ip2asn-v4.tsv.gz` |
+| `gzip` | `true` — the published tables ship gzipped |
+| `format` | `iptoasn_tsv` — `start ⇥ end ⇥ asn ⇥ country ⇥ organisation`, inclusive bounds |
+| `refresh_interval_seconds` | `86400` |
+| `max_entries` | `1500000` |
+
+[iptoasn.com](https://iptoasn.com/) publishes hourly, is public domain, and needs no account —
+unlike the MaxMind ASN database, which now requires a signup and a licence acceptance.
+
+Rows marked *not routed* (`asn = 0`) are a large and normal part of the file. They are dropped, not
+counted as parse failures.
+
+### Cost
+
+About 7 MB gzipped, roughly half a million routed networks. Indexed as a sorted array searched by
+binary search, with the organisation records interned — so lookups cost the same as a feed lookup,
+and the table costs a few tens of megabytes of heap. Once a day is plenty; routing changes slowly.
+
+A failed refresh keeps the previous table, like every other source here.
+
+## Reading the result
+
+An ASN hit appears in the reputation verdict alongside feed and CrowdSec hits:
+
+```json
+{
+  "kind": "asn",
+  "source_name": "ASN database",
+  "tag": "asn:hosting",
+  "weight": 15,
+  "blocking": false,
+  "detail": "AS16509 AMAZON-02 — hosting"
+}
+```
+
+Use the **Look up** box on the database page to check an address before relying on it. A network
+with no matching category contributes nothing and is tagged `asn:<number>`, so it still shows up in
+events without moving the score.
+
+## What this does not give you
+
+Residential and mobile detection. Telling a home broadband line from a mobile carrier from a small
+business connection needs a commercial dataset; the public routing table does not carry it. If you
+see a product claiming otherwise from free data, it is guessing.
+
+Tor exit nodes are better covered by the [Tor feed](./catalog.mdx) than by ASN — the Tor Project
+publishes the exit list directly, which is authoritative where an ASN guess is not.
