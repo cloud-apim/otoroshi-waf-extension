@@ -1,6 +1,10 @@
-# Cloud APIM - Otoroshi WAF Extension
+# Cloud APIM - Security Suite for Otoroshi
 
-A Web Application Firewall (WAF) extension for [Otoroshi](https://www.otoroshi.io/) that provides a JVM-native implementation of ModSecurity SecLang with the OWASP Core Rule Set (CRS) included.
+A security extension for [Otoroshi](https://www.otoroshi.io/): a JVM-native web application firewall
+speaking ModSecurity SecLang with the OWASP Core Rule Set embedded, plus ip reputation fed by threat
+intelligence feeds and CrowdSec.
+
+📖 **[Full documentation](https://cloud-apim.github.io/otoroshi-waf-extension/)**
 
 This extension is built on top of of the following open-source Cloud APIM libraries:
 
@@ -10,12 +14,24 @@ This extension is built on top of of the following open-source Cloud APIM librar
 
 ## Features
 
+### Web application firewall
+
 - **ModSecurity SecLang support**: Native JVM implementation of the ModSecurity SecLang DSL
 - **OWASP Core Rule Set (CRS)**: Embedded CRS preset for comprehensive protection against common web attacks
 - **Request/Response inspection**: Inspect both incoming requests and outgoing responses
 - **Configurable body inspection**: Control body inspection limits and MIME types
 - **Blocking or monitoring mode**: Choose to block malicious requests or just log them
-- **Analytics events**: WAF events are sent to Otoroshi analytics for monitoring and alerting
+
+### IP reputation
+
+- **Threat intelligence feeds**: Match callers against blocklists and cloud provider ranges, with a catalog of 14 curated sources
+- **CrowdSec integration**: Consume decisions from a Local API, and report WAF detections back as alerts
+- **Weighted scoring**: Sources carry a weight and an action, so weak signals accumulate instead of forcing a binary judgement
+- **Nothing blocking on the request path**: In-memory range index, scheduled refreshes, fail-open on every external dependency
+
+### Both
+
+- **Analytics events**: Every detection is an Otoroshi analytic event, routable through any data exporter
 
 ## Requirements
 
@@ -24,13 +40,22 @@ This extension is built on top of of the following open-source Cloud APIM librar
 
 ## Installation
 
-1. Build the extension JAR:
+1. Download the latest jar from the [releases page](https://github.com/cloud-apim/otoroshi-waf-extension/releases/latest) — the asset is named `otoroshi-waf-extension_3-<version>.jar`.
+
+2. Start Otoroshi with it on the classpath:
 
 ```bash
-sbt assembly
+java -cp "./otoroshi-waf-extension.jar:./otoroshi.jar" \
+  -Dotoroshi.storage=file \
+  play.core.server.ProdServerStart
 ```
 
-2. Copy the generated JAR (`target/scala-3.8.4/otoroshi-waf-extension-assembly_3-dev.jar`) to the Otoroshi classpath.
+or mount it into the Otoroshi plugins directory with Docker. See the
+[install documentation](https://cloud-apim.github.io/otoroshi-waf-extension/docs/install) for the
+full instructions, checksums included.
+
+To build from source instead — only needed for an unreleased change — run `sbt assembly`; the
+artifact lands in `target/scala-3.8.4/otoroshi-waf-extension-assembly_3-dev.jar`.
 
 3. Enable the extension in Otoroshi configuration:
 
@@ -169,3 +194,19 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## About Cloud APIM
 
 This extension is developed and maintained by [Cloud APIM](https://www.cloud-apim.com/).
+
+## Documentation
+
+The full documentation lives at
+**[cloud-apim.github.io/otoroshi-waf-extension](https://cloud-apim.github.io/otoroshi-waf-extension/)**
+and its source is in [`documentation/`](./documentation).
+
+```bash
+cd documentation
+npm install
+npm start
+```
+
+The built site is not committed. Pushing to `main` with changes under `documentation/` triggers
+[`.github/workflows/documentation.yaml`](./.github/workflows/documentation.yaml), which builds it and
+publishes it to GitHub Pages as an artifact.

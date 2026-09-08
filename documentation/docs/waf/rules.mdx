@@ -1,0 +1,148 @@
+---
+sidebar_position: 2
+title: Rules and the CRS
+description: SecLang directives, the embedded Core Rule Set, phases and paranoia levels.
+---
+
+# Rules and the CRS
+
+The `rules` field of a [WAF configuration](./configs.mdx) is a SecLang program. It is the same
+language ModSecurity uses, so existing rules and the published CRS documentation apply directly.
+
+## The embedded Core Rule Set
+
+The [OWASP CRS](https://coreruleset.org/) v4 is bundled in the extension. Import it as a preset:
+
+```
+@import_preset crs
+
+SecRuleEngine On
+```
+
+`@import_preset` is an extension of the language provided by this engine — it pulls in the packaged
+ruleset without you having to ship the CRS files yourself. `SecRuleEngine On` must come last; it
+arms the engine after the rules are loaded.
+
+The engine passes **100% of the CRS v4 regression suite**, so CRS behaviour matches what its
+documentation describes.
+
+### Rule id ranges
+
+Useful when reading events, because the id tells you what family fired:
+
+| Range | Family |
+|---|---|
+| `9000xx`–`9010xx` | Exclusions (before and after CRS) |
+| `9200xx` | Protocol enforcement and anomalies |
+| `9300xx` | LFI — local file inclusion |
+| `9310xx` | RFI — remote file inclusion |
+| `9320xx` | RCE — remote command execution |
+| `9330xx` | PHP injection |
+| `9340xx` | Generic code injection |
+| `9410xx` | XSS |
+| `9420xx` | SQL injection |
+| `9430xx` | Session fixation |
+| `9440xx` | Java attacks |
+| `9500xx` | Response leakage and error disclosure |
+
+## Your own rules
+
+Custom rules can stand alone or sit alongside the CRS:
+
+```
+SecRule REQUEST_URI "@contains /admin" \
+    "id:1001,phase:1,deny,status:403,msg:'Admin access denied'"
+
+SecRule REQUEST_HEADERS:User-Agent "@pm sqlmap nikto nmap" \
+    "id:1002,phase:1,deny,status:403,t:none,t:lowercase,msg:'Scanner user-agent'"
+
+SecRule ARGS "@rx <script" \
+    "id:1003,phase:2,deny,status:403,t:none,t:urlDecodeUni,t:lowercase,msg:'Inline script in an argument'"
+```
+
+Keep your own ids outside the CRS ranges — the `1000`–`99999` band is conventionally free.
+
+Combined with the CRS, order matters: rules meant to run *before* the CRS go above the import, and
+exclusions go after it.
+
+```
+SecRule REMOTE_ADDR "@ipMatch 10.0.0.0/8" \
+    "id:900,phase:1,allow,nolog,msg:'internal traffic bypasses the waf'"
+
+@import_preset crs
+
+SecRuleUpdateTargetById 942100 "!ARGS:search_query"
+
+SecRuleEngine On
+```
+
+## Phases
+
+SecLang splits processing into five phases. Which ones run depends on which plugin evaluates the
+ruleset:
+
+| Phase | Sees | Request plugin | Global validator |
+|---|---|---|---|
+| 1 | Request headers, URI, cookies | ✅ | ✅ |
+| 2 | Request body and arguments | ✅ | ✅ *(no body)* |
+| 3 | Response headers and status | ✅ | — |
+| 4 | Response body | ✅ | — |
+| 5 | Logging | ✅ | ✅ |
+
+The [global validator](../reference/plugins.mdx#global-plugins-are-not-route-plugins) never reads a
+body, so phase-2 rules that depend on `REQUEST_BODY` or `ARGS_POST` will not fire there.
+
+## Paranoia levels and the anomaly score
+
+The CRS does not deny on a single match. Rules contribute to an **anomaly score**, and a request is
+denied once the score crosses a threshold. Two knobs control how aggressive that is:
+
+- the **paranoia level** (1–4) — how many rules are active. Level 1 is production-safe; each level
+  up adds broader rules and more false positives.
+- the **anomaly threshold** — how much accumulated score denies a request. Lower is stricter.
+
+Both are set with `SecAction` before the CRS import:
+
+```
+SecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.blocking_paranoia_level=1"
+SecAction "id:900110,phase:1,nolog,pass,t:none,setvar:tx.inbound_anomaly_score_threshold=5"
+
+@import_preset crs
+
+SecRuleEngine On
+```
+
+:::tip Start at paranoia level 1
+Level 1 with the default threshold is what the CRS is tuned for. Raising the paranoia level before
+you have tuned level 1 produces a flood of false positives and usually ends with someone disabling
+the WAF entirely. Go up only after [tuning](./tuning.mdx) the level below.
+:::
+
+## Operators that are parsed but never match
+
+Eight SecLang operators are accepted by the parser and always evaluate to **no match**. They depend
+on a host environment the engine does not provide — DNS resolution, a geolocation database, a
+filesystem, an XML toolchain. Each one logs at debug level when it is reached.
+
+| Operator | What it would do |
+|---|---|
+| `@rbl` | DNSBL lookup of the source address |
+| `@geoLookup` | Geolocation of the source address — the `GEO` collection stays empty |
+| `@inspectFile` | Hand an uploaded file to an external program |
+| `@validateDTD` | Validate an XML body against a DTD |
+| `@validateSchema` | Validate an XML body against an XSD |
+| `@verifyCC` | Luhn check on a candidate credit card number |
+| `@verifySSN` | US social security number check |
+| `@verifyCPF` | Brazilian CPF check |
+
+:::caution This is silent
+A rule built on one of these never fires — it does not error, and nothing appears in the WAF events
+because there is no match to report. If your ruleset relies on one of them, it is providing no
+protection. Turn on `integration.log` to see them logged as they are reached, and check the
+[issue tracker](https://github.com/cloud-apim/otoroshi-waf-extension/issues) before depending on
+any of them.
+:::
+
+Everything else the CRS uses — including `@rx`, `@pm`, `@pmFromFile`, `@ipMatch`,
+`@ipMatchFromFile`, `@detectSQLi`, `@detectXSS`, `@validateByteRange` — is implemented, which is
+why the CRS regression suite passes in full.

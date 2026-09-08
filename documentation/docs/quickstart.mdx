@@ -1,0 +1,108 @@
+---
+sidebar_position: 3
+title: Quickstart
+description: From an empty Otoroshi to a route protected by the CRS and an ip blocklist.
+---
+
+# Quickstart
+
+About ten minutes, assuming the extension is [installed and enabled](./install.mdx). We will put a
+route behind the CRS in monitoring mode, look at what it catches, and only then arm it.
+
+## 1. Create a WAF configuration
+
+**Cloud APIM - Security Suite → WAF configs → Add item.**
+
+The only field that matters to start is `rules`. Two lines get you the whole Core Rule Set:
+
+```
+@import_preset crs
+
+SecRuleEngine On
+```
+
+Leave **Block requests** off for now. In monitoring mode the WAF evaluates every rule and emits
+events, but never denies anything — which is the only safe way to discover what your traffic
+actually looks like.
+
+Hit **Compile** to check the ruleset parses before saving.
+
+## 2. Attach it to a route
+
+On the route, add the **Cloud APIM WAF** plugin and select the configuration you just created.
+
+Send some traffic, including something that should obviously match:
+
+```bash
+curl 'https://my-api.example.com/search?q=1%27%20OR%20%271%27%3D%271'
+```
+
+## 3. Look at what it caught
+
+The WAF emits a `CloudApimWafTrailEvent` for every request where at least one rule matched. Route
+it through any Otoroshi data exporter, or read it from the events view.
+
+Each event carries the rule ids, the messages, and whether the request *would* have been blocked:
+
+```json
+{
+  "@type": "CloudApimWafTrailEvent",
+  "blocking": false,
+  "block": { "status": 403, "msg": "SQL Injection Attack Detected via libinjection" },
+  "events": [{ "rule_id": 942100, "msg": "SQL Injection Attack Detected via libinjection", "phase": 2 }]
+}
+```
+
+:::tip Read the events before arming
+`blocking: false` with a non-null `block` means "this request would have been denied". Counting
+those over a few days of real traffic is the honest measure of what turning blocking on will cost
+you. See [Tuning](./waf/tuning.mdx).
+:::
+
+## 4. Add an ip blocklist
+
+**Cloud APIM - Security Suite → Threat feed catalog.** Pick **FireHOL level 1** — a conservative
+aggregation of well-established blocklists, and the usual starting point — and press *Create a feed
+from this source*.
+
+Open the created feed and press **Refresh now**. The status panel reports what it fetched:
+
+```
+Entries          1 284
+Merged ranges    1 190
+Rejected lines   0
+Last refresh     3s ago
+```
+
+Test an address before trusting it, with the **Look up** box on the same page.
+
+## 5. Attach reputation to the route
+
+Add the **Cloud APIM Security Suite - IP reputation** plugin. Start with:
+
+```json
+{
+  "mode": "monitor",
+  "passthrough": ["10.0.0.0/8"]
+}
+```
+
+`monitor` scores and reports without denying. `passthrough` is for your own probes and monitoring —
+put them there so they can never be scored.
+
+## 6. Arm it
+
+Once the events look clean:
+
+- on the WAF config, turn **Block requests** on;
+- on the reputation plugin, set `"mode": "block"`.
+
+A request is denied by reputation when a feed marked `block` matched, or when the accumulated score
+reaches `score_threshold`. FireHOL level 1 is created with `action: block`, so it denies on its own.
+
+## Where to go next
+
+- [WAF rules](./waf/rules.mdx) — SecLang, the CRS, paranoia levels, writing your own
+- [Tuning](./waf/tuning.mdx) — false positives, exclusions, going to blocking safely
+- [Threat feeds](./reputation/threat-feeds.mdx) — formats, refresh, rollback
+- [CrowdSec](./reputation/crowdsec.mdx) — consuming decisions and reporting detections back

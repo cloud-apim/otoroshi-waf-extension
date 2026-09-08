@@ -1,0 +1,98 @@
+---
+sidebar_position: 3
+title: Admin API
+description: Entity endpoints and the extension's own operational endpoints.
+---
+
+# Admin API
+
+## Entities
+
+Standard Otoroshi entity endpoints, authenticated with an admin apikey.
+
+```
+GET    /apis/waf.extensions.cloud-apim.com/v1/waf-configs
+POST   /apis/waf.extensions.cloud-apim.com/v1/waf-configs
+GET    /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
+PUT    /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
+PATCH  /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
+DELETE /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
+```
+
+The same shape for `threat-feeds` and `crowdsec-bouncers`.
+
+```bash
+curl -u "$APIKEY_ID:$APIKEY_SECRET" \
+  https://otoroshi-api.example.com/apis/waf.extensions.cloud-apim.com/v1/threat-feeds
+```
+
+## WAF endpoints
+
+Backoffice-authenticated — they use the admin session, not an apikey.
+
+### Compile a ruleset
+
+```http
+POST /extensions/cloud-apim/extensions/waf/utils/_compile
+{ "rules": ["@import_preset crs", "SecRuleEngine On"] }
+```
+
+```json
+{ "done": true }
+```
+
+### Evaluate a request against a ruleset
+
+```http
+POST /extensions/cloud-apim/extensions/waf/utils/_test
+{
+  "rules": ["@import_preset crs", "SecRuleEngine On"],
+  "request": {
+    "method": "POST",
+    "uri": "/post",
+    "headers": { "content-type": "application/x-www-form-urlencoded" },
+    "body": "q=1' OR '1'='1"
+  }
+}
+```
+
+Returns the full engine result — matched rules, phases, disposition.
+
+## Reputation endpoints
+
+All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authenticated.
+
+| Method | Path | Body | Purpose |
+|---|---|---|---|
+| `GET` | `/_catalog` | — | The curated source catalog |
+| `GET` | `/_status` | — | Every feed and bouncer with its runtime state |
+| `POST` | `/_template` | `{"entry":"tor-exit-nodes"}` | Build a `ThreatFeed` from a catalog entry |
+| `POST` | `/_refresh` | `{"feed":"<id>"}` or `{}` | Refresh one feed, or all of them |
+| `POST` | `/_rollback` | `{"feed":"<id>"}` | Restore the previous snapshot |
+| `POST` | `/_lookup` | `{"ip":"1.2.3.4"}` | Evaluate an address against every enabled source |
+| `POST` | `/_crowdsec_sync` | `{"bouncer":"<id>"}` or `{}` | Sync one bouncer, or all of them |
+
+`/_status` is the one worth wiring into monitoring:
+
+```json
+{
+  "feeds": [
+    {
+      "id": "threat-feed_1f3a...",
+      "name": "FireHOL level 1",
+      "enabled": true,
+      "snapshot": { "entries": 1284, "ranges": 1190, "rejected": 0, "error": null },
+      "previous": { "entries": 1279 }
+    }
+  ],
+  "crowdsec": [
+    {
+      "id": "crowdsec-bouncer_9c2b...",
+      "pending_push": 0,
+      "store": { "decisions": 1042, "initialized": true, "last_error": null }
+    }
+  ]
+}
+```
+
+A non-null `snapshot.error`, or a `store.last_error`, means protection is degraded on that node.

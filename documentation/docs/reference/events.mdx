@@ -1,0 +1,86 @@
+---
+sidebar_position: 4
+title: Analytics events
+description: The three event types, and what to do with them.
+---
+
+# Analytics events
+
+Every event is an Otoroshi `AnalyticEvent`, so it flows through any data exporter — Elastic, Kafka,
+a webhook, a file — with no extra wiring.
+
+## CloudApimWafTrailEvent
+
+Emitted once per request where at least one WAF rule matched. The main signal.
+
+```json
+{
+  "@type": "CloudApimWafTrailEvent",
+  "@timestamp": 1757340000000,
+  "blocking": true,
+  "block": { "status": 403, "msg": "SQL Injection Attack Detected via libinjection" },
+  "events": [
+    { "rule_id": 942100, "msg": "SQL Injection Attack Detected via libinjection", "phase": 2 }
+  ],
+  "route": { "id": "route_...", "name": "public-api" },
+  "request": { "method": "GET", "uri": "/search?q=...", "headers": {} }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `blocking` | Whether the configuration is in blocking mode |
+| `block` | Non-null when the ruleset reached a deny decision |
+| `events[]` | Every rule that matched |
+
+`blocking: false` with a non-null `block` is the "would have been denied" case — the number to
+track while [tuning](../waf/tuning.mdx).
+
+## CloudApimWafReputationEvent
+
+Emitted whenever a reputation lookup produced at least one hit, in monitoring mode too.
+
+```json
+{
+  "@type": "CloudApimWafReputationEvent",
+  "blocked": true,
+  "mode": "block",
+  "verdict": {
+    "ip": "203.0.113.7",
+    "score": 95,
+    "blocking": true,
+    "tags": ["feed:firehol-l1", "asn:aws"],
+    "hits": [
+      { "kind": "feed", "source_id": "threat-feed_...", "source_name": "FireHOL level 1",
+        "weight": 80, "blocking": true }
+    ]
+  }
+}
+```
+
+`verdict.tags` is the field to group on: it carries the feed tags and CrowdSec origin, so a single
+query answers "what is each source actually catching".
+
+## CloudApimWafAuditEvent
+
+Emitted by SecLang `auditlog` actions. Rule-level audit output, considerably more verbose than the
+trail event — useful when debugging a specific rule, noisy as a permanent stream.
+
+```json
+{
+  "@type": "CloudApimWafAuditEvent",
+  "rule_id": 942100,
+  "phase": 2,
+  "msg": "SQL Injection Attack Detected via libinjection",
+  "logdata": []
+}
+```
+
+## Suggested exporters
+
+| Goal | Filter on |
+|---|---|
+| Attack dashboard | `@type: CloudApimWafTrailEvent`, group by `events[].rule_id` |
+| Tuning backlog | `blocking: false` and `block != null`, group by rule id |
+| Reputation coverage | `@type: CloudApimWafReputationEvent`, group by `verdict.tags` |
+| Alerting | `blocked: true` or `blocking: true` with `block != null`, over a burst window |

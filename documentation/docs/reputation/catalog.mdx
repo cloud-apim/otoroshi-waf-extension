@@ -1,0 +1,89 @@
+---
+sidebar_position: 3
+title: Feed catalog
+description: Curated sources, ready to enable — and what the catalog deliberately does not do.
+---
+
+# Feed catalog
+
+The catalog ships fourteen curated sources with their URL, parser settings, suggested weight and
+licence, so you get value on day one without hunting for endpoints.
+
+**Cloud APIM - Security Suite → Threat feed catalog → Create a feed from this source.**
+
+## It creates an entity, it does not become one
+
+A catalog entry is a **template**. Creating a feed copies the entry into an editable
+[`ThreatFeed`](./threat-feeds.mdx) and the catalog is out of the picture from then on.
+
+That is deliberate. Providers move their endpoints, and several of these sources forbid
+redistribution — so the extension ships *pointers and parsers*, never mirrored data. When a URL
+changes, you fix one field instead of waiting for a release.
+
+Sources that need credentials or a manual URL are created **disabled**, so nothing starts failing
+silently while you fill in what is missing.
+
+## What ships
+
+### Blocklists
+
+| Source | Weight | Action | Notes |
+|---|---|---|---|
+| Spamhaus DROP | 90 | `block` | Netblocks controlled by criminal operations. Very low false-positive rate |
+| FireHOL level 1 | 80 | `block` | Conservative aggregation of well-established lists. The usual starting point |
+| Emerging Threats — compromised hosts | 70 | `block` | Small, high-signal |
+| FireHOL level 2 | 60 | `monitor` | Broader, higher false-positive rate |
+| FireHOL level 3 | 40 | `monitor` | Widest. A scoring signal, not a blocking one |
+| AbuseIPDB blacklist | 85 | `block` | Needs an account and an API key |
+
+### Anonymity
+
+| Source | Weight | Action | Notes |
+|---|---|---|---|
+| Tor exit nodes | 40 | `monitor` | A strong signal, and a legitimate one for many users |
+
+### Cloud provider ranges
+
+Not blocklists — a *hosting* signal. Most scrapers leave a cloud ASN, and so does every legitimate
+server-to-server integration you have.
+
+| Source | Weight | Action |
+|---|---|---|
+| AWS (ipv4 and ipv6) | 15 | `monitor` |
+| Google Cloud | 15 | `monitor` |
+| DigitalOcean | 20 | `monitor` |
+| Azure | 15 | `monitor` |
+
+### Allowlist inputs
+
+| Source | Weight | Action | Notes |
+|---|---|---|---|
+| Cloudflare edge (ipv4, ipv6) | 0 | `monitor` | When your traffic legitimately arrives through Cloudflare, these must never be scored |
+
+## Entries that need work before they run
+
+Two entries cannot ship ready to use, and say so on their card:
+
+**AbuseIPDB** needs an account. Add a `Key` header with your API key — as a vault reference — and an
+`Accept: application/json` header, then enable it.
+
+**Azure** rotates its download URL every week, so no fixed link can be shipped. Fetch the current
+weekly JSON link from the Microsoft download page and paste it into the feed's `url`.
+
+## Verify before production
+
+:::caution Check the URL and the licence yourself
+Providers change endpoints and terms without notice. Spamhaus has been consolidating DROP onto JSON
+endpoints; several sources restrict commercial use. The catalog records the licence it knew about
+at the time it was written — treat that as a starting point for your own check, not as legal
+clearance.
+:::
+
+After creating a feed, press **Refresh now** and read the status panel. A non-zero *Rejected lines*
+count, or an entry count far from what you expect, usually means the provider changed format.
+
+## Adding your own sources
+
+Nothing about a catalog entry is privileged — it produces an ordinary `ThreatFeed`. Internal
+blocklists, a corporate threat intelligence platform, or a MISP instance are created the same way,
+by hand or through the [admin API](../reference/admin-api.mdx).

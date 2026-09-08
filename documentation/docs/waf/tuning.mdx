@@ -1,0 +1,112 @@
+---
+sidebar_position: 4
+title: Tuning
+description: Getting from monitoring mode to blocking without breaking production traffic.
+---
+
+# Tuning
+
+Most WAF deployments die the same way: someone enables the CRS, it blocks a legitimate request on
+day two, and the WAF is switched off and never switched back on. Tuning is the work that prevents
+that, and it is mostly about **evidence before enforcement**.
+
+## The sequence
+
+1. **Deploy in monitoring mode.** `block: false`. Rules run, events are emitted, nothing is denied.
+2. **Collect for a full traffic cycle.** A week catches the weekly batch job; a day does not.
+3. **Find the noisy rules.** Group `CloudApimWafTrailEvent` by `events[].rule_id` and sort by count.
+   The top of that list is almost always false positives, not attacks.
+4. **Write exclusions** for the legitimate traffic, rule by rule.
+5. **Re-measure.** The remaining `block` events should be things you are happy to deny.
+6. **Arm it.** Set `block: true`.
+
+## Reading an event
+
+```json
+{
+  "@type": "CloudApimWafTrailEvent",
+  "blocking": false,
+  "block": { "status": 403, "msg": "SQL Injection Attack Detected via libinjection" },
+  "events": [
+    { "rule_id": 942100, "msg": "SQL Injection Attack Detected via libinjection", "phase": 2 }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `blocking` | Whether the configuration is in blocking mode |
+| `block` | Non-null when the ruleset reached a deny decision |
+| `events[]` | Every rule that matched, with its id, message and phase |
+
+`blocking: false` with a non-null `block` is the one to count: **this request would have been
+denied**. That number, over real traffic, is the cost of arming the WAF.
+
+## Writing exclusions
+
+An exclusion narrows a rule instead of removing it. Prefer the narrowest form that works.
+
+### Exclude one parameter from one rule
+
+The most common fix. A search box legitimately contains SQL-looking text:
+
+```
+SecRuleUpdateTargetById 942100 "!ARGS:search_query"
+```
+
+### Exclude a parameter from a whole rule family
+
+```
+SecRuleUpdateTargetByTag "attack-sqli" "!ARGS:filter_expression"
+```
+
+### Disable a rule on one path only
+
+```
+SecRule REQUEST_URI "@beginsWith /api/reports" \
+    "id:1900,phase:1,pass,nolog,ctl:ruleRemoveById=942100"
+```
+
+### Disable a rule entirely
+
+```
+SecRuleRemoveById 942100
+```
+
+Last resort. It removes the protection everywhere, for every route sharing the configuration.
+
+:::tip Exclusions go after the import
+`@import_preset crs` loads the rules; an exclusion has to be declared after the rule it modifies
+exists. Put exclusions between the import and `SecRuleEngine On`.
+:::
+
+## Anomaly scoring, in practice
+
+The CRS accumulates a score and denies past a threshold, so a single moderate match is not fatal.
+When tuning, that gives you a second knob: instead of excluding a rule, raise the threshold.
+
+```
+SecAction "id:900110,phase:1,nolog,pass,t:none,setvar:tx.inbound_anomaly_score_threshold=10"
+```
+
+Raising the threshold is blunter than an exclusion — it weakens every rule at once — but it is a
+reasonable stopgap while you work through a backlog of false positives, and much better than
+turning the WAF off.
+
+## Per-route configurations
+
+Routes with genuinely different traffic deserve different configurations. A public marketing site
+and an internal admin API do not need the same exclusions, and sharing one `WafConfig` means every
+exclusion you write for one weakens the other.
+
+The cost is more entities to maintain. A reasonable middle ground is one configuration per class of
+traffic — public, authenticated, internal — rather than one per route.
+
+## Checklist before arming
+
+- [ ] Monitoring ran for at least one full traffic cycle
+- [ ] The top ten matching rule ids have been reviewed individually
+- [ ] Every exclusion is scoped to a parameter or a path, not a global `SecRuleRemoveById`
+- [ ] `input_body_limit` is set, and paired with a hard body-size limit on the route
+- [ ] The remaining would-be blocks have been checked as real attacks
+- [ ] Someone knows how to switch `block` back to `false` in a hurry

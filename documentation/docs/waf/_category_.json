@@ -1,0 +1,8 @@
+{
+  "label": "Web application firewall",
+  "position": 4,
+  "link": {
+    "type": "generated-index",
+    "description": "SecLang rules, the OWASP Core Rule Set, the plugins that run them, and how to tune the result."
+  }
+}

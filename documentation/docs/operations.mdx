@@ -1,0 +1,83 @@
+---
+sidebar_position: 7
+title: Operations
+description: What it costs, how it fails, and what to watch.
+---
+
+# Operations
+
+## Cost on the request path
+
+| Layer | What happens per request | Rough cost |
+|---|---|---|
+| IP reputation | A binary search over merged, sorted ranges | Microseconds; independent of the number of feeds |
+| WAF, no body | Phase 1 rules over the request line, headers and cookies | Proportional to the ruleset |
+| WAF, with body | Phases 1 and 2, the body materialised and handed to the engine | Proportional to the ruleset **and** the body size |
+| WAF, response | Phases 3 and 4, the response buffered | Proportional to the response size |
+
+The WAF is instrumented through Otoroshi's metrics under
+`cloud_apim.plugins.waf.evaluation.request` and `.response`, so its real cost in your deployment is
+measurable rather than guessed.
+
+The single biggest lever is body inspection. If latency matters more than body coverage on a route,
+set `inspect_input_body: false` and keep phase 1 protection — it still catches everything that lives
+in the URI, headers and cookies, which is most scanning traffic.
+
+## How it fails
+
+The extension is built so that an external dependency failing degrades protection **visibly** rather
+than breaking traffic.
+
+| Failure | What happens |
+|---|---|
+| A feed provider is down | The previous snapshot keeps serving; the error appears on the feed page and in `/_status` |
+| A feed starts serving garbage | The refresh is rejected rather than accepted; the last good snapshot stays |
+| A feed refresh brings bad-but-valid content | One generation is kept — **Roll back** restores it |
+| The CrowdSec API is unreachable | Held decisions keep being enforced; the error appears on the bouncer page |
+| A CrowdSec key is revoked | Same — the mirror is never emptied by a failure |
+| The extension is disabled with routes still referencing it | The plugins become no-ops rather than erroring |
+
+The pattern throughout: **fail open, and make the degradation visible**. A WAF that silently stops
+protecting is worse than one that visibly stops working.
+
+## What to watch
+
+Poll `/extensions/cloud-apim/extensions/waf/reputation/_status` and alert on:
+
+| Condition | Means |
+|---|---|
+| `feeds[].snapshot.error != null` | That feed is stale on this node |
+| `feeds[].snapshot.fetched_at` older than ~3× its refresh interval | Refreshes are not completing |
+| `feeds[].snapshot.rejected` suddenly non-zero | The provider probably changed format |
+| `crowdsec[].store.last_error != null` | The Local API is unreachable or the key was rejected |
+| `crowdsec[].store.initialized == false` | The initial sync has never completed |
+| `crowdsec[].pending_push` growing | Alerts are queueing — the push credentials are probably wrong |
+
+From the analytics side, the useful alert is a **burst**: a sharp rise in `CloudApimWafTrailEvent`
+with a non-null `block`, grouped by source address, over a short window.
+
+## Clustered deployments
+
+Every node keeps its own feed index and its own CrowdSec cursor. There is no shared state and
+nothing to coordinate, at the cost of each node fetching each feed independently — so outbound
+requests scale with the number of nodes. Nodes stagger their first refresh by a random 5–25 seconds
+so a rolling restart does not hit every provider simultaneously.
+
+Snapshot rollback is per node and in memory. It survives a refresh, not a restart.
+
+## Memory
+
+| Structure | Sizing |
+|---|---|
+| Feed index | Two long arrays per feed for IPv4, plus BigInt arrays for IPv6. A million merged ranges is on the order of tens of megabytes |
+| Compiled rulesets | Cached by ruleset hash, not per route. `integration.max-cache-items` caps it, default `1000` |
+| CrowdSec mirror | One entry per held decision |
+
+`max_entries` on a feed is the guard that matters: it caps what a provider can make you allocate if
+its list suddenly grows.
+
+## Upgrades
+
+The extension id has been stable since the first release, so datastore keys, the API group and route
+paths do not move across upgrades. Entities gain new fields with defaults, so older entities stay
+valid. Rolling upgrades are safe — each node rebuilds its own in-memory indexes on start.

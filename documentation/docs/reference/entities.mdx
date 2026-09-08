@@ -1,0 +1,89 @@
+---
+sidebar_position: 2
+title: Entity reference
+description: Every field of WafConfig, ThreatFeed and CrowdSecBouncer.
+---
+
+# Entity reference
+
+All three entities are ordinary Otoroshi entities: full CRUD in the admin UI, the admin API,
+import/export, and Kubernetes CRDs. They share the API group `waf.extensions.cloud-apim.com/v1` and
+carry the usual `_loc`, `id`, `name`, `description`, `tags` and `metadata` fields.
+
+## WafConfig
+
+`waf-configs` · `waf.extensions.cloud-apim.com/WafConfig`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `block` | boolean | `true` |
+| `rules` | string[] | `[]` |
+| `inspect_input_body` | boolean | `true` |
+| `input_body_limit` | number \| null | `null` |
+| `inspect_output_body` | boolean | `true` |
+| `output_body_limit` | number \| null | `null` |
+| `output_body_mimetypes` | string[] | `[]` |
+
+## ThreatFeed
+
+`threat-feeds` · `waf.extensions.cloud-apim.com/ThreatFeed`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `url` | string | `""` |
+| `method` | string | `GET` |
+| `headers` | object | `{}` |
+| `follow_redirects` | boolean | `true` |
+| `format` | `cidr_lines` \| `csv` \| `json_array` \| `json_path` \| `misp` | `cidr_lines` |
+| `options` | object | `{}` |
+| `refresh_interval_seconds` | number | `3600` |
+| `timeout_millis` | number | `30000` |
+| `max_entries` | number | `2000000` |
+| `weight` | number | `50` |
+| `action` | `block` \| `monitor` | `monitor` |
+| `tag` | string | `feed:<id>` |
+| `catalog_ref` | string \| null | `null` |
+
+### Format options
+
+| Format | Option | Default |
+|---|---|---|
+| `csv` | `column` | `0` |
+| `csv` | `separator` | `,` |
+| `csv` | `skip_header` | `false` |
+| `json_array` | `field` | — |
+| `json_path` | `path` | required |
+
+## CrowdSecBouncer
+
+`crowdsec-bouncers` · `waf.extensions.cloud-apim.com/CrowdSecBouncer`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `lapi_url` | string | `http://127.0.0.1:8080` |
+| `api_key` | string | `""` |
+| `poll_interval_seconds` | number | `10` |
+| `timeout_millis` | number | `10000` |
+| `scopes` | string[] | `["ip", "range"]` |
+| `origins_filter` | string[] | `[]` |
+| `weight` | number | `90` |
+| `action` | `block` \| `monitor` | `block` |
+| `tag` | string | `crowdsec` |
+| `push_enabled` | boolean | `false` |
+| `push_machine_id` | string | `""` |
+| `push_password` | string | `""` |
+| `push_scenario` | string | `cloud-apim/otoroshi-reputation` |
+| `push_interval_seconds` | number | `10` |
+| `push_max_batch` | number | `50` |
+| `push_with_decision` | boolean | `false` |
+| `push_decision_duration` | string | `4h` |
+| `push_waf_detections` | boolean | `false` |
+| `push_waf_monitored` | boolean | `false` |
+
+:::tip Secrets
+`headers` on a feed, and `api_key` / `push_password` on a bouncer, all go through Otoroshi's secret
+filling. Use vault references rather than literal values.
+:::

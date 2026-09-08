@@ -1,0 +1,60 @@
+/**
+ * Global styles. Infima variables are overridden here.
+ * The palette is taken from the extension's own shield icon: pine green as the primary,
+ * cinnabar reserved for anything that denies traffic.
+ */
+
+:root {
+  --ifm-color-primary: #1f5e4e;
+  --ifm-color-primary-dark: #1c5546;
+  --ifm-color-primary-darker: #1a5042;
+  --ifm-color-primary-darkest: #154236;
+  --ifm-color-primary-light: #226756;
+  --ifm-color-primary-lighter: #246c5a;
+  --ifm-color-primary-lightest: #2a7f69;
+  --ifm-code-font-size: 92%;
+  --ifm-font-family-monospace: 'IBM Plex Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+
+  --suite-accent: #a8321e;
+  --suite-surface: #ffffff;
+  --suite-surface-alt: #f4f5f3;
+  --suite-border: #dfe1dc;
+  --suite-muted: #5d6360;
+  --suite-hero-bg: linear-gradient(150deg, #10241f 0%, #16302a 55%, #1f5e4e 100%);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #6fbfa3;
+  --ifm-color-primary-dark: #58b494;
+  --ifm-color-primary-darker: #4cae8c;
+  --ifm-color-primary-darkest: #3d9174;
+  --ifm-color-primary-light: #86cab2;
+  --ifm-color-primary-lighter: #92d0ba;
+  --ifm-color-primary-lightest: #b7e0d2;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+
+  --suite-accent: #e0644a;
+  --suite-surface: #1b1f1d;
+  --suite-surface-alt: #232827;
+  --suite-border: #313735;
+  --suite-muted: #a3aaa6;
+  --suite-hero-bg: linear-gradient(150deg, #0d1614 0%, #12211d 55%, #1a3f36 100%);
+}
+
+/* tables in the reference pages carry a lot of short values — keep them tight and scrollable */
+.markdown table {
+  display: table;
+  width: 100%;
+}
+.markdown table td:first-child {
+  white-space: nowrap;
+}
+.markdown table code {
+  white-space: nowrap;
+}
+
+/* admonitions read better with a little more room around the icon */
+.theme-admonition {
+  margin-bottom: 1.4rem;
+}

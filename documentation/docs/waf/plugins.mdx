@@ -1,0 +1,84 @@
+---
+sidebar_position: 3
+title: WAF plugins
+description: The two plugins that run a WAF configuration, and where each one is configured.
+---
+
+# WAF plugins
+
+Two plugins evaluate a [WAF configuration](./configs.mdx). They differ in **where you configure
+them** and **how much of the request they see** — pick deliberately.
+
+## Cloud APIM WAF
+
+A route plugin. The full engine: it evaluates request phases 1, 2 and 5, and response phases 3, 4
+and 5, with access to bodies.
+
+```json
+{ "ref": "waf-config_1f3a..." }
+```
+
+Add it from the route's plugin list and pick a configuration from the dropdown. This is the one you
+want in almost every case.
+
+Its behaviour follows the configuration: `block: false` reports without denying, body inspection
+follows `inspect_input_body` / `inspect_output_body`, and a denial is rendered through Otoroshi's
+standard error pipeline so it looks like any other gateway refusal.
+
+## Cloud APIM WAF - Incoming Request Validator
+
+A **global** plugin, evaluated once per request before routing. Cheaper, and it also covers traffic
+that matches no route at all — which is most of what a scanner sends.
+
+The trade-offs are real:
+
+| | Route plugin | Global validator |
+|---|---|---|
+| Configured on | A route | The global configuration, as JSON |
+| Sees the body | Yes | **No** |
+| Response inspection | Yes | No |
+| Honours `block: false` | Yes | **No** — it always denies on a match |
+| Runs for unrouted traffic | No | Yes |
+
+:::caution The global validator always blocks
+It ignores the configuration's `block` flag. There is no monitoring mode — a match is a `403`.
+Point it at a ruleset you have already validated with the route plugin.
+:::
+
+### Configuring it
+
+Incoming request validators are read from the global configuration only, and Otoroshi ships no UI
+for that list. Edit the global config JSON:
+
+```json
+{
+  "plugins": {
+    "config": {
+      "incoming_request_validators": [
+        {
+          "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimWaf",
+          "enabled": true,
+          "config": { "ref": "waf-config_1f3a..." }
+        }
+      ]
+    }
+  }
+}
+```
+
+See [the note on global plugins](../reference/plugins.mdx#global-plugins-are-not-route-plugins) for
+why these do not appear in the route designer.
+
+## Using both
+
+A common shape: the global validator running a small, high-confidence ruleset to shed obvious junk
+before routing, and the route plugin running the full CRS with body inspection on the routes that
+warrant it.
+
+```
+global validator   →  a handful of protocol and scanner rules, no body, always blocks
+route plugin       →  @import_preset crs, body inspection, tuned per route
+```
+
+Keep the two rulesets in separate `WafConfig` entities. Sharing one means the global validator
+silently enforces the blocking behaviour of rules you were still monitoring on routes.

@@ -1,0 +1,96 @@
+---
+sidebar_position: 1
+title: How reputation works
+description: What gets scored, how a verdict is reached, and why nothing blocks on the request path.
+---
+
+# How reputation works
+
+IP reputation answers a question the WAF cannot: **not what this request contains, but who sent
+it**. It runs before the rule engine, because refusing a known-hostile caller costs a lookup while
+inspecting their payload costs a rule evaluation.
+
+## Sources, verdicts, decisions
+
+Two kinds of source contribute:
+
+- **[Threat feeds](./threat-feeds.mdx)** — lists of addresses or netblocks fetched on a schedule
+- **[CrowdSec](./crowdsec.mdx)** — decisions streamed from a Local API
+
+Each source carries a **weight** (0–100) and an **action** (`block` or `monitor`). When a request
+arrives, every enabled source is consulted and the matches are collected into a verdict:
+
+```json
+{
+  "ip": "203.0.113.7",
+  "score": 95,
+  "blocking": true,
+  "tags": ["feed:firehol-l1", "asn:aws"],
+  "hits": [
+    { "kind": "feed", "source_name": "FireHOL level 1", "weight": 80, "blocking": true },
+    { "kind": "feed", "source_name": "AWS IP ranges", "weight": 15, "blocking": false }
+  ]
+}
+```
+
+- `score` is the **sum** of the matching weights, capped at 100. Three weak signals can add up to
+  something worth acting on.
+- `blocking` is true if **any** matching source is set to `block`, whatever the score. A source you
+  trust completely does not need to wait for corroboration.
+
+A request is denied when the plugin is in `block` mode **and** either `blocking` is true, or the
+score reaches the configured `score_threshold`. Those two conditions are deliberately independent.
+
+## Why weights, rather than a plain blocklist
+
+A plain blocklist forces a binary judgement on every source, which is why most deployments end up
+using only one very conservative list. Weights let you use the noisy sources for what they are
+worth:
+
+| Source | Weight | Action | Reasoning |
+|---|---|---|---|
+| Spamhaus DROP | 90 | `block` | Netblocks controlled by criminal operations. Very low false-positive rate |
+| FireHOL level 1 | 80 | `block` | Conservative aggregation of established lists |
+| Tor exit nodes | 40 | `monitor` | A real signal, and a legitimate one for many users |
+| AWS ranges | 15 | `monitor` | Hosting, not hostility. Server-to-server traffic lives here too |
+
+With `score_threshold: 60`, a Tor exit node inside an AWS range scores 55 and passes; add any third
+signal and it does not.
+
+:::caution Hosting ranges are not blocklists
+Most scrapers leave a cloud provider ASN — and so does every legitimate server-to-server integration
+you have. Cloud ranges belong in the score as a low weight, never as a `block` source on their own.
+:::
+
+## The verdict is always published
+
+Both plugins publish the verdict into `ctx.attrs` whether or not anything matched, so downstream
+plugins can read it, and a `CloudApimWafReputationEvent` is emitted whenever there is at least one
+hit — including in monitoring mode.
+
+## Nothing blocks on the request path
+
+This matters enough to be a design rule rather than an implementation detail:
+
+- Lookups hit a **sorted, merged, in-memory range index** and answer with a binary search. No I/O,
+  no allocation, no lock.
+- Feed refreshes and CrowdSec syncs run on a **scheduler**, off the request path.
+- CrowdSec alerts are **buffered and flushed on a timer**, never pushed per request.
+- Feed content can never trigger a DNS lookup: addresses are parsed by a strict parser rather than
+  `InetAddress.getByName`, which falls back to name resolution on invalid input.
+
+The consequence for you: a feed provider going down, or a CrowdSec API becoming unreachable, cannot
+slow down or fail your traffic. It degrades protection, visibly, and the last good data keeps
+serving.
+
+## Passthrough
+
+Addresses that must never be scored — your own probes, monitoring, internal networks — go in
+`passthrough` on the plugin, which short-circuits the lookup entirely:
+
+```json
+{ "passthrough": ["10.0.0.0/8", "192.168.0.0/16", "203.0.113.9"] }
+```
+
+This is not the same as a low weight. Passthrough means the verdict is never computed at all, so no
+accumulation of weak signals can ever reach the threshold for these callers.

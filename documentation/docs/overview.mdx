@@ -1,0 +1,93 @@
+---
+sidebar_position: 1
+title: Overview
+description: What the Cloud APIM Security Suite adds to Otoroshi, and how its pieces fit together.
+---
+
+# Overview
+
+The Cloud APIM Security Suite is an [Otoroshi](https://www.otoroshi.io/) admin extension that adds
+threat protection to the gateway: a **web application firewall** speaking ModSecurity SecLang with
+the OWASP Core Rule Set embedded, and **ip reputation** fed by threat intelligence feeds and
+CrowdSec.
+
+It runs entirely on the JVM, inside the Otoroshi process. There is no native library to install, no
+sidecar, and no second daemon to operate.
+
+## Why it sits in the gateway
+
+A standalone WAF sees bytes. This one sits inside an API gateway, which means it already knows the
+route, the consumer, the apikey and the backend response — and it reuses Otoroshi's entities,
+admin API, analytics exporters and vault references instead of inventing its own.
+
+## The two modules
+
+<div class="row">
+  <div class="col col--6">
+
+### WAF
+
+A JVM implementation of the [ModSecurity SecLang](https://github.com/owasp-modsecurity/ModSecurity/wiki/Reference-Manual-%28v3.x%29)
+rule language, with the [OWASP CRS](https://coreruleset.org/) v4 bundled. It inspects the request
+line, headers, cookies, arguments and body, and optionally the backend response.
+
+The engine passes **100% of the CRS v4 regression suite**.
+
+→ [WAF configurations](./waf/configs.mdx)
+
+  </div>
+  <div class="col col--6">
+
+### IP reputation
+
+Scores the caller before the request is parsed, from two kinds of source: **threat feeds** (public
+blocklists, cloud provider ranges, Tor exit nodes) and **CrowdSec** decisions streamed from a Local
+API. Detections can be reported back to CrowdSec.
+
+Lookups hit a sorted in-memory range index; nothing blocking happens on the request path.
+
+→ [How reputation works](./reputation/how-it-works.mdx)
+
+  </div>
+</div>
+
+## Where each piece runs
+
+| Stage | What runs | Cost |
+|---|---|---|
+| Before parsing | IP reputation — feeds, CrowdSec, cloud ranges | A binary search over merged ranges |
+| Request | SecLang phases 1, 2 and 5 — URI, headers, cookies, args, body | Proportional to the ruleset and the body size |
+| Response | SecLang phases 3, 4 and 5 — status, response headers and body | Only when response inspection is enabled |
+
+Reputation runs first on purpose: a caller already known to be hostile is refused for the price of a
+lookup, without the rule engine ever seeing the request.
+
+## What ships in the box
+
+| | |
+|---|---|
+| **Entities** | `WafConfig`, `ThreatFeed`, `CrowdSecBouncer` — full CRUD, admin API, import/export, Kubernetes CRDs |
+| **Route plugins** | Cloud APIM WAF · Cloud APIM Security Suite - IP reputation |
+| **Global plugins** | Two incoming-request validators, evaluated before routing ([see the note](./reference/plugins.mdx#global-plugins-are-not-route-plugins)) |
+| **Admin UI** | One *Cloud APIM - Security Suite* section: WAF configs, threat feeds, a feed catalog, CrowdSec bouncers |
+| **Analytics** | Three event types, routable through any Otoroshi data exporter |
+
+## Design rules
+
+These hold everywhere in the extension, and they explain most of the API shape:
+
+- **Nothing blocking on the request path.** Feed refreshes, DNS lookups and CrowdSec syncs run on a
+  scheduler. Lookups touch only in-memory structures.
+- **A failed refresh never removes protection.** If a feed stops responding, the previous snapshot
+  keeps serving and the error is surfaced in the UI — silently losing coverage is worse than a
+  visible failure.
+- **Every external dependency fails open**, and the fail-open decision is itself an event, so a
+  degraded WAF is visible rather than discovered later.
+- **Monitoring mode is the default posture.** Every module can score and report without denying, so
+  you can measure the false-positive cost before arming anything.
+
+## Next
+
+- [Install](./install.mdx) — build the jar, enable the extension
+- [Quickstart](./quickstart.mdx) — a protected route in about ten minutes
+- [Tuning](./waf/tuning.mdx) — how to get from monitoring to blocking without breaking traffic

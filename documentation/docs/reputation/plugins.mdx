@@ -1,0 +1,82 @@
+---
+sidebar_position: 5
+title: Reputation plugins
+description: Configuring the route plugin and the global validator.
+---
+
+# Reputation plugins
+
+Two plugins consult the reputation sources. As with the WAF, they differ in where they are
+configured and what they cover.
+
+## Cloud APIM Security Suite - IP reputation
+
+A route plugin, evaluated during access validation — before the WAF reads any body.
+
+```json
+{
+  "mode": "block",
+  "score_threshold": 0,
+  "status": 403,
+  "feeds": [],
+  "crowdsec": [],
+  "report_to_crowdsec": false,
+  "passthrough": ["10.0.0.0/8"]
+}
+```
+
+| Field | Default | What it does |
+|---|---|---|
+| `mode` | `block` | `monitor` scores and reports without ever denying |
+| `score_threshold` | `0` | Deny once the accumulated score reaches this. `0` means only `block` sources can deny |
+| `status` | `403` | Status returned on a denial |
+| `feeds` | `[]` | Feed ids to consult. **Empty means every enabled feed** |
+| `crowdsec` | `[]` | Bouncer ids to consult. **Empty means every enabled bouncer** |
+| `report_to_crowdsec` | `false` | Push denials back to CrowdSec as alerts |
+| `passthrough` | `[]` | Addresses and CIDRs that bypass reputation entirely |
+
+A request is denied when `mode` is `block` **and** either a matching source is set to `block`, or
+the score reaches `score_threshold`.
+
+:::tip Empty lists mean "everything"
+Leaving `feeds` and `crowdsec` empty is the usual setup — sources are enabled or disabled on the
+entity, and every route inherits that. Name ids explicitly only when a route needs a different set.
+:::
+
+## Cloud APIM Security Suite - IP reputation (Incoming Request Validator)
+
+The same logic, evaluated **once per request before routing** — cheaper, and it also covers traffic
+matching no route. It takes the same configuration.
+
+Like the WAF's validator, it is a global plugin and is configured in the global configuration JSON:
+
+```json
+{
+  "plugins": {
+    "config": {
+      "incoming_request_validators": [
+        {
+          "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimIpReputation",
+          "enabled": true,
+          "config": { "mode": "monitor", "score_threshold": 0 }
+        }
+      ]
+    }
+  }
+}
+```
+
+See [the note on global plugins](../reference/plugins.mdx#global-plugins-are-not-route-plugins).
+
+## Where to put it
+
+| | Route plugin | Global validator |
+|---|---|---|
+| Covers unrouted traffic | No | Yes |
+| Per-route thresholds | Yes | No |
+| Monitoring mode | Yes | Yes |
+
+Reputation is one of the few things worth running globally: it is cheap, it is not route-specific,
+and the traffic it stops is exactly the traffic you do not want to spend routing on. A common shape
+is the global validator in `monitor` at first, then `block` with a conservative threshold, and the
+route plugin only where a route needs a stricter policy.

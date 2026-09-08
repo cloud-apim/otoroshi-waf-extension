@@ -1,0 +1,64 @@
+---
+sidebar_position: 1
+title: Plugin catalogue
+description: Every plugin the extension registers, and where each one is configured.
+---
+
+# Plugin catalogue
+
+| Plugin | Kind | Configured on |
+|---|---|---|
+| Cloud APIM WAF | `NgRequestTransformer` | A route |
+| Cloud APIM WAF - Incoming Request Validator | `NgIncomingRequestValidator` | The global configuration |
+| Cloud APIM Security Suite - IP reputation | `NgAccessValidator` | A route |
+| Cloud APIM Security Suite - IP reputation (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
+
+All four appear under the **Cloud APIM - Security Suite** category.
+
+## Global plugins are not route plugins
+
+The two incoming request validators **do not appear in the route designer**, and that is
+intentional.
+
+Otoroshi reads incoming request validators from `globalConfig.plugins.config.incoming_request_validators`
+and never from `route.plugins`. Adding one to a route would produce a plugin that sits there
+looking configured and never runs — a worse outcome than not offering it at all. Otoroshi's own
+incoming request validators are absent from the designer for the same reason.
+
+There is no admin UI for that list, so it is edited as JSON on the global configuration:
+
+```json
+{
+  "plugins": {
+    "config": {
+      "incoming_request_validators": [
+        {
+          "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimIpReputation",
+          "enabled": true,
+          "config": { "mode": "monitor" }
+        },
+        {
+          "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimWaf",
+          "enabled": true,
+          "config": { "ref": "waf-config_1f3a..." }
+        }
+      ]
+    }
+  }
+}
+```
+
+Each entry accepts `plugin`, `enabled`, `debug`, `include`, `exclude` and `config`. Order is
+significant — validators run in the order listed, so put the cheap reputation check before the rule
+engine.
+
+## Fully qualified class names
+
+For the global configuration, and for anything that references plugins by id:
+
+```
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimWaf
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimWaf
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimIpReputation
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimIpReputation
+```

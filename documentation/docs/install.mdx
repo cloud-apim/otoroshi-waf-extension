@@ -1,0 +1,163 @@
+---
+sidebar_position: 2
+title: Install
+description: Download the released jar, start Otoroshi with it, and enable the extension.
+---
+
+# Install
+
+## Requirements
+
+| | |
+|---|---|
+| Otoroshi | 18.0.0 or later |
+| Java | **17 or above** |
+
+## Download Otoroshi
+
+[![Otoroshi release](https://img.shields.io/github/release/MAIF/otoroshi.svg)](https://github.com/MAIF/otoroshi/releases/latest)
+
+```sh
+curl -L -o otoroshi.jar \
+  'https://github.com/MAIF/otoroshi/releases/download/v18.0.0-preview5/otoroshi.jar'
+```
+
+## Download the Security Suite extension
+
+[![Security Suite release](https://img.shields.io/github/release/cloud-apim/otoroshi-waf-extension.svg)](https://github.com/cloud-apim/otoroshi-waf-extension/releases/latest)
+
+Grab the latest jar from the
+[releases page](https://github.com/cloud-apim/otoroshi-waf-extension/releases/latest). The asset is
+named `otoroshi-waf-extension_3-<version>.jar`:
+
+```sh
+curl -L -o otoroshi-waf-extension.jar \
+  'https://github.com/cloud-apim/otoroshi-waf-extension/releases/download/<version>/otoroshi-waf-extension_3-<version>.jar'
+```
+
+Every release also ships a checksum. Worth checking, for a security component:
+
+```sh
+curl -L -o otoroshi-waf-extension.jar.sha256 \
+  'https://github.com/cloud-apim/otoroshi-waf-extension/releases/download/<version>/otoroshi-waf-extension_3-<version>.jar.sha256'
+
+shasum -a 256 otoroshi-waf-extension.jar | cut -d ' ' -f 1
+cat otoroshi-waf-extension.jar.sha256
+```
+
+:::caution Releases up to `0.0.10` are for Otoroshi 17
+Those assets are named `otoroshi-waf-extension_2.12-*.jar`, are built for Scala 2.12 and Otoroshi
+17.x, and **do not include the ip reputation module**. Everything in this documentation that
+concerns threat feeds and CrowdSec needs a `_3` build on Otoroshi 18.
+:::
+
+## Run Otoroshi with the extension
+
+```sh
+java -cp "./otoroshi-waf-extension.jar:./otoroshi.jar" \
+  -Dotoroshi.adminLogin=admin \
+  -Dotoroshi.adminPassword=password \
+  -Dotoroshi.storage=file \
+  -Dotoroshi.admin-extensions.configurations.cloud-apim_extensions_waf.enabled=true \
+  play.core.server.ProdServerStart
+```
+
+The admin UI is then at [http://otoroshi.oto.tools:8080/](http://otoroshi.oto.tools:8080/).
+
+For anything beyond a local trial, see the
+[Otoroshi setup documentation](https://maif.github.io/otoroshi/manual/docs/install/setup-otoroshi).
+
+## Use Docker
+
+Alternatively, mount the jar into the plugins directory Otoroshi already scans:
+
+```sh
+docker run \
+  -p 8080:8080 \
+  -e APP_STORAGE=file \
+  -e OTOROSHI_PLUGINS_DIR_PATH=/usr/app/plugins \
+  -e CLOUD_APIM_EXTENSIONS_WAF_ENABLED=true \
+  -v "$(pwd)/otoroshi-waf-extension.jar:/usr/app/plugins/waf.jar" \
+  -v "$(pwd)/otoroshi.db:/usr/app/filedb/state.ndjson" \
+  maif/otoroshi:latest
+```
+
+## Enable the extension
+
+Extensions are off by default. The commands above already switch it on — with the system property
+in the `java -cp` form, or `CLOUD_APIM_EXTENSIONS_WAF_ENABLED` in the Docker form. In a
+configuration file:
+
+```json5
+otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
+  enabled = true
+}
+```
+
+You should see this on startup:
+
+```
+the 'Cloud APIM - Security Suite' extension is enabled !
+```
+
+and a **Cloud APIM - Security Suite** entry in the admin sidebar.
+
+## Configuration reference
+
+Everything is optional — the defaults are the ones below.
+
+```json5
+otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
+  enabled = true
+
+  // the seclang engine
+  integration {
+    // how many compiled rule programs are kept in memory. one entry per distinct
+    // ruleset, not per route, so the default is generous for most deployments
+    max-cache-items = 1000
+    // engine-level debug logging. noisy — for troubleshooting only
+    log = false
+  }
+
+  // the ip reputation module
+  reputation {
+    // the module idles when no feed and no bouncer exists, so leaving this on costs nothing
+    enabled = true
+    // how often due refreshes and crowdsec syncs are checked
+    tick-interval-seconds = 5
+  }
+}
+```
+
+| Key | Env var | Default |
+|---|---|---|
+| `enabled` | `CLOUD_APIM_EXTENSIONS_WAF_ENABLED` | `false` (`true` in dev mode) |
+| `integration.max-cache-items` | `CLOUD_APIM_EXTENSIONS_WAF_INTEGRATION_MAX_CACHE_ITEMS` | `1000` |
+| `integration.log` | `CLOUD_APIM_EXTENSIONS_WAF_INTEGRATION_LOG` | `false` |
+| `reputation.enabled` | — | `true` |
+| `reputation.tick-interval-seconds` | — | `5` |
+
+:::note Clustered deployments
+Every node keeps its own in-memory feed index and its own CrowdSec stream cursor — the same thing
+every official CrowdSec bouncer does, so no coordination is needed. Nodes stagger their first
+refresh by a random 5–25 seconds so a rolling restart does not hit every feed provider at once.
+:::
+
+## Upgrading
+
+The extension id is `cloud-apim.extensions.Waf` and has been stable since the first release, so
+datastore keys, the API group and route paths are unchanged across upgrades. Entities added by
+later versions read their new fields with defaults, so an older `WafConfig` stays valid.
+
+## Building from source
+
+Only needed if you want an unreleased change.
+
+```sh
+git clone https://github.com/cloud-apim/otoroshi-waf-extension.git
+cd otoroshi-waf-extension
+sbt assembly
+```
+
+The artifact lands in `target/scala-3.8.4/otoroshi-waf-extension-assembly_3-dev.jar` and is used
+exactly like a released jar.

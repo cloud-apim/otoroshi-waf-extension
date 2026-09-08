@@ -1,0 +1,103 @@
+---
+sidebar_position: 1
+title: WAF configurations
+description: The WafConfig entity — what it controls and what each field costs you.
+---
+
+# WAF configurations
+
+A `WafConfig` holds a ruleset plus the settings that decide how much of each request and response
+the engine gets to see. Routes reference one by id, and several routes can share the same
+configuration.
+
+**Cloud APIM - Security Suite → WAF configs.**
+
+## Fields
+
+| Field | Default | What it does |
+|---|---|---|
+| `enabled` | `true` | When false the plugin does nothing at all — a fast way to disable protection on every route referencing it |
+| `block` | `true` | `false` is monitoring mode: rules run and events are emitted, nothing is denied |
+| `rules` | `[]` | The SecLang ruleset, one entry per line or per block. See [rules](./rules.mdx) |
+| `inspect_input_body` | `true` | Whether the request body is read and given to the engine |
+| `input_body_limit` | `null` | Maximum number of request body bytes handed to the engine |
+| `inspect_output_body` | `true` | Whether the response body is inspected |
+| `output_body_limit` | `null` | Maximum number of response body bytes handed to the engine |
+| `output_body_mimetypes` | `[]` | Restricts response inspection to these media types. Empty means all |
+
+## Body inspection
+
+Body inspection is where the WAF earns most of its detections and spends most of its budget. Two
+things are worth understanding before you tune it.
+
+**The engine only sees what you give it.** With `input_body_limit` set to `65536`, a rule cannot
+match on byte 65537. An attacker who knows the limit can pad past it, so the limit is a cost
+control, not a security boundary — pair it with a hard body-size limit on the route
+(Otoroshi ships a *Request body length limiter* plugin for that).
+
+**Response inspection is opt-in territory.** It is the right place for leakage rules (stack traces,
+error disclosure, data patterns), but it means buffering responses. Restrict it with
+`output_body_mimetypes` so you are not inspecting images and downloads:
+
+```json
+{
+  "inspect_output_body": true,
+  "output_body_limit": 262144,
+  "output_body_mimetypes": ["application/json", "text/html"]
+}
+```
+
+:::caution Media types are matched exactly
+`output_body_mimetypes` is compared against the response `Content-Type`. A response served as
+`text/html; charset=utf-8` does not match an entry of `text/html`. List the exact values your
+backends emit, or leave the list empty and rely on `output_body_limit`.
+:::
+
+## Compile and test
+
+Two tools sit on the configuration form.
+
+**Compile** parses and compiles the ruleset and reports the first error, with no traffic involved.
+Run it before every save.
+
+**Test** evaluates the ruleset against a request you describe as JSON, and returns the full engine
+result — which rules matched, in which phase, and the resulting disposition:
+
+```json
+{
+  "method": "POST",
+  "uri": "/post",
+  "headers": {
+    "host": "www.foo.bar",
+    "content-type": "application/x-www-form-urlencoded",
+    "user-agent": "curl/8.1.2"
+  },
+  "body": "q=1' OR '1'='1",
+  "protocol": "HTTP/1.1"
+}
+```
+
+This is the fastest loop for writing a rule, and the only way to check a rule fires *before* it
+reaches production traffic.
+
+## Example
+
+```json
+{
+  "id": "waf-config_1f3a...",
+  "name": "Public API",
+  "description": "CRS with a couple of local exclusions",
+  "enabled": true,
+  "block": true,
+  "inspect_input_body": true,
+  "input_body_limit": 1048576,
+  "inspect_output_body": false,
+  "output_body_limit": null,
+  "output_body_mimetypes": [],
+  "rules": [
+    "@import_preset crs",
+    "SecRuleUpdateTargetById 942100 \"!ARGS:search_query\"",
+    "SecRuleEngine On"
+  ]
+}
+```

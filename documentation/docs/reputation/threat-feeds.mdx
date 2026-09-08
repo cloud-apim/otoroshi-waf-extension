@@ -1,0 +1,114 @@
+---
+sidebar_position: 2
+title: Threat feeds
+description: The ThreatFeed entity — sources, formats, refresh, and what happens when one fails.
+---
+
+# Threat feeds
+
+A `ThreatFeed` is a remote list of addresses or netblocks, refreshed on a schedule and matched in
+memory. The quickest way to create one is the [catalog](./catalog.mdx); this page covers what the
+entity actually does.
+
+**Cloud APIM - Security Suite → Threat feeds.**
+
+## Fields
+
+| Field | Default | What it does |
+|---|---|---|
+| `url` | — | Where to fetch the list |
+| `method` | `GET` | HTTP method |
+| `headers` | `{}` | Sent with the request. Goes through Otoroshi's secret filling — see below |
+| `follow_redirects` | `true` | |
+| `format` | `cidr_lines` | How to parse the payload. See [formats](#formats) |
+| `options` | `{}` | Per-format settings |
+| `refresh_interval_seconds` | `3600` | How often to refetch |
+| `timeout_millis` | `30000` | |
+| `max_entries` | `2000000` | Hard cap, so a feed that suddenly grows cannot exhaust memory |
+| `weight` | `50` | Contribution to the reputation score, 0–100 |
+| `action` | `monitor` | `block` lets this feed deny on its own |
+| `tag` | `feed:<id>` | Carried into events, for grouping in your SIEM |
+
+:::tip Put credentials in a vault
+`headers` is filled from Otoroshi's secret backends, so an API key belongs in a reference rather
+than in the entity: `{ "Key": "${vault://kubernetes/abuseipdb/token}" }`.
+:::
+
+## Formats
+
+| Format | Payload | Options |
+|---|---|---|
+| `cidr_lines` | One address or CIDR per line | — |
+| `csv` | Comma-separated rows | `column` (default `0`), `separator`, `skip_header` |
+| `json_array` | A JSON array | `field` — when the array holds objects |
+| `json_path` | A JSON document | `path` — required |
+| `misp` | A MISP feed | — |
+
+`cidr_lines` handles both comment conventions used by public blocklists — `# comment` as used by
+FireHOL and Emerging Threats, and `1.2.3.0/24 ; SBL123` as used by Spamhaus.
+
+### json_path
+
+The path walks a JSON document, where `[]` iterates an array. This covers the shapes the cloud
+providers publish:
+
+```
+prefixes[].ip_prefix                       # AWS, ipv4
+ipv6_prefixes[].ipv6_prefix                # AWS, ipv6
+prefixes[].ipv4Prefix                      # Google Cloud
+values[].properties.addressPrefixes[]      # Azure
+data[].ipAddress                           # AbuseIPDB
+```
+
+A trailing `[]` means the last segment is an array of plain strings rather than objects.
+
+## Refresh
+
+The refresher runs on the extension's scheduler and only fetches feeds that are due. Two things
+keep it cheap and safe:
+
+**Conditional requests.** `ETag` and `Last-Modified` from the previous fetch are sent back, so an
+unchanged feed costs a `304` and nothing more.
+
+**A failed refresh never empties a feed.** If the source returns an error, times out, or starts
+serving something unparseable, the previous snapshot keeps serving and the error is shown on the
+feed page. Losing protection silently would be worse than a visible failure.
+
+The status panel on each feed reports what actually happened:
+
+```
+Entries          1 284
+Merged ranges    1 190
+Rejected lines   0
+Last refresh     3m ago
+```
+
+`Rejected lines` is the one to watch. A non-zero count on a feed that used to be clean usually means
+the provider changed format.
+
+:::caution A feed that parses to zero entries is treated as an error
+If a payload parses but yields no valid address, the refresh is rejected rather than accepted — an
+empty feed and a broken feed look identical at runtime, and the second is far more likely.
+:::
+
+## Rollback
+
+One generation is kept. If a refresh succeeds but brings bad content — a provider publishing a
+truncated list, a format change that silently drops entries — the status panel offers **Roll back**,
+which restores the previous snapshot.
+
+Only a clean replacement of clean content creates a rollback point, so a failed refresh or a `304`
+never burns the good generation. Rollback is per node and in memory: it survives a refresh, not a
+restart.
+
+## Testing a feed
+
+The **Look up** box on the feed page evaluates an address against every enabled source and shows the
+full verdict — score, whether it would be denied, and which sources matched. Use it before arming
+anything.
+
+## Clustered deployments
+
+Every node fetches every feed independently and keeps its own index. That is correct — the index is
+node-local — but it multiplies outbound requests by the number of nodes. Nodes stagger their first
+tick by a random 5–25 seconds so a rolling restart does not hit every provider at once.
