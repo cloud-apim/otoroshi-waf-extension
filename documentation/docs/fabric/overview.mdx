@@ -76,6 +76,9 @@ Order matters: the gate is deliberately separate so a ban costs a map lookup rat
 inspection of a request nobody is going to serve. Put the response plugin **after** the WAF in the
 route's plugin chain, or it will read a score the WAF has not contributed to yet.
 
+That last sentence is a requirement on whoever configures the route, which is why there is a
+[preset plugin](./preset.mdx) that expands into the whole chain with the ordering already fixed.
+
 ## Everything is recorded
 
 Whatever the outcome, one normalised `CloudApimSecurityEvent` is emitted and correlated into an

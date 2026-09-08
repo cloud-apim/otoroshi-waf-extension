@@ -1,0 +1,102 @@
+---
+sidebar_position: 2
+title: The preset plugin
+description: One plugin that expands into the whole fabric, in the one order that makes it work.
+---
+
+# The preset plugin
+
+The fabric is five plugins that talk to each other through a shared score. Composing them by hand
+works, but it puts a correctness requirement on the person doing the composing: **the response must
+run after everything that contributes to the score**. Get that wrong and nothing breaks — requests
+keep flowing, events keep being emitted, and the score the response reads is simply incomplete.
+
+That is the worst class of misconfiguration: silent, and invisible in a test.
+
+**Cloud APIM Security Suite - Preset** removes the requirement. It is a single plugin that expands,
+at request time, into the whole chain with explicit ordering indices.
+
+## What it expands into
+
+| Order | Plugin | Phase | Index |
+|---|---|---|---|
+| 1 | Threat gate | access validation | `1.0` |
+| 2 | Bot guard | access validation | `2.0` |
+| 3 | IP reputation | access validation | `3.0` |
+| 4 | Cloud APIM WAF | request transformation | `1.0` |
+| 5 | Threat response | request transformation | `900.0` |
+
+The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
+rather than by the order slots happen to sit in on the route.
+
+:::note Indexed plugins run before unindexed ones
+Within a phase, Otoroshi sorts the plugins that carry an index and then appends the ones that do
+not. Everything the preset emits is indexed, so the whole fabric runs ahead of the rest of the
+route's plugins in each phase — a banned caller is refused before Otoroshi does the work of
+authenticating them.
+
+It also means you should not add the WAF a second time as a separate slot: an unindexed WAF would
+land *after* the threat response, which is the exact inversion the preset exists to prevent. Let
+the preset carry it.
+:::
+
+## Configuration
+
+```json
+{
+  "threat_policy": "threat-policy_9f2c...",
+  "bot_policy": null,
+  "waf_config": "waf-config_1f3a...",
+
+  "gate": true,
+  "bots": true,
+  "reputation": true,
+  "waf": true,
+  "response": true,
+
+  "reputation_mode": "block",
+  "include": [],
+  "exclude": []
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `threat_policy` | *(empty)* | Shared by the gate and the response. Empty means the built-in dry-run policy: everything is recorded, nothing is enforced. |
+| `bot_policy` | *(empty)* | Empty means the first enabled [bot policy](../bots/crawlers.mdx). |
+| `waf_config` | *(empty)* | Required for the WAF section to expand at all. |
+| `gate` · `bots` · `reputation` · `waf` · `response` | `true` | Section switches. |
+| `reputation_mode` | `block` | `monitor` scores without ever denying on its own, leaving the decision to the response. |
+| `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
+
+A section switched off expands into **nothing**, not into a disabled slot. A plugin that is present
+but inert is the kind of thing one finds six months later while wondering why it never fired.
+
+:::warning Scope the preset from its config, not from the plugin slot
+Otoroshi drops a preset's own `include` / `exclude` when it expands it — the expansion sees the
+config, not the slot. The route designer will still show you the usual include/exclude fields on
+the preset, and they will do nothing.
+
+Use the `include` and `exclude` fields **inside the preset's configuration** instead. They are
+copied onto every plugin the preset emits.
+:::
+
+## What it does not cover
+
+The three incoming request validators — [honeypot](../bots/honeypots.mdx), WAF and IP reputation —
+run before routing, from the global configuration. No route-level preset can reach them; see
+[global plugins are not route plugins](../reference/plugins.mdx#global-plugins-are-not-route-plugins).
+
+## When to compose by hand instead
+
+The preset covers the common shape. Build the chain slot by slot when you need:
+
+- **more than one IP reputation slot**, for instance a strict set of feeds on `/admin` and a
+  permissive one elsewhere;
+- **the full reputation configuration** — score thresholds, explicit feed lists, CrowdSec reporting,
+  passthrough ranges. The preset only exposes the mode;
+- **the WAF's fabric weights** (`block_weight`, `match_weight`) tuned away from their defaults;
+- **fabric plugins interleaved with your own**, where a custom plugin has to sit between two of them.
+
+Both routes are supported and produce the same runtime chain. The preset is the one that cannot be
+ordered wrongly.

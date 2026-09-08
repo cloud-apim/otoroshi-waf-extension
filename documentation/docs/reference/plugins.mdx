@@ -8,6 +8,7 @@ description: Every plugin the extension registers, and where each one is configu
 
 | Plugin | Kind | Configured on |
 |---|---|---|
+| Cloud APIM Security Suite - Preset | `NgPresetPlugin` | A route |
 | Cloud APIM WAF | `NgRequestTransformer` | A route |
 | Cloud APIM WAF - Incoming Request Validator | `NgIncomingRequestValidator` | The global configuration |
 | Cloud APIM Security Suite - IP reputation | `NgAccessValidator` | A route |
@@ -32,7 +33,10 @@ The fabric plugins are position-sensitive:
 ```
 
 The response plugin must come **after** the WAF, or it reads a score the WAF has not contributed to
-yet. See [the fabric](../fabric/overview.mdx).
+yet — silently, with every request still flowing. See [the fabric](../fabric/overview.mdx).
+
+The [preset plugin](../fabric/preset.mdx) expands into that exact chain with explicit
+`plugin_index` values, which is the reason to prefer it over composing the five slots by hand.
 
 ## Global plugins are not route plugins
 
@@ -76,6 +80,7 @@ engine.
 For the global configuration, and for anything that references plugins by id:
 
 ```
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimSecuritySuitePreset
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimWaf
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimWaf
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimIpReputation
