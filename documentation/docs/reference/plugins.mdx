@@ -12,8 +12,24 @@ description: Every plugin the extension registers, and where each one is configu
 | Cloud APIM WAF - Incoming Request Validator | `NgIncomingRequestValidator` | The global configuration |
 | Cloud APIM Security Suite - IP reputation | `NgAccessValidator` | A route |
 | Cloud APIM Security Suite - IP reputation (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
+| Cloud APIM Security Suite - Threat gate | `NgAccessValidator` | A route |
+| Cloud APIM Security Suite - Threat response | `NgRequestTransformer` | A route |
 
-All four appear under the **Cloud APIM - Security Suite** category.
+All appear under the **Cloud APIM - Security Suite** category.
+
+## Order on a route
+
+The fabric plugins are position-sensitive:
+
+```
+1. Threat gate                  refuse callers already banned, before anything is inspected
+2. IP reputation                contribute reputation signals
+3. Cloud APIM WAF               inspect the payload
+4. Threat response              read the accumulated score, apply one tier
+```
+
+The response plugin must come **after** the WAF, or it reads a score the WAF has not contributed to
+yet. See [the fabric](../fabric/overview.mdx).
 
 ## Global plugins are not route plugins
 
@@ -61,4 +77,6 @@ cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimWaf
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimWaf
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimIpReputation
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimIpReputation
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimThreatGate
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimThreatResponse
 ```

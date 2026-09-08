@@ -1,0 +1,61 @@
+---
+sidebar_position: 4
+title: Events and incidents
+description: One normalised event shape, and the correlation that makes alerting survivable.
+---
+
+# Events and incidents
+
+## One shape for everything
+
+Every decision the fabric takes emits a `CloudApimSecurityEvent`, in an ECS-shaped envelope:
+
+```json
+{
+  "@type": "CloudApimSecurityEvent",
+  "event":  { "kind": "alert", "category": "threat", "action": "ban",
+              "outcome": "blocked", "severity": 4, "module": "cloud-apim.security-suite" },
+  "source": { "ip": "203.0.113.7", "apikey": "k1", "user": null },
+  "threat": { "score": 95, "tags": ["feed:firehol-l1", "waf:blocked"], "signals": [] },
+  "otoroshi": { "route_id": "route_...", "route_name": "public-api", "node": "otoroshi-a1b2" },
+  "incident": { "id": "…", "count": 412 },
+  "message": "score 95 reached tier 90 (ban)"
+}
+```
+
+One parser, one set of dashboards, whichever detector fired. The extension's older per-module events
+(`CloudApimWafTrailEvent`, `CloudApimWafReputationEvent`) are still emitted alongside it, so nothing
+downstream breaks — this one is additive.
+
+| Field | Use |
+|---|---|
+| `event.outcome` | `blocked` when actually enforced, `observed` in dry run |
+| `event.severity` | 1–4, derived from the score |
+| `threat.tags` | What to group on — the feed, the rule family, the source |
+| `incident.count` | How many events this caller has produced in the window |
+
+## Incidents
+
+An attack produces thousands of matches and one incident. Alerting on incidents pages someone once
+instead of nine thousand times.
+
+Events from one identity within a window (30 minutes by default) collapse into a single `Incident`
+carrying the first and last sighting, the count, the highest score seen, and the union of the
+categories, tags and actions involved. A caller returning after the window opens a new one.
+
+**Cloud APIM - Security Suite → Bans & incidents** shows the live view; `GET /_incidents` returns
+the same thing.
+
+:::note Incidents are node-local and in memory
+They are an operational view, not durable state — each node correlates the traffic it handles. The
+cluster-wide, durable view is the job of whatever SIEM you export the normalised events to.
+:::
+
+## Suggested alerting
+
+| Goal | Filter |
+|---|---|
+| Something is being enforced | `event.outcome: blocked`, grouped by `source.ip` |
+| Dry run is ready to be armed | `event.outcome: observed` with `event.action` in `deny`/`ban` |
+| A sustained attack | `incident.count` over a threshold |
+| A detector has gone noisy | group by `threat.tags` and compare against the previous week |

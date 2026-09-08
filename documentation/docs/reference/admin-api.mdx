@@ -96,3 +96,20 @@ All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authent
 ```
 
 A non-null `snapshot.error`, or a `store.last_error`, means protection is degraded on that node.
+
+## Security fabric endpoints
+
+All under `/extensions/cloud-apim/extensions/waf/security`, backoffice-authenticated.
+
+| Method | Path | Body | Purpose |
+|---|---|---|---|
+| `GET` | `/_status` | — | Node id, ban count, shared-state mode, ledger settings |
+| `GET` | `/_bans` | — | Every live ban with its evidence |
+| `GET` | `/_incidents` | — | Correlated incidents in the current window |
+| `POST` | `/_ban` | `{"ref":"ip:1.2.3.4","duration_seconds":3600,"reason":"..."}` | Ban by hand |
+| `POST` | `/_unban` | `{"ref":"ip:1.2.3.4"}` or `{"all":true}` | Lift one or all |
+| `POST` | `/_ledger` | `{}`, `{"ref":"..."}`, or `{"ref":"...","forget":true}` | Inspect or clear the cross-request memory |
+| `POST` | `/_simulate` | `{"score":75,"policy":"..."}` | What a policy would do at that score |
+
+`_status` is the one to monitor — `shared_state.dedicated_redis: false` means bans are only shared
+between nodes if the Otoroshi storage backend is.

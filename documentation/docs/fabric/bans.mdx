@@ -1,0 +1,108 @@
+---
+sidebar_position: 3
+title: Bans and memory
+description: The cluster-wide ban registry, and the ledger that decides who joins it.
+---
+
+# Bans and memory
+
+## Bans
+
+A ban attaches to an [identity](./overview.mdx#signals-score-decision) — an address, an apikey, a
+user — and is enforced by the **threat gate** before any inspection runs.
+
+**Cloud APIM - Security Suite → Bans & incidents.**
+
+Two properties drive the whole design:
+
+**Reads never touch the datastore.** The gate answers from a node-local map. A ban exists to be
+cheaper than the inspection it replaces, so a lookup that cost a network round trip would defeat the
+purpose. The map holds every live ban, so the cost is the same whether you hold ten or ten thousand.
+
+**Writes are instant on the node that decided.** A node that bans a caller enforces it on that
+caller's very next request. Other nodes pick it up on their next refresh — every 10 seconds by
+default.
+
+That bounded staleness is the honest trade: Otoroshi's storage abstraction has no pub/sub, so a few
+seconds of propagation lag buys zero I/O per request.
+
+### Making bans actually shared
+
+```json5
+security {
+  // guarantees distribution regardless of the otoroshi storage backend
+  redis-uri = "redis://localhost:6379"
+}
+```
+
+:::caution Without this, "distributed" depends on your storage
+Bans fall back to the Otoroshi storage backend, which is only shared between nodes if that backend
+is. With `file` or `inmemory` storage — including the quickstart — each node has its own private ban
+list. The Bans & incidents page says which of the two you are running, and warns when it is the
+fallback.
+
+The dedicated connection goes through the same stateful client manager Otoroshi's distributed rate
+limiter uses.
+:::
+
+### Managing them
+
+| | |
+|---|---|
+| `GET /_bans` | Every live ban with its evidence |
+| `POST /_ban` | `{"ref": "ip:1.2.3.4", "duration_seconds": 3600, "reason": "..."}` |
+| `POST /_unban` | `{"ref": "ip:1.2.3.4"}`, or `{"all": true}` |
+
+All under `/extensions/cloud-apim/extensions/waf/security`. The UI page does the same with a button
+per ban.
+
+## The ledger
+
+The ledger is the gateway's memory of a caller **across requests**, and it is the piece a WAF
+structurally cannot have on its own.
+
+A single request is judged on its own content. A caller who trips one rule a minute for an hour
+looks innocent every single time. The ledger accumulates those judgements per identity over a
+sliding window, and once the total crosses a threshold it promotes the caller to a ban.
+
+```json5
+security.ledger {
+  enabled = true
+  window-seconds = 3600        // the window slides: misbehaving keeps you in it
+  ban-threshold = 100
+  ban-duration-seconds = 3600
+}
+```
+
+It is fed **asynchronously**, from the analytics event stream, and read **never** on the request
+path — the promotion writes a ban, and ban lookups are free. A per-request round trip to read a
+running total would undo the reason for having a cheap layer at all.
+
+When a ban is issued the total is consumed, so the next contribution does not re-ban instantly.
+
+### What charges it
+
+| Source | Default | Why |
+|---|---|---|
+| Enforced decisions from the threat response plugin | on | It knows exactly what it enforced and why |
+| WAF blocks, via the event relay | **off** | `security.ledger.feed-waf-blocks` |
+| WAF matches let through in monitoring mode | **off** | `security.ledger.feed-waf-monitored` |
+
+:::note Why the WAF feeds are off by default
+On a route that runs the threat response plugin, the plugin already charges the ledger for what it
+enforced. Charging again from the event would count the same detection twice.
+
+Turn `feed-waf-blocks` on when you run the WAF **without** the response plugin and still want
+repeat offenders to accumulate towards a ban.
+
+Turn `feed-waf-monitored` on only if you mean it: a WAF you are still tuning would otherwise be
+quietly getting callers banned.
+:::
+
+### Inspecting it
+
+```bash
+curl -X POST .../security/_ledger -d '{}'                       # top offenders
+curl -X POST .../security/_ledger -d '{"ref":"ip:1.2.3.4"}'     # one caller
+curl -X POST .../security/_ledger -d '{"ref":"ip:1.2.3.4","forget":true}'
+```

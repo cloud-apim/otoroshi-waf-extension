@@ -6,7 +6,7 @@ description: Every field of WafConfig, ThreatFeed and CrowdSecBouncer.
 
 # Entity reference
 
-All three entities are ordinary Otoroshi entities: full CRUD in the admin UI, the admin API,
+All four entities are ordinary Otoroshi entities: full CRUD in the admin UI, the admin API,
 import/export, and Kubernetes CRDs. They share the API group `waf.extensions.cloud-apim.com/v1` and
 carry the usual `_loc`, `id`, `name`, `description`, `tags` and `metadata` fields.
 
@@ -82,6 +82,31 @@ carry the usual `_loc`, `id`, `name`, `description`, `tags` and `metadata` field
 | `push_decision_duration` | string | `4h` |
 | `push_waf_detections` | boolean | `false` |
 | `push_waf_monitored` | boolean | `false` |
+
+## ThreatPolicy
+
+`threat-policies` · `waf.extensions.cloud-apim.com/ThreatPolicy`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `dry_run` | boolean | **`true`** — records, enforces nothing |
+| `tiers` | ThreatTier[] | log at 40, tarpit at 70, ban at 90 |
+| `exemptions` | string[] | `[]` — addresses and CIDRs that bypass the fabric |
+| `ban_identity` | `auto` \| `ip` \| `apikey` | `auto` |
+| `waf_block_weight` | number | `50` |
+
+### ThreatTier
+
+| Field | Type | Default |
+|---|---|---|
+| `min_score` | number | — |
+| `action` | `log` \| `tarpit` \| `deny` \| `ban` | `log` |
+| `tarpit_millis` | number | `3000` |
+| `ban_for_seconds` | number | `3600` |
+| `status` | number | `403` |
+
+An unrecognised action degrades to `log`, never to `deny`.
 
 :::tip Secrets
 `headers` on a feed, and `api_key` / `push_password` on a bouncer, all go through Otoroshi's secret

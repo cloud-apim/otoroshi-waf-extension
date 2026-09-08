@@ -20,7 +20,18 @@ A standalone WAF sees bytes. This one sits inside an API gateway, which means it
 route, the consumer, the apikey and the backend response — and it reuses Otoroshi's entities,
 admin API, analytics exporters and vault references instead of inventing its own.
 
-## The two modules
+## The decision fabric
+
+Detectors do not each decide on their own. They contribute **signals** to a shared score, and one
+component turns that score into one graded action — log, tarpit, deny or ban — with cluster-wide
+bans and a cross-request memory behind it.
+
+That arrangement is what makes the rest deployable: a false positive costs a log line at score 45
+instead of a broken customer at 403.
+
+→ [How the fabric works](./fabric/overview.mdx)
+
+## The two detection modules
 
 <div class="row">
   <div class="col col--6">

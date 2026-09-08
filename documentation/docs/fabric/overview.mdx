@@ -1,0 +1,82 @@
+---
+sidebar_position: 1
+title: How the fabric works
+description: Why detectors contribute instead of deciding, and what happens to what they contribute.
+---
+
+# How the fabric works
+
+A toolbox is not a longer list of plugins. Fifteen plugins that each block independently produce a
+gateway nobody can reason about and nobody dares arm.
+
+The fabric is the opposite arrangement: many **independent detectors** feed **one shared
+judgement**, and **one component** acts on it with a graded response.
+
+```
+  reputation ──┐
+  waf ─────────┤──▶  threat score  ──▶  threat policy  ──▶  log · tarpit · deny · ban
+  bans ────────┘        (per request)      (per route)
+                             │
+                             └──▶  incidents          ──▶  one alert instead of nine thousand
+                             └──▶  ledger             ──▶  cross-request memory ──▶  ban
+```
+
+## Signals, score, decision
+
+Every detector publishes **signals** rather than verdicts. A signal carries a source, a weight
+(0–100), a tag, and a confidence:
+
+```json
+{ "source": "reputation.feed", "kind": "reputation", "weight": 80,
+  "tag": "feed:firehol-l1", "confidence": 1.0 }
+```
+
+The score is the **sum** of the weights, capped at 100, each scaled by its confidence. That is the
+point of having a bus: three weak signals can add up to something worth acting on, which no single
+detector could ever conclude on its own.
+
+Confidence is clamped to `[0, 1]`, so a detector can be honest about being unsure but cannot inflate
+its own weight.
+
+## Why a graded response matters
+
+Without the fabric, the only outcomes are 200 and 403. That binary is why blocking mode is
+frightening: every false positive is a broken customer.
+
+With it, a score of 45 costs a suspect caller nothing but a log line, 75 costs them three seconds,
+and 95 gets them banned. The same detectors become deployable, because the cost of being wrong drops
+by an order of magnitude.
+
+## What contributes today
+
+| Source | Signal | Weight |
+|---|---|---|
+| IP reputation (feeds, CrowdSec) | one per matching source | the source's own weight |
+| WAF | `waf:blocked` when the WAF enforced a denial | `waf_block_weight` on the policy, default 50 |
+| Ban store | short-circuits before anything else runs | — |
+
+:::note How the WAF contributes without being modified
+The WAF plugin is not modified by the fabric. When it enforces a block it publishes the status
+through Otoroshi's fail2ban trigger attribute, and the response engine picks that up — so a WAF
+denial becomes a signal with no change to the WAF at all.
+
+The consequence is that only **enforced** WAF blocks reach the in-request score. A WAF in monitoring
+mode contributes nothing here; it reaches the [ledger](./bans.mdx#the-ledger) instead, after the
+fact.
+:::
+
+## The two plugins
+
+| Plugin | Runs | Does |
+|---|---|---|
+| **Threat gate** | access validation, first | Refuses callers already banned, before any inspection |
+| **Threat response** | request transformation, last | Reads the accumulated score and applies one tier |
+
+Order matters: the gate is deliberately separate so a ban costs a map lookup rather than a full
+inspection of a request nobody is going to serve. Put the response plugin **after** the WAF in the
+route's plugin chain, or it will read a score the WAF has not contributed to yet.
+
+## Everything is recorded
+
+Whatever the outcome, one normalised `CloudApimSecurityEvent` is emitted and correlated into an
+[incident](./incidents.mdx). That happens in dry run too — which is the whole point of dry run.

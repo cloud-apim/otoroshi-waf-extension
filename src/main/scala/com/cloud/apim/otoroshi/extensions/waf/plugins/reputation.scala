@@ -1,6 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 
 import com.cloud.apim.otoroshi.extensions.waf.reputation.{IpRangeSet, ReputationKeys, ReputationVerdict}
+import com.cloud.apim.otoroshi.extensions.waf.security.{ClientIdentity, ThreatBus, ThreatSignal}
 import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.events.AnalyticEvent
@@ -154,6 +155,36 @@ private[plugins] object ReputationSupport {
     }
   }
 
+  /**
+   * Publishes each hit as a signal on the shared bus.
+   *
+   * The plugin still reaches its own verdict — that behaviour is unchanged and routes relying on it
+   * keep working — but from now on it also *contributes*, so the threat response engine can weigh
+   * reputation against everything else instead of reputation deciding alone.
+   */
+  def contribute(
+      attrs: otoroshi.utils.TypedMap,
+      request: play.api.mvc.RequestHeader,
+      verdict: ReputationVerdict
+  )(using env: Env): Unit = {
+    if (verdict.nonEmpty) {
+      val identity = ClientIdentity.from(request, attrs)
+      ThreatBus.contributeAll(
+        attrs,
+        identity,
+        verdict.hits.map { hit =>
+          ThreatSignal(
+            source = s"reputation.${hit.kind}",
+            kind = "reputation",
+            weight = hit.weight,
+            tag = hit.tag,
+            detail = hit.detail
+          )
+        }
+      )
+    }
+  }
+
   def report(
       config: CloudApimIpReputationConfig,
       verdict: ReputationVerdict,
@@ -204,6 +235,7 @@ class CloudApimIpReputation extends NgAccessValidator {
       case None                  => NgAccess.NgAllowed.vfuture
       case Some((_, verdict))    =>
         ctx.attrs.put(ReputationKeys.VerdictKey -> verdict)
+        ReputationSupport.contribute(ctx.attrs, ctx.request, verdict)
         if (verdict.isEmpty) {
           NgAccess.NgAllowed.vfuture
         } else {
@@ -264,6 +296,7 @@ class IncomingRequestValidatorCloudApimIpReputation extends NgIncomingRequestVal
       case None               => NgAccess.NgAllowed.vfuture
       case Some((_, verdict)) =>
         ctx.attrs.put(ReputationKeys.VerdictKey -> verdict)
+        ReputationSupport.contribute(ctx.attrs, ctx.request, verdict)
         if (verdict.isEmpty) {
           NgAccess.NgAllowed.vfuture
         } else {

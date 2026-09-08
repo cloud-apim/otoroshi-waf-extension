@@ -1,6 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 
 import com.cloud.apim.otoroshi.extensions.waf.entities.CloudApimWafConfig
+import com.cloud.apim.otoroshi.extensions.waf.security.{ClientIdentity, ThreatBus, ThreatSignal}
 import com.cloud.apim.seclang.impl.engine.SecLangEngine
 import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.{Disposition, EngineResult, MatchEvent, RequestContext}
@@ -33,20 +34,84 @@ case class ContextualCloudApimWafConfig(engine: SecLangEngine, config: CloudApim
   def close(): Unit = ()
 }
 
-case class CloudApimWafConfigRef(ref: String) extends NgPluginConfig {
+case class CloudApimWafConfigRef(
+    ref: String,
+    contribute: Boolean = true,
+    blockWeight: Int = 50,
+    matchWeight: Int = 20
+) extends NgPluginConfig {
   override def json: JsValue = CloudApimWafConfigRef.format.writes(this)
 }
 
 object CloudApimWafConfigRef {
   val format: Format[CloudApimWafConfigRef] = new Format[CloudApimWafConfigRef] {
-    override def writes(o: CloudApimWafConfigRef): JsValue             = Json.obj("ref" -> o.ref)
+    override def writes(o: CloudApimWafConfigRef): JsValue             = Json.obj(
+      "ref"          -> o.ref,
+      "contribute"   -> o.contribute,
+      "block_weight" -> o.blockWeight,
+      "match_weight" -> o.matchWeight
+    )
+    // every new field reads with a default, so a route configured before the fabric existed keeps
+    // working untouched and starts contributing without anyone editing it
     override def reads(json: JsValue): JsResult[CloudApimWafConfigRef] = Try {
       CloudApimWafConfigRef(
-        ref = json.select("ref").asString
+        ref = json.select("ref").asString,
+        contribute = json.select("contribute").asOpt[Boolean].getOrElse(true),
+        blockWeight = json.select("block_weight").asOpt[Int].getOrElse(50),
+        matchWeight = json.select("match_weight").asOpt[Int].getOrElse(20)
       )
     } match {
       case Success(e) => JsSuccess(e)
       case Failure(e) => JsError(e.getMessage)
+    }
+  }
+}
+
+/**
+ * Publishes what the rule engine saw onto the shared threat score.
+ *
+ * Strictly additive: it is called with the engine result **before** the disposition is acted on,
+ * and it never looks at, changes or short-circuits that decision. The WAF remains the sole
+ * authority on whether it blocks — this only tells the rest of the fabric what it found.
+ *
+ * The valuable case is the one the WAF itself does nothing about: a match in monitoring mode
+ * contributes a signal, so the fabric can weigh it against everything else without the WAF having
+ * to start blocking.
+ */
+object CloudApimWafFabric {
+
+  /** Pure: what the engine result says, with no gateway or environment involved. */
+  def signalFor(result: EngineResult, config: CloudApimWafConfigRef): Option[ThreatSignal] = {
+    if (!config.contribute || result.events.isEmpty) None
+    else {
+      val blocked = result.disposition match {
+        case _: Disposition.Block => true
+        case _                    => false
+      }
+      val rules = result.events.flatMap(_.ruleId).distinct.take(5)
+      Some(
+        ThreatSignal(
+          source = "waf.seclang",
+          kind = "payload",
+          weight = if (blocked) config.blockWeight else config.matchWeight,
+          tag = if (blocked) "waf:blocked" else "waf:match",
+          detail = Some(
+            (if (blocked) "the ruleset reached a block decision" else "rules matched without blocking") +
+            (if (rules.isEmpty) "" else s" (rules ${rules.mkString(", ")})")
+          )
+        )
+      )
+    }
+  }
+
+  def contribute(
+      attrs: otoroshi.utils.TypedMap,
+      request: RequestHeader,
+      result: EngineResult,
+      config: CloudApimWafConfigRef
+  )(using env: Env): Unit = {
+    signalFor(result, config).foreach { signal =>
+      ThreatBus.contribute(attrs, ClientIdentity.from(request, attrs), signal)
     }
   }
 }
@@ -162,6 +227,7 @@ class CloudApimWaf extends NgRequestTransformer {
   override def transformRequest(
     ctx: NgTransformerRequestContext
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
+    val ref = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey) match {
       case Some(ContextualCloudApimWafConfig(engine, config)) => {
         val hasBody = ctx.request.theHasBody
@@ -173,6 +239,7 @@ class CloudApimWaf extends NgRequestTransformer {
                 val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, config.inputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
                 engine.evaluate(req, List(1, 2, 5))
               }
+              CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
               res.disposition match {
                 case Disposition.Continue if res.events.nonEmpty =>
                   report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
@@ -207,6 +274,7 @@ class CloudApimWaf extends NgRequestTransformer {
             val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None)
             engine.evaluate(req, List(1, 2, 5))
           }
+          CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
           res.disposition match {
             case Disposition.Continue if res.events.nonEmpty =>
               report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
@@ -244,6 +312,7 @@ class CloudApimWaf extends NgRequestTransformer {
   override def transformResponse(
     ctx: NgTransformerResponseContext
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
+    val ref = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey) match {
       case Some(ContextualCloudApimWafConfig(_, config)) if ctx.otoroshiResponse.contentType.nonEmpty && config.outputBodyMimetypes.nonEmpty && !config.outputBodyMimetypes.contains(ctx.otoroshiResponse.contentType.get) => ctx.otoroshiResponse.rightf
       case Some(ContextualCloudApimWafConfig(engine, config)) => {
@@ -256,6 +325,7 @@ class CloudApimWaf extends NgRequestTransformer {
                 val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, config.outputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
                 engine.evaluate(req, List(3, 4, 5))
               }
+              CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
               res.disposition match {
                 case Disposition.Continue if res.events.nonEmpty =>
                   report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
@@ -290,6 +360,7 @@ class CloudApimWaf extends NgRequestTransformer {
             val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None)
             engine.evaluate(req, List(3, 4, 5))
           }
+          CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
           res.disposition match {
             case Disposition.Continue if res.events.nonEmpty =>
               report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
@@ -357,6 +428,12 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
             val engine = ext.factory.engine(wafConfig.rules.toList)
             val req = RequestContextBuilder.request(ctx.request, NgPluginHttpRequest.fromRequest(ctx.request), None)
             val res = engine.evaluate(req, List(1, 2, 5))
+            CloudApimWafFabric.contribute(
+              ctx.attrs,
+              ctx.request,
+              res,
+              CloudApimWafConfigRef.format.reads(ctx.config).asOpt.getOrElse(CloudApimWafConfigRef(ref))
+            )
             res.disposition match {
               case Disposition.Continue if res.events.nonEmpty =>
                 report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)

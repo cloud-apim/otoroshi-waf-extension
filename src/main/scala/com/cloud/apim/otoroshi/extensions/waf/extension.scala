@@ -2,6 +2,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf
 
 import com.cloud.apim.otoroshi.extensions.waf.entities.*
 import com.cloud.apim.otoroshi.extensions.waf.reputation.ReputationModule
+import com.cloud.apim.otoroshi.extensions.waf.security.SecurityModule
 import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.*
 import com.cloud.apim.seclang.scaladsl.SecLang
@@ -78,6 +79,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val states = new WafExtensionState()
   // ip reputation lives in its own module so the waf entities, plugins and storage keys stay untouched
   lazy val reputation = new ReputationModule(env, id, configuration)
+  // the decision fabric every detector contributes to, and the one thing that acts on it
+  lazy val security = new SecurityModule(env, id, configuration)
   private val logger = Logger("cloud-apim-waf-extension")
   private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
@@ -93,10 +96,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   override def start(): Unit = {
     logger.info("the 'Cloud APIM - Security Suite' extension is enabled !")
     reputation.start()
+    security.start()
   }
 
   override def stop(): Unit = {
     reputation.stop()
+    security.stop()
   }
 
   override def frontendExtensions(): Seq[AdminExtensionFrontendExtension] = Seq(
@@ -111,6 +116,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     for {
       configs <- datastores.wafConfigDatastore.findAllAndFillSecrets()
       _       <- reputation.syncStates()
+      _       <- security.syncStates()
     } yield {
       states.updateConfigs(configs)
       ()
@@ -120,7 +126,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   override def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = {
     Seq(
       AdminExtensionEntity(CloudApimWafConfig.resource(env, datastores, states)),
-    ) ++ reputation.entities()
+    ) ++ reputation.entities() ++ security.entities()
   }
 
   def getResourceCode(path: String): String = {
@@ -135,6 +141,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val imgCode = getResourceCode("cloudapim/extensions/waf/icon.svg")
   lazy val reputationPagesCode = getResourceCode("cloudapim/extensions/waf/ReputationPages.js")
   lazy val reputationImgCode = getResourceCode("cloudapim/extensions/waf/reputation-icon.svg")
+  lazy val securityPagesCode = getResourceCode("cloudapim/extensions/waf/SecurityPages.js")
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
@@ -172,6 +179,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |
              |    ${reputationPagesCode}
              |
+             |    ${securityPagesCode}
+             |
              |    return {
              |      id: extensionId,
              |      categories:[{
@@ -186,7 +195,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            display: () => true,
              |            icon: () => 'fa-atom',
              |          },
-             |          ...ReputationFeatures
+             |          ...ReputationFeatures,
+             |          ...SecurityFeatures
              |        ]
              |      }],
              |      features: [
@@ -198,7 +208,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          display: () => true,
              |          icon: () => 'fa-atom',
              |        },
-             |        ...ReputationFeatures
+             |        ...ReputationFeatures,
+             |        ...SecurityFeatures
              |      ],
              |      sidebarItems: [
              |        {
@@ -207,7 +218,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          path: 'extensions/cloud-apim/waf/wafconfigs',
              |          icon: 'atom'
              |        },
-             |        ...ReputationSidebarItems
+             |        ...ReputationSidebarItems,
+             |        ...SecuritySidebarItems
              |      ],
              |      searchItems: [
              |        {
@@ -218,7 +230,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          label: 'Cloud APIM Security Suite - WAF configs',
              |          value: 'wafconfigs',
              |        },
-             |        ...ReputationSearchItems
+             |        ...ReputationSearchItems,
+             |        ...SecuritySearchItems
              |      ],
              |      routes: [
              |        {
@@ -239,7 +252,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            return React.createElement(WafConfigsPage, props, null)
              |          }
              |        },
-             |        ...ReputationRoutes
+             |        ...ReputationRoutes,
+             |        ...SecurityRoutes
              |      ]
              |    }
              |  });
@@ -262,7 +276,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleTest(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes()
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes()
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext

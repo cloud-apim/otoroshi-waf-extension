@@ -119,6 +119,32 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
     log = false
   }
 
+  // the decision fabric: shared score, policies, bans, incidents
+  security {
+    enabled = true
+    // how often the ban list is refreshed from shared state, and incidents are evicted
+    tick-interval-seconds = 10
+    // how long events from one caller keep collapsing into the same incident
+    incident-window-seconds = 1800
+    // set this to guarantee bans are shared between nodes whatever the otoroshi storage backend is
+    // redis-uri = "redis://localhost:6379"
+
+    ledger {
+      enabled = true
+      window-seconds = 3600
+      ban-threshold = 100
+      ban-duration-seconds = 3600
+      // off by default: the threat response plugin already charges the ledger for what it enforced
+      feed-waf-blocks = false
+      feed-waf-monitored = false
+      waf-weight = 25
+    }
+
+    relay {
+      correlate-waf-events = true
+    }
+  }
+
   // the ip reputation module
   reputation {
     // the module idles when no feed and no bouncer exists, so leaving this on costs nothing

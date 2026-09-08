@@ -1,0 +1,83 @@
+---
+sidebar_position: 2
+title: Threat policies
+description: Turning a score into an action, without breaking production on the first day.
+---
+
+# Threat policies
+
+A `ThreatPolicy` says what happens at what score. **Cloud APIM - Security Suite → Threat policies.**
+
+## Dry run is the default
+
+A newly created policy has `dry_run: true`. It computes the score, picks the tier, records the
+decision it *would* have taken, and enforces nothing.
+
+That is deliberate. Arming a scoring system before measuring it is the fastest way to break
+production, so the entity refuses to do it unless you say so explicitly.
+
+The sequence is the same as [tuning the WAF](../waf/tuning.mdx): run in dry run, read the events,
+check that what would have been denied deserves it, then turn it off.
+
+## Tiers
+
+```json
+{
+  "dry_run": false,
+  "tiers": [
+    { "min_score": 40, "action": "log" },
+    { "min_score": 70, "action": "tarpit", "tarpit_millis": 3000 },
+    { "min_score": 90, "action": "ban", "ban_for_seconds": 3600, "status": 403 }
+  ],
+  "exemptions": ["10.0.0.0/8"],
+  "ban_identity": "auto",
+  "waf_block_weight": 50
+}
+```
+
+The **highest matching tier wins**, so they can be listed in any order. A score below every tier is
+still recorded — that record is what tuning reads.
+
+| Action | Effect |
+|---|---|
+| `log` | Record it. Nothing else |
+| `tarpit` | Answer slowly, then serve normally. Costs the attacker a connection and you nothing |
+| `deny` | Refuse this request with `status` |
+| `ban` | Refuse it **and** ban the caller for `ban_for_seconds` |
+
+:::caution `challenge` and `throttle` are not available
+Both appear in the roadmap and neither has a module behind it yet. They are deliberately absent from
+the action list rather than accepted and ignored, which would let you configure a tier that silently
+does nothing.
+:::
+
+## Who gets banned
+
+`ban_identity` decides which identity a ban attaches to:
+
+- `auto` (default) — the most specific one known: an apikey rather than the shared address behind it
+- `ip` — always the address
+- `apikey` — the apikey, falling back to the most specific available
+
+This matters more than it looks. Banning an address because one apikey behind a corporate NAT
+misbehaved takes out everyone at that company.
+
+## Exemptions
+
+```json
+{ "exemptions": ["10.0.0.0/8", "192.168.0.0/16", "203.0.113.9"] }
+```
+
+Exempt callers bypass the fabric entirely — the score is never computed for them, so no accumulation
+of weak signals can ever reach a tier. Put your own probes and monitoring here.
+
+## Simulating
+
+The policy page has a **What would happen?** box: give it a score, and it tells you which tier
+matches, which action follows, and whether it would actually be enforced. No traffic involved.
+
+The same thing over the API:
+
+```bash
+curl -X POST .../security/_simulate -d '{"score": 75, "policy": "threat-policy_..."}'
+```
