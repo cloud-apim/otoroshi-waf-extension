@@ -27,6 +27,29 @@ class PresetSuite extends munit.FunSuite {
     )
   }
 
+  test("fail2ban is off by default — it is the one detector your own clients can trip") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.fail2ban, false)
+    assertEquals(names(chain(full)).contains("CloudApimFail2Ban"), false)
+  }
+
+  test("switching fail2ban on inserts it after reputation and before the waf") {
+    assertEquals(
+      names(chain(full.copy(fail2ban = true))),
+      Seq(
+        "CloudApimThreatGate", "CloudApimBotGuard", "CloudApimIpReputation",
+        "CloudApimFail2Ban", "CloudApimWaf", "CloudApimThreatResponse"
+      )
+    )
+  }
+
+  test("the preset arms fail2ban in dry run, and can arm it for real") {
+    def dryRunOf(cfg: CloudApimSecuritySuitePresetConfig) = chain(cfg)
+      .find(_.plugin == NgPluginHelper.pluginId[CloudApimFail2Ban])
+      .map(i => (i.config.raw \ "dry_run").as[Boolean])
+    assertEquals(dryRunOf(full.copy(fail2ban = true)), Some(true))
+    assertEquals(dryRunOf(full.copy(fail2ban = true, fail2banDryRun = false)), Some(false))
+  }
+
   test("the response runs after the WAF — the property the preset exists for") {
     val transform = chain(full).flatMap(i => i.pluginIndex.flatMap(_.transformRequest).map(i.plugin -> _))
     val waf       = transform.toMap.apply(NgPluginHelper.pluginId[CloudApimWaf])
@@ -96,7 +119,9 @@ class PresetSuite extends munit.FunSuite {
       botPolicy = Some("bp"),
       wafConfig = Some("wc"),
       bots = false,
+      fail2ban = true,
       reputationMode = "monitor",
+      fail2banDryRun = false,
       include = Seq("/a"),
       exclude = Seq("/b")
     )

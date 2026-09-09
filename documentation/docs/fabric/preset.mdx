@@ -23,8 +23,9 @@ at request time, into the whole chain with explicit ordering indices.
 | 1 | Threat gate | access validation | `1.0` |
 | 2 | Bot guard | access validation | `2.0` |
 | 3 | IP reputation — feeds, CrowdSec and ASN | access validation | `3.0` |
-| 4 | Cloud APIM WAF | request transformation | `1.0` |
-| 5 | Threat response | request transformation | `900.0` |
+| 4 | [Fail2ban](./fail2ban.mdx) *(off by default)* | access validation | `4.0` |
+| 5 | Cloud APIM WAF | request transformation | `1.0` |
+| 6 | Threat response | request transformation | `900.0` |
 
 The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
 rather than by the order slots happen to sit in on the route.
@@ -52,9 +53,11 @@ the preset carry it.
   "bots": true,
   "reputation": true,
   "waf": true,
+  "fail2ban": false,
   "response": true,
 
   "reputation_mode": "block",
+  "fail2ban_dry_run": true,
   "include": [],
   "exclude": []
 }
@@ -66,6 +69,8 @@ the preset carry it.
 | `bot_policy` | *(empty)* | Empty means the first enabled [bot policy](../bots/crawlers.mdx). |
 | `waf_config` | *(empty)* | Required for the WAF section to expand at all. |
 | `gate` · `bots` · `reputation` · `waf` · `response` | `true` | Section switches. |
+| `fail2ban` | `false` | Off by default: it is the one detector your own clients can trip. See [Fail2ban](./fail2ban.mdx). |
+| `fail2ban_dry_run` | `true` | Count and report without banning. Leave it on until the failure statuses have been checked against real traffic. |
 | `reputation_mode` | `block` | `monitor` scores without ever denying on its own, leaving the decision to the response. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
@@ -98,6 +103,8 @@ The preset covers the common shape. Build the chain slot by slot when you need:
   passthrough ranges. The preset only exposes the mode. (ASN databases are not per-route in either
   case: every enabled one is always consulted.);
 - **the WAF's fabric weights** (`block_weight`, `match_weight`) tuned away from their defaults;
+- **fail2ban tuned at all** — the preset exposes only the section switch and its dry run; windows,
+  thresholds, status lists and counter keys are configured on the plugin itself;
 - **fabric plugins interleaved with your own**, where a custom plugin has to sit between two of them.
 
 Both routes are supported and produce the same runtime chain. The preset is the one that cannot be

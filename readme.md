@@ -37,6 +37,7 @@ This extension is built on top of the following open-source Cloud APIM libraries
 - **One shared threat score**: Detectors contribute weighted signals rather than each blocking alone, so a request is judged on the accumulation instead of on whichever check happens to fire first
 - **Graded response**: A threat policy maps score tiers to `log`, `tarpit`, `challenge`, `deny` or `ban` — and defaults to dry run, recording what it would have done and enforcing nothing
 - **Cluster-wide bans**: A shared ban store and a cross-request ledger, so a caller banned on one node is banned on every node
+- **Distributed fail2ban**: Repeated failed responses ban the caller across the whole cluster — Otoroshi's own plugin keeps its counters and bans node-local, so its threshold means N times what you configured on N nodes
 - **Correlated incidents**: Normalised ECS-shaped events grouped into one incident rather than nine thousand alerts
 - **One preset plugin**: Lays the whole chain down on a route in the one order that makes it work, with each section switchable
 

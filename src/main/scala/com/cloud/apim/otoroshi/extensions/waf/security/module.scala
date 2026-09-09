@@ -127,6 +127,7 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
   val states: SecurityState         = new SecurityState()
   val bans: BanStore                = new BanStore(s"$keyPrefix:bans", sharedState, nodeId, logger)
   val ledger: ThreatLedger          = new ThreatLedger(s"$keyPrefix:ledger", sharedState, bans, () => ledgerSettings, logger)
+  val fail2ban: Fail2BanCounter     = new Fail2BanCounter(s"$keyPrefix:fail2ban", sharedState, bans, logger)
   val incidents: IncidentCorrelator = new IncidentCorrelator(() => incidentWindow)
   val challenges: ChallengeService  = new ChallengeService(
     sharedState,

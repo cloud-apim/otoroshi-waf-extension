@@ -15,8 +15,10 @@ final case class CloudApimSecuritySuitePresetConfig(
     bots: Boolean = true,
     reputation: Boolean = true,
     waf: Boolean = true,
+    fail2ban: Boolean = false,
     response: Boolean = true,
     reputationMode: String = "block",
+    fail2banDryRun: Boolean = true,
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -39,8 +41,10 @@ object CloudApimSecuritySuitePresetConfig {
       "bots"            -> o.bots,
       "reputation"      -> o.reputation,
       "waf"             -> o.waf,
+      "fail2ban"        -> o.fail2ban,
       "response"        -> o.response,
       "reputation_mode" -> o.reputationMode,
+      "fail2ban_dry_run" -> o.fail2banDryRun,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -53,8 +57,10 @@ object CloudApimSecuritySuitePresetConfig {
         bots = json.select("bots").asOpt[Boolean].getOrElse(true),
         reputation = json.select("reputation").asOpt[Boolean].getOrElse(true),
         waf = json.select("waf").asOpt[Boolean].getOrElse(true),
+        fail2ban = json.select("fail2ban").asOpt[Boolean].getOrElse(false),
         response = json.select("response").asOpt[Boolean].getOrElse(true),
         reputationMode = json.select("reputation_mode").asOpt[String].getOrElse("block"),
+        fail2banDryRun = json.select("fail2ban_dry_run").asOpt[Boolean].getOrElse(true),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -73,6 +79,8 @@ object CloudApimSecuritySuitePresetConfig {
     "reputation_mode",
     "waf",
     "waf_config",
+    "fail2ban",
+    "fail2ban_dry_run",
     "response",
     "include",
     "exclude"
@@ -134,6 +142,20 @@ object CloudApimSecuritySuitePresetConfig {
       "props" -> Json.obj(
         "optionsFrom"        -> "/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/waf-configs",
         "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id")
+      )
+    ),
+    "fail2ban"        -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "Fail2ban",
+      "props" -> Json.obj(
+        "help" -> "Ban callers that keep producing failed responses. Off by default: it is the one detector here your own clients can trip."
+      )
+    ),
+    "fail2ban_dry_run" -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "Fail2ban dry run",
+      "props" -> Json.obj(
+        "help" -> "Count and report without banning. Leave it on until the failure statuses have been checked against real traffic."
       )
     ),
     "response"        -> Json.obj(
@@ -252,6 +274,16 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
+    // its own bans are enforced by the gate above; this slot is what counts the failures
+    val fail2ban = Option.when(config.fail2ban) {
+      slot(
+        NgPluginHelper.pluginId[CloudApimFail2Ban],
+        CloudApimFail2BanConfig(dryRun = config.fail2banDryRun).json.asObject,
+        PluginIndex(validateAccess = 4.0.some),
+        config
+      )
+    }
+
     // far to the right of anything that could still contribute a signal
     val response = Option.when(config.response) {
       slot(
@@ -262,6 +294,6 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    Seq(gate, bots, reputation, waf, response).flatten
+    Seq(gate, bots, reputation, fail2ban, waf, response).flatten
   }
 }

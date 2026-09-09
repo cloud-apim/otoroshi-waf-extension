@@ -1,0 +1,160 @@
+---
+sidebar_position: 6
+title: Fail2ban
+description: Banning a caller that keeps failing — across the cluster, and into the shared score.
+---
+
+# Fail2ban
+
+Some attacks leave no trace a rule engine can see. Credential stuffing is well-formed HTTP with a
+wrong password; enumeration is a valid request for an object that is not yours. Every single one of
+those requests is innocent on its own — what gives them away is that there are four hundred of them
+and they keep failing.
+
+**Cloud APIM Security Suite - Fail2ban** counts failed responses per caller and bans the ones that
+keep producing them.
+
+## Why not Otoroshi's own
+
+Otoroshi ships a `fail2ban` plugin, and it is a reasonable one. Its state, however, is a node-local
+`TrieMap` — the source says so, with a `TODO (distributed)` next to it. Two consequences on any
+real deployment:
+
+- **the threshold means nothing you configured.** With `max_retry: 5` behind four nodes, an
+  attacker gets up to twenty attempts before anyone bans them, depending on how the load balancer
+  spreads the requests;
+- **the ban leaks.** One node refuses the caller; the other three keep serving them.
+
+This one counts in the shared store and bans through the [ban registry](./bans.mdx), so five means
+five however many nodes are running, and a ban issued anywhere is enforced everywhere.
+
+It also feeds the fabric, which the original has no notion of.
+
+## What it does on a request
+
+```
+response ──▶ is the status a failure?  ──no──▶ done
+                     │yes
+                     ▼
+             increment the shared counter for this caller
+                     │
+                     ├──▶ charge the ledger  ──▶ composes with waf, reputation, bots
+                     │
+                     └──▶ count >= max_retry ? ──▶ ban  ──▶ enforced by the threat gate,
+                                                            on every node
+```
+
+Counting is a write and is never awaited: a slow or unreachable store costs the response nothing.
+The ban it produces is read back from a node-local map, at no I/O cost per request.
+
+## Configuration
+
+```json
+{
+  "dry_run": true,
+  "max_retry": 5,
+  "detect_time": "10m",
+  "ban_time": "1h",
+  "status_codes": ["401", "403", "407", "429"],
+  "counter_key": "${route.id}-${req.ip}",
+  "ban_scope": "auto",
+  "url_rules": [],
+  "ignored": [],
+  "fabric_weight": 3
+}
+```
+
+| Field | Default | What it does |
+|---|---|---|
+| `dry_run` | `true` | Count and report, never ban. See the note below — it is not fully inert |
+| `max_retry` | `5` | Failures within the window before a ban |
+| `detect_time` | `10m` | The window. **Sliding**: every failure pushes it out |
+| `ban_time` | `1h` | How long the ban lasts |
+| `status_codes` | `401, 403, 407, 429` | Single codes or inclusive ranges (`500-599`) |
+| `counter_key` | `${route.id}-${req.ip}` | Expression language — what counts as *the same offender* |
+| `ban_scope` | `auto` | Who gets banned: `auto` is the most specific identity known, `ip` is always the address |
+| `url_rules` | `[]` | Path patterns, `allow` to count them, `block` to exclude them |
+| `ignored` | `[]` | Counter keys never counted. A wildcard (`*-probe`), `Ip(1.2.3.4)` or `Cidr(10.0.0.0/8)` |
+| `fabric_weight` | `3` | Charged to the [ledger](./bans.mdx#the-ledger) per counted failure. `0` disables the contribution |
+
+### The status list is deliberately narrow
+
+Otoroshi's plugin defaults to `400, 401, 403-499, 500-599`. That includes `404` and every `5xx`,
+and both are a trap:
+
+- `404` is ordinary traffic. Any site with a stale link, a probing crawler or a mistyped url
+  produces them constantly, from real users;
+- `5xx` is **your** fault. Counting it means a bad deploy bans your own customers, at the exact
+  moment you can least afford it — and the ban outlives the rollback.
+
+What is left — `401`, `403`, `407`, `429` — is the set that says a caller is trying credentials, or
+being refused and not stopping. Widen it deliberately, per route, not by default.
+
+### Counter key and ban scope are two different questions
+
+`counter_key` decides what is aggregated. The default counts per route, so failures on `/login` do
+not add to failures on `/api`. Set it to `${req.ip}` to count a caller across every route at once.
+
+`ban_scope` decides who pays. `auto` bans the most specific identity the gateway has established —
+an apikey rather than the shared NAT address behind it, which is what keeps one bad consumer from
+taking out an office. This is the same rule the ledger uses.
+
+The ban is always issued against a fabric identity, never against the counter key. That is what
+makes it enforceable by the [threat gate](./overview.mdx) and visible on the Bans page.
+
+:::caution Dry run stops this plugin banning, not the fabric
+In `dry_run`, fail2ban never issues a ban of its own — it counts, and it records a
+`would have banned` event when the threshold is reached.
+
+It still charges the ledger on every counted failure. That is the fabric working as designed, not a
+leak: with the default weight of `3` against a ledger threshold of `100`, a caller would need
+around thirty-four failed requests in an hour *and nothing else against them* before the ledger
+reaches its own conclusion. Set `fabric_weight` to `0` if you want the plugin genuinely inert.
+:::
+
+## Where it sits
+
+In the [preset](./preset.mdx) it is a section, **off by default**, at access validation index `4.0`
+— after IP reputation, before the WAF.
+
+Off by default because it is the one detector in the suite whose trigger you produce yourself. A
+feed match is evidence about the caller; a `401` is evidence about the *interaction*, and a broken
+client of yours looping on an expired token looks exactly like an attacker. Every other detector
+fails towards observation; this one, misconfigured, fails towards banning your users.
+
+Turn the section on, leave `fail2ban_dry_run` on, read the events for a week, then arm it.
+
+## Reading what it did
+
+Fail2ban emits the same `CloudApimSecurityEvent` as everything else, with `event.category` set to
+`fail2ban`:
+
+```json
+{
+  "event":  { "category": "fail2ban", "action": "ban", "outcome": "blocked" },
+  "source": { "ip": "203.0.113.9", "apikey": null },
+  "threat": {
+    "score": 100,
+    "tags": ["fail2ban", "fail2ban:401"],
+    "signals": { "count": 5, "threshold": 5, "scope": "route_a1b2-203.0.113.9", "ref": "ip:203.0.113.9" }
+  }
+}
+```
+
+One event per **outcome**, not per failed response — the counting is silent until it reaches the
+threshold. `outcome: "observed"` with the message `would have banned …` is what dry run produces.
+
+Active bans, with their evidence, are on the Bans page; they carry the tag `fail2ban`.
+
+## Interaction with the WAF
+
+The WAF already publishes what it blocked through Otoroshi's fail2ban trigger attribute. This
+plugin reads it, so a request the rule engine denied counts as a failure without either plugin
+knowing about the other — provided `403` is in your status list, which it is by default.
+
+## What this is not
+
+It is a fixed threshold on a counter, which makes it predictable and easy to reason about, and
+blind to anything that stays under the number. A consumer that walks forty thousand sequential
+object ids while getting a `200` for each is invisible here; that is `BEH-1`, and it needs a
+learned baseline rather than a constant.
