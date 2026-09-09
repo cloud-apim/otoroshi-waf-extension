@@ -261,6 +261,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            display: () => true,
              |            icon: () => 'fa-layer-group',
              |          },
+             |          {
+             |            title: 'Route posture',
+             |            description: 'Which routes are protected, in which mode',
+             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |            link: '/extensions/cloud-apim/waf/posture',
+             |            display: () => true,
+             |            icon: () => 'fa-clipboard-check',
+             |          },
              |          ...ReputationFeatures,
              |          ...SecurityFeatures
              |        ]
@@ -281,6 +289,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          link: '/extensions/cloud-apim/waf/wafrulesets',
              |          display: () => true,
              |          icon: () => 'fa-layer-group',
+             |        },
+             |        {
+             |          title: 'Route posture',
+             |          description: 'Which routes are protected, in which mode',
+             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |          link: '/extensions/cloud-apim/waf/posture',
+             |          display: () => true,
+             |          icon: () => 'fa-clipboard-check',
              |        },
              |        ...ReputationFeatures,
              |        ...SecurityFeatures
