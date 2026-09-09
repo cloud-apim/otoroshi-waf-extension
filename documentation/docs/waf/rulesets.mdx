@@ -1,0 +1,92 @@
+---
+sidebar_position: 2
+title: Rulesets
+description: Naming a body of SecLang so more than one configuration can run it.
+---
+
+# Rulesets
+
+Rules used to live as a string array inside each [WAF configuration](./configs.mdx). That works for
+one route and stops working at two: the same baseline gets copied, the copies drift, and a fix
+lands in one of them.
+
+A **`WafRuleset`** is that body of rules with a name on it. A configuration lists the rulesets it
+wants, in order, and adds whatever is specific to itself on top.
+
+**Cloud APIM - Security Suite → WAF rulesets.**
+
+## The shape
+
+```json
+{
+  "id": "waf-ruleset_9c2f...",
+  "name": "Baseline CRS",
+  "description": "What every public route runs",
+  "enabled": true,
+  "rules": [
+    "@import_preset crs",
+    "SecRuleEngine On"
+  ]
+}
+```
+
+Then a configuration references it:
+
+```json
+{
+  "name": "public-api",
+  "rulesets": ["waf-ruleset_9c2f..."],
+  "rules": [
+    "SecRuleRemoveById 942100"
+  ]
+}
+```
+
+## Order is the whole of it
+
+The rules that reach the engine are **the referenced rulesets, in the order they are listed, then
+the configuration's own inline rules**.
+
+```
+rulesets: ["baseline", "api-hardening"]     ──▶  baseline's rules
+                                                 api-hardening's rules
+rules:    ["SecRuleRemoveById 942100"]      ──▶  the config's own
+```
+
+That order is not cosmetic. `@import_preset crs` has to be read before anything that refers to what
+it defines, and an exclusion has to come after the rule it excludes — which is exactly why inline
+rules land last. "A shared baseline, plus this route's exceptions" is the arrangement the ordering
+is designed for.
+
+## Nothing is forced
+
+A configuration that carries its rules inline and references no ruleset behaves exactly as it
+always did. There is no migration to run, and no flag day: adopt rulesets on the configurations
+where sharing actually helps, leave the rest alone.
+
+:::caution A reference to nothing still compiles
+A ruleset id that does not resolve — deleted, or mistyped — contributes no rules. The configuration
+still compiles and the route still serves traffic; it simply protects less than it says it does.
+
+Three things make that visible rather than silent:
+
+- the **Compile** button reports `Compiled, but these rulesets do not exist: …`;
+- the gateway logs a warning on every state sync naming the config and the missing ids;
+- a disabled ruleset is reported the same way, so switching one off is never mistaken for deleting it.
+
+None of them stop the route. Refusing to serve traffic because a reference broke would turn a
+configuration mistake into an outage, which is the wrong trade for a component whose job is to keep
+requests flowing.
+:::
+
+## What it unlocks
+
+Composition is a prerequisite rather than an end in itself. It is what lets a tuning assistant write
+an exclusion into a named place instead of appending to a blob, and what gives curated rule packs a
+unit to ship as.
+
+## Editing a ruleset takes effect immediately
+
+Configurations are recomposed whenever a ruleset is written, so a rule added to a shared ruleset
+reaches every configuration referencing it without any of them being touched. The composed result is
+computed once per change, not once per request.
