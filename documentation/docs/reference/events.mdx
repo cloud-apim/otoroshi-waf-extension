@@ -85,6 +85,8 @@ Emitted once per request where at least one WAF rule matched. The main signal.
 | `blocking` | Whether the configuration is in blocking mode |
 | `block` | Non-null when the ruleset reached a deny decision |
 | `events[]` | Every rule that matched |
+| `truncated` | The body was longer than the inspection limit, so only its beginning was seen |
+| `oversize_rejected` | The request was refused for being past the limit, without being inspected |
 
 `blocking: false` with a non-null `block` is the "would have been denied" case — the number to
 track while [tuning](../waf/tuning.mdx).

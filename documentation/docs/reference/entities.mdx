@@ -20,10 +20,11 @@ carry the usual `_loc`, `id`, `name`, `description`, `tags` and `metadata` field
 | `block` | boolean | `true` |
 | `rules` | string[] | `[]` |
 | `inspect_input_body` | boolean | `true` |
-| `input_body_limit` | number \| null | `null` |
+| `input_body_limit` | number \| null | `null` — meaning the 2 MB default, never unlimited |
 | `inspect_output_body` | boolean | `true` |
-| `output_body_limit` | number \| null | `null` |
-| `output_body_mimetypes` | string[] | `[]` |
+| `output_body_limit` | number \| null | `null` — same default |
+| `output_body_mimetypes` | string[] | `[]` — matched on the media type alone, wildcards allowed |
+| `oversize_body_action` | `inspect_prefix` \| `reject` | `inspect_prefix` |
 
 ## ThreatFeed
 

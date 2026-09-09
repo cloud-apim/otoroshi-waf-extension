@@ -169,15 +169,26 @@ class WafConfigsPage extends Component {
     },
     input_body_limit: {
       type: 'number',
-      props: { label: 'Input body limit', placeholder: '1024', suffix: 'bytes', help: 'Maximum size of the request body to inspect' },
+      props: { label: 'Input body limit', placeholder: '2097152', suffix: 'bytes', help: 'Bytes of the request body buffered and inspected. Nothing beyond this is ever held in memory. Empty means the 2 MB default.' },
     },
     output_body_limit: {
       type: 'number',
-      props: { label: 'Output body limit', placeholder: '1024', suffix: 'bytes', help: 'Maximum size of the response body to inspect' },
+      props: { label: 'Output body limit', placeholder: '2097152', suffix: 'bytes', help: 'Bytes of the response body buffered and inspected. Empty means the 2 MB default.' },
     },
     output_body_mimetypes: {
       type: 'array',
-      props: { label: 'Output body MIME types', placeholder: 'text/plain', help: 'MIME types to inspect in the response body' },
+      props: { label: 'Output body MIME types', placeholder: 'text/html', help: 'Media types to inspect. Matched on the type alone, so charset parameters do not matter. A subtype wildcard like text/* works. Empty means every type.' },
+    },
+    oversize_body_action: {
+      type: 'select',
+      props: {
+        label: 'Body over the limit',
+        help: 'What to do when a body is longer than the limit, and so could not be fully inspected',
+        possibleValues: [
+          { label: 'Inspect the beginning, let it through', value: 'inspect_prefix' },
+          { label: 'Reject the request', value: 'reject' },
+        ],
+      },
     },
     rules: {
       type: 'array',
@@ -231,6 +242,8 @@ class WafConfigsPage extends Component {
     'inspect_output_body',
     'output_body_limit',
     'output_body_mimetypes',
+    '>>>Body limits',
+    'oversize_body_action',
     '<<<Rules',
     'rules',
     'compile',
@@ -264,6 +277,7 @@ class WafConfigsPage extends Component {
             input_body_limit: null,
             output_body_limit: null,
             output_body_mimetypes: [],
+            oversize_body_action: 'inspect_prefix',
             rules: [
               "@import_preset crs",
               "SecRuleEngine On",

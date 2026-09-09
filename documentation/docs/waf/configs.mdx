@@ -20,10 +20,11 @@ configuration.
 | `block` | `true` | `false` is monitoring mode: rules run and events are emitted, nothing is denied |
 | `rules` | `[]` | The SecLang ruleset, one entry per line or per block. See [rules](./rules.mdx) |
 | `inspect_input_body` | `true` | Whether the request body is read and given to the engine |
-| `input_body_limit` | `null` | Maximum number of request body bytes handed to the engine |
+| `input_body_limit` | `null` | Request body bytes buffered and inspected. **Empty means the 2 MB default**, never unlimited |
 | `inspect_output_body` | `true` | Whether the response body is inspected |
-| `output_body_limit` | `null` | Maximum number of response body bytes handed to the engine |
+| `output_body_limit` | `null` | Response body bytes buffered and inspected. Empty means the 2 MB default |
 | `output_body_mimetypes` | `[]` | Restricts response inspection to these media types. Empty means all |
+| `oversize_body_action` | `inspect_prefix` | What to do with a body longer than the limit: inspect the beginning and let it through, or `reject` |
 
 ## Body inspection
 
@@ -35,9 +36,24 @@ match on byte 65537. An attacker who knows the limit can pad past it, so the lim
 control, not a security boundary — pair it with a hard body-size limit on the route
 (Otoroshi ships a *Request body length limiter* plugin for that).
 
+**The limit is also a memory bound.** Nothing beyond it is ever held: the body is read up to the
+limit, inspected, and then forwarded as the buffered head followed by the rest of the stream, which
+is never buffered at all. A 500 MB upload against a 2 MB limit costs 2 MB of heap, not 500 MB.
+
 **Response inspection is opt-in territory.** It is the right place for leakage rules (stack traces,
 error disclosure, data patterns), but it means buffering responses. Restrict it with
 `output_body_mimetypes` so you are not inspecting images and downloads:
+
+:::warning Response inspection now actually runs
+Until this release two defects meant it usually did not. Response bodies were only inspected when
+the **request** carried a body — false for every plain `GET` — and the media type filter compared
+the raw `Content-Type`, so a configured `text/html` never matched `text/html; charset=utf-8`.
+
+Both are fixed, which means a configuration that has had `inspect_output_body: true` sitting there
+harmlessly will start inspecting responses on upgrade. If your ruleset carries phase 3 and 4 rules
+you have never seen fire, **set `block: false` and read the events for a few days first** — the same
+discipline as arming the request path. See [tuning](./tuning.mdx).
+:::
 
 ```json
 {
@@ -47,11 +63,31 @@ error disclosure, data patterns), but it means buffering responses. Restrict it 
 }
 ```
 
-:::caution Media types are matched exactly
-`output_body_mimetypes` is compared against the response `Content-Type`. A response served as
-`text/html; charset=utf-8` does not match an entry of `text/html`. List the exact values your
-backends emit, or leave the list empty and rely on `output_body_limit`.
+:::note Media types are matched on the type alone
+`output_body_mimetypes` is compared against the media type of the response `Content-Type`, with its
+parameters ignored — so an entry of `text/html` matches a response served as
+`text/html; charset=utf-8`, which is what backends actually send.
+
+A subtype wildcard works too: `text/*` matches every textual response. A response with no
+`Content-Type` at all is evaluated rather than skipped.
 :::
+
+## Bodies longer than the limit
+
+A body past the limit was only inspected up to the cut, so a clean verdict on it proves less than a
+clean verdict on a whole one. `oversize_body_action` says what to do about that:
+
+| Value | Behaviour |
+|---|---|
+| `inspect_prefix` *(default)* | Inspect the beginning, forward the whole body, and flag the event with `truncated: true` |
+| `reject` | Refuse the request with `413` — a body nothing could inspect does not go through |
+
+`reject` is the strict reading, and the right one for an API whose payloads are all small. On a
+route that legitimately carries large uploads it will refuse them, so raise the limit instead, or
+scope the WAF plugin away from the upload path.
+
+Either way the truncation is visible: `CloudApimWafTrailEvent` carries `truncated` and
+`oversize_rejected`, so "we did not see all of it" is never silent.
 
 ## Compile and test
 

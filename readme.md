@@ -212,6 +212,35 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
 Without it they fall back to Otoroshi's storage, which is genuinely distributed only when that
 storage is. The *Bans & incidents* page reports which mode is running.
 
+## Running the tests
+
+```bash
+sbt test
+```
+
+Three kinds, all in one run:
+
+| Kind | What it needs | Example |
+|---|---|---|
+| Unit | nothing | Range matching, body reading, config parsing, policy arithmetic |
+| Integration, in-process | nothing — a real Otoroshi boots in the test JVM on a free port, in-memory storage | `WafBodyIT` drives the WAF through the gateway against a local backend |
+| Integration, containers | a reachable Docker daemon; skips itself otherwise | `CrowdSecIntegrationSuite` drives a real CrowdSec Local API |
+
+The in-process gateway lives in [`src/test/.../it/Harness.scala`](./src/test/scala/com/cloud/apim/otoroshi/extensions/waf/it/Harness.scala).
+Otoroshi's own functional harness is in its test sources and is not published, so rather than copy
+three thousand lines, this boots the gateway through `otoroshi.api.Otoroshi` — a public API of the
+released jar — and adds only what the tests here need: admin-API helpers, route creation, and a
+backend that counts the bytes it actually received.
+
+Two things are needed to make that work, and both are in `build.sbt`:
+
+- **`java-jq` as a test dependency.** Otoroshi's `JqPlugin` loads it at class-init time and the
+  published pom does not declare it. It is irrelevant for a plugin jar dropped next to a real
+  Otoroshi; it is required to boot one in-process.
+- **`ClassLoaderLayeringStrategy.Flat`.** Otoroshi finds extensions and plugins by scanning the
+  classpath reflectively, which sbt's layered test class loader defeats — the extension's own
+  classes end up in a layer the scan cannot see.
+
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

@@ -53,8 +53,15 @@ lazy val root = (project in file("."))
       munit % Test,
       // the crowdsec integration suite drives a real Local API in a container; it skips itself
       // when no docker daemon is reachable, so `sbt test` stays runnable without one
-      testcontainers % Test
+      testcontainers % Test,
+      // otoroshi's `JqPlugin` loads this at class-init time, and the published pom does not declare
+      // it — harmless for a plugin jar dropped next to a real otoroshi, needed to boot one in-process
+      "com.arakelian" % "java-jq" % "1.3.0" % Test
     ),
+    // otoroshi discovers extensions and plugins by scanning the classpath reflectively, which the
+    // layered test class loader defeats: the extension's own classes live in a layer the scan
+    // cannot see
+    Test / classLoaderLayeringStrategy := ClassLoaderLayeringStrategy.Flat,
     assembly / test  := {},
     assembly / assemblyJarName := "otoroshi-waf-extension-assembly_3-dev.jar",
     // otoroshi already provides the exact same scala3-library at runtime, no need to ship a

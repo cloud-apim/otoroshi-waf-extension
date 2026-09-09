@@ -1,5 +1,6 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 
+import com.cloud.apim.otoroshi.extensions.waf.body.{BodyPrefix, BodyReader, ResponseBody}
 import com.cloud.apim.otoroshi.extensions.waf.entities.CloudApimWafConfig
 import com.cloud.apim.otoroshi.extensions.waf.security.{ClientIdentity, ThreatBus, ThreatSignal}
 import com.cloud.apim.seclang.impl.engine.SecLangEngine
@@ -197,13 +198,69 @@ class CloudApimWaf extends NgRequestTransformer {
     attrs.update(otoroshi.next.plugins.Fail2BanPlugin.Fail2BanTriggerStatusKey)(_ => status)
   }
 
-  def report(result: EngineResult, req: JsObject, route: NgRoute, blocking: Boolean)(using env: Env): Unit = {
+  def report(result: EngineResult, req: JsObject, route: NgRoute, blocking: Boolean, truncated: Boolean = false)(using env: Env): Unit = {
     val b = result.disposition match {
       case Disposition.Continue => None
       case bl: Disposition.Block => Some(bl)
     }
-    CloudApimWafTrailEvent(b, result.events, req, Some(route), blocking).toAnalytics()
+    CloudApimWafTrailEvent(b, result.events, req, Some(route), blocking, truncated).toAnalytics()
   }
+
+  /**
+   * Turns one engine verdict into one outcome, for both directions.
+   *
+   * It exists because the four copies of this `match` that used to be inlined are exactly what let
+   * the request path and the response path drift apart. `forward` and `drain` are by-name on
+   * purpose: a body may be resumed **or** thrown away, never both.
+   */
+  private def act[A](
+    res: EngineResult,
+    config: CloudApimWafConfig,
+    route: NgRoute,
+    attrs: TypedMap,
+    payload: JsObject,
+    truncated: Boolean,
+    forward: () => A,
+    drain: () => Unit,
+    deny: Int => Future[Result]
+  )(using env: Env, ec: ExecutionContext): Future[Either[Result, A]] = {
+    res.disposition match {
+      case Disposition.Continue if res.events.nonEmpty =>
+        report(res, payload, route, config.block, truncated)
+        Right(forward()).vfuture
+      case Disposition.Continue                        =>
+        Right(forward()).vfuture
+      case Disposition.Block(status, _, _) if config.block =>
+        report(res, payload, route, config.block, truncated)
+        triggerFail2Ban(attrs, status)
+        drain()
+        deny(status).map(Left.apply)
+      case Disposition.Block(_, _, _)                  =>
+        report(res, payload, route, config.block, truncated)
+        Right(forward()).vfuture
+    }
+  }
+
+  private def craftBlock(
+    status: Int,
+    request: RequestHeader,
+    attrs: TypedMap,
+    route: NgRoute,
+    duration: Long,
+    overhead: Long
+  )(using env: Env, ec: ExecutionContext): Future[Result] =
+    Errors.craftResponseResult(
+      message = "",
+      status = Results.Status(status),
+      req = request,
+      maybeDescriptor = None,
+      maybeCauseId = None,
+      duration = duration,
+      overhead = overhead,
+      attrs = attrs,
+      maybeRoute = route.some,
+      emptyBody = true,
+    )
 
   override def beforeRequest(
     ctx: NgBeforeRequestContext
@@ -229,83 +286,47 @@ class CloudApimWaf extends NgRequestTransformer {
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val ref = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey) match {
+      case None                                              => ctx.otoroshiRequest.rightf
       case Some(ContextualCloudApimWafConfig(engine, config)) => {
-        val hasBody = ctx.request.theHasBody
-        if (hasBody && config.inspectInputBody) {
-          ctx.otoroshiRequest.body
-            .runFold(ByteString.empty)(_ ++ _)
-            .flatMap { bytes =>
+        val payload = Json.obj("request" -> ctx.otoroshiRequest.json)
+        def deny(status: Int) = craftBlock(
+          status, ctx.request, ctx.attrs, ctx.route, ctx.report.getDurationNow(), ctx.report.getOverheadInNow()
+        )
+        if (config.inspectInputBody && ctx.request.theHasBody) {
+          // bounded: at most the configured limit is ever held, whatever the caller decides to send
+          BodyReader.prefix(ctx.otoroshiRequest.body, config.effectiveInputBodyLimit).flatMap { prefix =>
+            if (prefix.truncated && config.rejectsOversizeBody) {
+              // nothing inspected it, and the policy says an uninspected body does not go through
+              prefix.drain()
+              triggerFail2Ban(ctx.attrs, 413)
+              CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = true, oversizeRejected = true).toAnalytics()
+              deny(413).map(Left.apply)
+            } else {
               val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
-                val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, config.inputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
-                engine.evaluate(req, List(1, 2, 5))
+                engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, Some(prefix.bytes)), List(1, 2, 5))
               }
               CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
-              res.disposition match {
-                case Disposition.Continue if res.events.nonEmpty =>
-                  report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-                  ctx.otoroshiRequest.copy(body = bytes.chunks(32 * 1024)).rightf
-                case Disposition.Continue =>
-                  ctx.otoroshiRequest.copy(body = bytes.chunks(32 * 1024)).rightf
-                case Disposition.Block(status, _, _) if config.block =>
-                  report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-                  triggerFail2Ban(ctx.attrs, status)
-                  Errors
-                    .craftResponseResult(
-                      message = "",
-                      status = Results.Status(status),
-                      req = ctx.request,
-                      maybeDescriptor = None,
-                      maybeCauseId = None,
-                      duration = ctx.report.getDurationNow(),
-                      overhead = ctx.report.getOverheadInNow(),
-                      attrs = ctx.attrs,
-                      maybeRoute = ctx.route.some,
-                      emptyBody = true,
-                    ).map(r => Left(r)) // BLOCKING HERE !!!!
-                  //Results.Status(status)("").leftf
-                case Disposition.Block(_, _, _) => {
-                  report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-                  ctx.otoroshiRequest.copy(body = bytes.chunks(32 * 1024)).rightf
-                }
-              }
+              act(
+                res, config, ctx.route, ctx.attrs, payload, prefix.truncated,
+                forward = () => ctx.otoroshiRequest.copy(body = prefix.resume),
+                drain = () => prefix.drain(),
+                deny = deny
+              )
             }
+          }
         } else {
           val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
-            val req = RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None)
-            engine.evaluate(req, List(1, 2, 5))
+            engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None), List(1, 2, 5))
           }
           CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
-          res.disposition match {
-            case Disposition.Continue if res.events.nonEmpty =>
-              report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-              ctx.otoroshiRequest.rightf
-            case Disposition.Continue =>
-              ctx.otoroshiRequest.rightf
-            case Disposition.Block(status, _, _) if config.block =>
-              report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-              triggerFail2Ban(ctx.attrs, status)
-              Errors
-                .craftResponseResult(
-                  message = "",
-                  status = Results.Status(status),
-                  req = ctx.request,
-                  maybeDescriptor = None,
-                  maybeCauseId = None,
-                  duration = ctx.report.getDurationNow(),
-                  overhead = ctx.report.getOverheadInNow(),
-                  attrs = ctx.attrs,
-                  maybeRoute = ctx.route.some,
-                  emptyBody = true,
-                ).map(r => Left(r)) // BLOCKING HERE !!!!
-              //Results.Status(status)("").leftf
-            case Disposition.Block(_, _, _) => {
-              report(res, Json.obj("request" -> ctx.otoroshiRequest.json), ctx.route, config.block)
-              ctx.otoroshiRequest.rightf
-            }
-          }
+          act(
+            res, config, ctx.route, ctx.attrs, payload, truncated = false,
+            forward = () => ctx.otoroshiRequest,
+            drain = () => (),
+            deny = deny
+          )
         }
       }
-      case None => ctx.otoroshiRequest.rightf
     }
   }
 
@@ -314,84 +335,51 @@ class CloudApimWaf extends NgRequestTransformer {
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val ref = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey) match {
-      case Some(ContextualCloudApimWafConfig(_, config)) if ctx.otoroshiResponse.contentType.nonEmpty && config.outputBodyMimetypes.nonEmpty && !config.outputBodyMimetypes.contains(ctx.otoroshiResponse.contentType.get) => ctx.otoroshiResponse.rightf
-      case Some(ContextualCloudApimWafConfig(engine, config)) => {
-        val hasBody = ctx.request.theHasBody
-        if (hasBody && config.inspectOutputBody) {
-          ctx.otoroshiResponse.body
-            .runFold(ByteString.empty)(_ ++ _)
-            .flatMap { bytes =>
+      case None                                                                                            => ctx.otoroshiResponse.rightf
+      // the media type alone, so the `; charset=utf-8` that almost every real header carries stops
+      // turning an allowlist into a filter that excludes everything
+      case Some(ContextualCloudApimWafConfig(_, config)) if !config.inspectsContentType(ctx.otoroshiResponse.contentType) => ctx.otoroshiResponse.rightf
+      case Some(ContextualCloudApimWafConfig(engine, config))                                              => {
+        val payload = Json.obj("response" -> ctx.otoroshiResponse.json)
+        def deny(status: Int) = craftBlock(
+          status, ctx.request, ctx.attrs, ctx.route, ctx.report.getDurationNow(), ctx.report.getOverheadInNow()
+        )
+        // the *response* decides whether there is a response body — asking the request whether it
+        // had one meant every plain GET skipped inspection entirely
+        val hasBody = ResponseBody.hasBody(ctx.request.method, ctx.otoroshiResponse.status, ctx.otoroshiResponse.contentLength)
+        if (config.inspectOutputBody && hasBody) {
+          BodyReader.prefix(ctx.otoroshiResponse.body, config.effectiveOutputBodyLimit).flatMap { prefix =>
+            if (prefix.truncated && config.rejectsOversizeBody) {
+              prefix.drain()
+              triggerFail2Ban(ctx.attrs, 502)
+              CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = true, oversizeRejected = true).toAnalytics()
+              deny(502).map(Left.apply)
+            } else {
               val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.response") {
-                val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, config.outputBodyLimit.map(l => bytes.take(l.toInt)).orElse(Some(bytes)))
-                engine.evaluate(req, List(3, 4, 5))
+                engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, Some(prefix.bytes)), List(3, 4, 5))
               }
               CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
-              res.disposition match {
-                case Disposition.Continue if res.events.nonEmpty =>
-                  report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-                  ctx.otoroshiResponse.copy(body = bytes.chunks(32 * 1024)).rightf
-                case Disposition.Continue =>
-                  ctx.otoroshiResponse.copy(body = bytes.chunks(32 * 1024)).rightf
-                case Disposition.Block(status, _, _) if config.block =>
-                  report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-                  triggerFail2Ban(ctx.attrs, status)
-                  Errors
-                    .craftResponseResult(
-                      message = "",
-                      status = Results.Status(status),
-                      req = ctx.request,
-                      maybeDescriptor = None,
-                      maybeCauseId = None,
-                      duration = ctx.report.getDurationNow(),
-                      overhead = ctx.report.getOverheadInNow(),
-                      attrs = ctx.attrs,
-                      maybeRoute = ctx.route.some,
-                      emptyBody = true,
-                    ).map(r => Left(r)) // BLOCKING HERE !!!!
-                  // Results.Status(status)("").leftf
-                case Disposition.Block(_, _, _) => {
-                  report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-                  ctx.otoroshiResponse.copy(body = bytes.chunks(32 * 1024)).rightf
-                }
-              }
+              act(
+                res, config, ctx.route, ctx.attrs, payload, prefix.truncated,
+                forward = () => ctx.otoroshiResponse.copy(body = prefix.resume),
+                drain = () => prefix.drain(),
+                deny = deny
+              )
             }
+          }
         } else {
           val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.response") {
-            val req = RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None)
-            engine.evaluate(req, List(3, 4, 5))
+            engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None), List(3, 4, 5))
           }
           CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
-          res.disposition match {
-            case Disposition.Continue if res.events.nonEmpty =>
-              report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-              ctx.otoroshiResponse.rightf
-            case Disposition.Continue =>
-              ctx.otoroshiResponse.rightf
-            case Disposition.Block(status, _, _) if config.block =>
-              report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-              triggerFail2Ban(ctx.attrs, status)
-              Errors
-                .craftResponseResult(
-                  message = "",
-                  status = Results.Status(status),
-                  req = ctx.request,
-                  maybeDescriptor = None,
-                  maybeCauseId = None,
-                  duration = ctx.report.getDurationNow(),
-                  overhead = ctx.report.getOverheadInNow(),
-                  attrs = ctx.attrs,
-                  maybeRoute = ctx.route.some,
-                  emptyBody = true,
-                ).map(r => Left(r)) // BLOCKING HERE !!!!
-              // Results.Status(status)("").leftf
-            case Disposition.Block(_, _, _) => {
-              report(res, Json.obj("response" -> ctx.otoroshiResponse.json), ctx.route, config.block)
-              ctx.otoroshiResponse.rightf
-            }
-          }
+          act(
+            res, config, ctx.route, ctx.attrs, payload, truncated = false,
+            forward = () => ctx.otoroshiResponse,
+            drain = () => (),
+            deny = deny
+          )
         }
       }
-      case None => ctx.otoroshiResponse.rightf
     }
   }
 }
@@ -457,6 +445,8 @@ case class CloudApimWafTrailEvent(
   request: JsObject,
   route: Option[NgRoute],
   blocking: Boolean,
+  truncated: Boolean = false,
+  oversizeRejected: Boolean = false,
 ) extends AnalyticEvent {
 
   override def `@service`: String            = "--"
@@ -482,6 +472,10 @@ case class CloudApimWafTrailEvent(
       "events"     -> JsArray(events.map(e => e.json)),
       "block"      -> block.map(_.json).getOrElse(JsNull).asValue,
       "route"      -> route.map(_.json).getOrElse(JsNull).asValue,
+      // a body longer than the limit was only inspected up to the cut, so a clean verdict on this
+      // event proves less than a clean verdict on a whole one — say so rather than imply otherwise
+      "truncated"  -> truncated,
+      "oversize_rejected" -> oversizeRejected,
     ) ++ request
   }
 }
