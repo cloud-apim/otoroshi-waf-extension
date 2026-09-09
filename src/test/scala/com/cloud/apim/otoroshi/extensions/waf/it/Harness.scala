@@ -103,6 +103,17 @@ object Gateway {
 
   def deleteWafConfig(id: String): Unit = { delete(s"/apis/waf.extensions.cloud-apim.com/v1/waf-configs/$id"); () }
 
+  def createWafRuleset(body: JsValue): String = {
+    val res = post("/apis/waf.extensions.cloud-apim.com/v1/waf-rulesets", body)
+    if (res.status > 299) throw new RuntimeException(s"could not create the ruleset: ${res.status} ${res.body}")
+    (res.json \ "id").as[String]
+  }
+
+  def deleteWafRuleset(id: String): Unit = {
+    delete(s"/apis/waf.extensions.cloud-apim.com/v1/waf-rulesets/$id")
+    ()
+  }
+
   /** A route on `<id>.oto.tools`, pointed at a local backend, carrying the given plugins. */
   def createRoute(id: String, backendPort: Int, plugins: Seq[NgPluginInstance]): NgRoute = {
     val domain = s"$id.oto.tools"

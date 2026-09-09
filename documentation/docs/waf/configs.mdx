@@ -25,6 +25,8 @@ configuration.
 | `output_body_limit` | `null` | Response body bytes buffered and inspected. Empty means the 2 MB default |
 | `output_body_mimetypes` | `[]` | Restricts response inspection to these media types. Empty means all |
 | `oversize_body_action` | `inspect_prefix` | What to do with a body longer than the limit: inspect the beginning and let it through, or `reject` |
+| `rulesets` | `[]` | [Rulesets](./rulesets.mdx) to run, in order, **before** the inline rules |
+| `rules` | `[]` | Inline SecLang, applied after every referenced ruleset |
 
 ## Body inspection
 

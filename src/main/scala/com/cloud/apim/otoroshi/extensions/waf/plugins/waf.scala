@@ -268,7 +268,8 @@ class CloudApimWaf extends NgRequestTransformer {
     val config = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     val ext = env.adminExtensions.extension[CloudApimWafExtension].get
     ext.states.config(config.ref).filter(_.enabled).foreach { wafConfig =>
-      val engine = ext.factory.engine(wafConfig.rules.toList)
+      // the rules the config composes to, not only the ones written inside it
+      val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
       ctx.attrs.put(CloudApimWafKeys.SecLangEngineKey -> ContextualCloudApimWafConfig(engine, wafConfig))
     }
     ().vfuture
@@ -413,7 +414,8 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
         ext.states.config(ref).filter(_.enabled) match {
           case None => NgAccess.NgAllowed.vfuture
           case Some(wafConfig) => {
-            val engine = ext.factory.engine(wafConfig.rules.toList)
+            // the rules the config composes to, not only the ones written inside it
+            val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
             val req = RequestContextBuilder.request(ctx.request, NgPluginHttpRequest.fromRequest(ctx.request), None)
             val res = engine.evaluate(req, List(1, 2, 5))
             CloudApimWafFabric.contribute(

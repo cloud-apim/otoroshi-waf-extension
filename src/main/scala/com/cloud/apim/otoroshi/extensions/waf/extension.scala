@@ -29,15 +29,51 @@ import scala.util.{Failure, Success, Try}
 
 class WafExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val wafConfigDatastore: CloudApimWafConfigDatastore = new KvCloudApimWafConfigDatastore(extensionId, env.datastores.redis, env)
+  val wafRulesetDatastore: WafRulesetDatastore        = new KvWafRulesetDatastore(extensionId, env.datastores.redis, env)
 }
 
 class WafExtensionState() {
 
-  private val _configs = new UnboundedTrieMap[String, CloudApimWafConfig]()
+  private val logger = Logger("cloud-apim-waf-state")
+
+  private val _configs  = new UnboundedTrieMap[String, CloudApimWafConfig]()
+  private val _rulesets = new UnboundedTrieMap[String, WafRuleset]()
+  // composed once per change rather than once per request: resolving references on the hot path
+  // would put a map walk in front of every single call
+  private val _composed = new UnboundedTrieMap[String, ComposedRules]()
+
   def config(id: String): Option[CloudApimWafConfig] = _configs.get(id)
   def allConfigs(): Seq[CloudApimWafConfig]          = _configs.values.toSeq
+  def ruleset(id: String): Option[WafRuleset]        = _rulesets.get(id)
+  def allRulesets(): Seq[WafRuleset]                 = _rulesets.values.toSeq
+
   def updateConfigs(values: Seq[CloudApimWafConfig]): Unit = {
     _configs.addAll(values.map(v => (v.id, v))).remAll(_configs.keySet.toSeq.diff(values.map(_.id)))
+    recompose()
+  }
+
+  def updateRulesets(values: Seq[WafRuleset]): Unit = {
+    _rulesets.addAll(values.map(v => (v.id, v))).remAll(_rulesets.keySet.toSeq.diff(values.map(_.id)))
+    recompose()
+  }
+
+  /** The rules a config actually runs — its rulesets in order, then its own inline rules. */
+  def composedFor(config: CloudApimWafConfig): ComposedRules =
+    _composed.getOrElse(config.id, WafRuleComposition.compose(config, ruleset))
+
+  def rulesFor(config: CloudApimWafConfig): Seq[String] = composedFor(config).rules
+
+  private def recompose(): Unit = {
+    _composed.remAll(_composed.keySet.toSeq.diff(_configs.keySet.toSeq))
+    _configs.values.foreach { config =>
+      val composed = WafRuleComposition.compose(config, ruleset)
+      // a reference to nothing still compiles and still runs, protecting less than it claims to,
+      // so it gets said out loud rather than swallowed
+      if (composed.missing.nonEmpty) {
+        logger.warn(s"waf config '${config.name}' references unknown rulesets: ${composed.missing.mkString(", ")}")
+      }
+      _composed.put(config.id, composed)
+    }
   }
 }
 
@@ -114,10 +150,13 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     given ExecutionContext = env.otoroshiExecutionContext
     given Env              = env
     for {
-      configs <- datastores.wafConfigDatastore.findAllAndFillSecrets()
-      _       <- reputation.syncStates()
-      _       <- security.syncStates()
+      rulesets <- datastores.wafRulesetDatastore.findAllAndFillSecrets()
+      configs  <- datastores.wafConfigDatastore.findAllAndFillSecrets()
+      _        <- reputation.syncStates()
+      _        <- security.syncStates()
     } yield {
+      // rulesets first: composing a config against a stale ruleset map would be wrong for one tick
+      states.updateRulesets(rulesets)
       states.updateConfigs(configs)
       ()
     }
@@ -126,6 +165,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   override def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = {
     Seq(
       AdminExtensionEntity(CloudApimWafConfig.resource(env, datastores, states)),
+      AdminExtensionEntity(WafRuleset.resource(env, datastores, states)),
     ) ++ reputation.entities() ++ security.entities()
   }
 
@@ -142,6 +182,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val reputationPagesCode = getResourceCode("cloudapim/extensions/waf/ReputationPages.js")
   lazy val reputationImgCode = getResourceCode("cloudapim/extensions/waf/reputation-icon.svg")
   lazy val securityPagesCode = getResourceCode("cloudapim/extensions/waf/SecurityPages.js")
+  lazy val wafRulesetsPageCode = getResourceCode("cloudapim/extensions/waf/WafRulesetsPage.js")
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
@@ -177,6 +218,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |
              |    ${wafConfigsPageCode}
              |
+             |    ${wafRulesetsPageCode}
+             |
              |    ${reputationPagesCode}
              |
              |    ${securityPagesCode}
@@ -195,6 +238,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            display: () => true,
              |            icon: () => 'fa-atom',
              |          },
+             |          {
+             |            title: 'WAF rulesets',
+             |            description: 'Reusable bodies of SecLang, shared across configs',
+             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |            link: '/extensions/cloud-apim/waf/wafrulesets',
+             |            display: () => true,
+             |            icon: () => 'fa-layer-group',
+             |          },
              |          ...ReputationFeatures,
              |          ...SecurityFeatures
              |        ]
@@ -208,6 +259,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          display: () => true,
              |          icon: () => 'fa-atom',
              |        },
+             |        {
+             |          title: 'WAF rulesets',
+             |          description: 'Reusable bodies of SecLang, shared across configs',
+             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |          link: '/extensions/cloud-apim/waf/wafrulesets',
+             |          display: () => true,
+             |          icon: () => 'fa-layer-group',
+             |        },
              |        ...ReputationFeatures,
              |        ...SecurityFeatures
              |      ],
@@ -217,6 +276,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          text: 'ModSecurity SecLang rules and the OWASP Core Rule Set',
              |          path: 'extensions/cloud-apim/waf/wafconfigs',
              |          icon: 'atom'
+             |        },
+             |        {
+             |          title: 'WAF rulesets',
+             |          text: 'Reusable bodies of SecLang, shared across configs',
+             |          path: 'extensions/cloud-apim/waf/wafrulesets',
+             |          icon: 'layer-group'
              |        },
              |        ...ReputationSidebarItems,
              |        ...SecuritySidebarItems
@@ -229,6 +294,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          env: React.createElement('span', { className: "fas fa-atom" }, null),
              |          label: 'Cloud APIM Security Suite - WAF configs',
              |          value: 'wafconfigs',
+             |        },
+             |        {
+             |          action: () => {
+             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/wafrulesets`
+             |          },
+             |          env: React.createElement('span', { className: "fas fa-layer-group" }, null),
+             |          label: 'Cloud APIM Security Suite - WAF rulesets',
+             |          value: 'wafrulesets',
              |        },
              |        ...ReputationSearchItems,
              |        ...SecuritySearchItems
@@ -250,6 +323,24 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          path: '/extensions/cloud-apim/waf/wafconfigs',
              |          component: (props) => {
              |            return React.createElement(WafConfigsPage, props, null)
+             |          }
+             |        },
+             |        {
+             |          path: '/extensions/cloud-apim/waf/wafrulesets/:taction/:titem',
+             |          component: (props) => {
+             |            return React.createElement(WafRulesetsPage, props, null)
+             |          }
+             |        },
+             |        {
+             |          path: '/extensions/cloud-apim/waf/wafrulesets/:taction',
+             |          component: (props) => {
+             |            return React.createElement(WafRulesetsPage, props, null)
+             |          }
+             |        },
+             |        {
+             |          path: '/extensions/cloud-apim/waf/wafrulesets',
+             |          component: (props) => {
+             |            return React.createElement(WafRulesetsPage, props, null)
              |          }
              |        },
              |        ...ReputationRoutes,
@@ -285,12 +376,19 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         val bodyJson = bodyRaw.utf8String.parseJson
-        val rules = bodyJson.select("rules").asOpt[List[String]].getOrElse(List.empty).filterNot(_.trim.startsWith("@import_preset ")).mkString("\n\n")
+        // compiling the config's own rules alone would validate something it does not run: what
+        // reaches the engine is the referenced rulesets first, then the inline rules
+        val refs     = bodyJson.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
+        val resolved = refs.map(ref => (ref, states.ruleset(ref)))
+        val missing  = resolved.collect { case (ref, None) => ref }
+        val composed = resolved.collect { case (_, Some(rs)) if rs.enabled => rs.rules }.flatten ++
+          bodyJson.select("rules").asOpt[List[String]].getOrElse(List.empty)
+        val rules = composed.filterNot(_.trim.startsWith("@import_preset ")).mkString("\n\n")
         (SecLang.parse(rules) match {
           case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err.msg))
           case Right(conf) => Try(SecLang.compile(conf)) match {
             case Failure(err) => Results.Ok(Json.obj("done" -> false, "error" -> err.getMessage))
-            case Success(_) => Results.Ok(Json.obj("done" -> true))
+            case Success(_) => Results.Ok(Json.obj("done" -> true, "missing_rulesets" -> missing))
           }
         }).vfuture
       }

@@ -85,3 +85,93 @@ class WafConfigSuite extends munit.FunSuite {
     assertEquals(back.oversizeBodyAction, "reject")
   }
 }
+
+/**
+ * Composition is the whole point of WAF-1: a config lists the rulesets it wants and adds its own
+ * rules on top. Order carries meaning in SecLang, so most of this is about order.
+ */
+class WafRulesetSuite extends munit.FunSuite {
+
+  private def ruleset(id: String, rules: Seq[String], enabled: Boolean = true) =
+    WafRuleset(id = id, name = id, rules = rules, enabled = enabled)
+
+  private def config(rulesets: Seq[String] = Seq.empty, rules: Seq[String] = Seq.empty) =
+    CloudApimWafConfig(id = "waf-config_test", name = "test", rulesets = rulesets, rules = rules)
+
+  private def resolver(all: WafRuleset*): String => Option[WafRuleset] =
+    id => all.find(_.id == id)
+
+  test("rulesets are applied in the order they are listed, then the inline rules") {
+    val composed = WafRuleComposition.compose(
+      config(rulesets = Seq("a", "b"), rules = Seq("inline")),
+      resolver(ruleset("a", Seq("a1", "a2")), ruleset("b", Seq("b1")))
+    )
+    assertEquals(composed.rules, Seq("a1", "a2", "b1", "inline"))
+    assert(composed.complete)
+  }
+
+  test("listing order is what changes, not entity order") {
+    val rs = resolver(ruleset("a", Seq("a1")), ruleset("b", Seq("b1")))
+    assertEquals(WafRuleComposition.compose(config(rulesets = Seq("b", "a")), rs).rules, Seq("b1", "a1"))
+  }
+
+  test("a config with no rulesets is exactly what it always was") {
+    val composed = WafRuleComposition.compose(config(rules = Seq("@import_preset crs", "SecRuleEngine On")), resolver())
+    assertEquals(composed.rules, Seq("@import_preset crs", "SecRuleEngine On"))
+    assert(composed.complete)
+  }
+
+  test("a reference to nothing is reported, not swallowed") {
+    val composed = WafRuleComposition.compose(
+      config(rulesets = Seq("a", "ghost"), rules = Seq("inline")),
+      resolver(ruleset("a", Seq("a1")))
+    )
+    assertEquals(composed.rules, Seq("a1", "inline"), "the rest still runs")
+    assertEquals(composed.missing, Seq("ghost"))
+    assertEquals(composed.complete, false)
+  }
+
+  test("a disabled ruleset contributes nothing, and says so") {
+    val composed = WafRuleComposition.compose(
+      config(rulesets = Seq("a", "off")),
+      resolver(ruleset("a", Seq("a1")), ruleset("off", Seq("never"), enabled = false))
+    )
+    assertEquals(composed.rules, Seq("a1"))
+    assertEquals(composed.disabled, Seq("off"))
+    assertEquals(composed.complete, false)
+  }
+
+  test("an empty ruleset is not a missing one") {
+    val composed = WafRuleComposition.compose(config(rulesets = Seq("a")), resolver(ruleset("a", Seq.empty)))
+    assertEquals(composed.rules, Seq.empty[String])
+    assert(composed.complete)
+  }
+
+  test("a config written before rulesets existed reads with none") {
+    val old = CloudApimWafConfig.format
+      .reads(Json.obj("id" -> "waf-config_x", "name" -> "old", "description" -> "", "rules" -> Json.arr("SecRuleEngine On")))
+      .get
+    assertEquals(old.rulesets, Seq.empty[String])
+    assertEquals(old.rules, Seq("SecRuleEngine On"))
+  }
+
+  test("the config round-trips its references") {
+    val cfg  = config(rulesets = Seq("a", "b"), rules = Seq("inline"))
+    val back = CloudApimWafConfig.format.reads(cfg.json).get
+    assertEquals(back.rulesets, Seq("a", "b"))
+    assertEquals(back.rules, Seq("inline"))
+  }
+
+  test("blank references are dropped on read rather than becoming a missing ruleset") {
+    val cfg = CloudApimWafConfig.format
+      .reads(Json.obj("id" -> "x", "name" -> "n", "description" -> "", "rulesets" -> Json.arr("a", "", "  ")))
+      .get
+    assertEquals(cfg.rulesets, Seq("a"))
+  }
+
+  test("the ruleset round-trips") {
+    val rs   = WafRuleset(id = "waf-ruleset_1", name = "base", description = "d", rules = Seq("r1", "r2"), enabled = false)
+    val back = WafRuleset.format.reads(rs.json).get
+    assertEquals(back, rs)
+  }
+}

@@ -111,7 +111,7 @@ of a map lookup, without the rule engine ever seeing the request.
 
 | | |
 |---|---|
-| **Entities** | Eight: `WafConfig`, `ThreatPolicy`, `ThreatFeed`, `AsnDatabase`, `CrowdSecBouncer`, `BotPolicy`, `ChallengeProvider`, `HoneypotPolicy` — full CRUD, admin API, import/export, Kubernetes CRDs |
+| **Entities** | Nine: `WafConfig`, `WafRuleset`, `ThreatPolicy`, `ThreatFeed`, `AsnDatabase`, `CrowdSecBouncer`, `BotPolicy`, `ChallengeProvider`, `HoneypotPolicy` — full CRUD, admin API, import/export, Kubernetes CRDs |
 | **Route plugins** | WAF · IP reputation · Threat gate · Threat response · Bot guard · Fail2ban · [the preset](./fabric/preset.mdx) that lays them down in the right order |
 | **Global plugins** | Three incoming-request validators — honeypot, WAF and IP reputation — evaluated before routing ([see the note](./reference/plugins.mdx#global-plugins-are-not-route-plugins)) |
 | **Admin UI** | One *Cloud APIM - Security Suite* section: WAF configs, threat policies, threat feeds and their catalog, ASN databases, CrowdSec bouncers, bot policies, challenge providers and presets, honeypots, and a live *Bans & incidents* view |

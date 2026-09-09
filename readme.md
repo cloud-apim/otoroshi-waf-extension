@@ -107,12 +107,13 @@ walks through every step, including what to look at before arming anything.
 
 ## Entities
 
-Eight, all with full CRUD, admin API, import/export and Kubernetes CRDs, under the API group
+Nine, all with full CRUD, admin API, import/export and Kubernetes CRDs, under the API group
 `waf.extensions.cloud-apim.com/v1`:
 
 | Entity | Collection | What it holds |
 |---|---|---|
-| `WafConfig` | `waf-configs` | SecLang rules, blocking mode, body inspection limits |
+| `WafConfig` | `waf-configs` | Which rulesets to run, blocking mode, body inspection limits |
+| `WafRuleset` | `waf-rulesets` | A named body of SecLang, shared across configs |
 | `ThreatPolicy` | `threat-policies` | Score tiers and the action at each, dry run, exemptions |
 | `ThreatFeed` | `threat-feeds` | A reputation source: url, format, refresh interval, weight, action |
 | `AsnDatabase` | `asn-databases` | Address-to-network table and its ordered categories |

@@ -27,6 +27,7 @@ case class CloudApimWafConfig(
    inputBodyLimit: Option[Long] = None,
    outputBodyLimit: Option[Long] = None,
    outputBodyMimetypes: Seq[String] = Seq.empty,
+   rulesets: Seq[String] = Seq.empty,
    rules: Seq[String] = Seq.empty,
    oversizeBodyAction: String = CloudApimWafConfig.OversizeInspectPrefix,
 ) extends EntityLocationSupport {
@@ -92,6 +93,7 @@ object CloudApimWafConfig {
       "input_body_limit" -> o.inputBodyLimit,
       "output_body_limit" -> o.outputBodyLimit,
       "output_body_mimetypes" -> o.outputBodyMimetypes,
+      "rulesets" -> o.rulesets,
       "rules" -> o.rules,
       "oversize_body_action" -> o.oversizeBodyAction,
     )
@@ -110,6 +112,9 @@ object CloudApimWafConfig {
         inputBodyLimit = json.select("input_body_limit").asOpt[Long].filter(_ > 0L),
         outputBodyLimit = json.select("output_body_limit").asOpt[Long].filter(_ > 0L),
         outputBodyMimetypes = json.select("output_body_mimetypes").asOpt[Seq[String]].getOrElse(Seq.empty),
+        // absent on every config written before rulesets existed, which is exactly the case that
+        // must keep running on its inline rules alone
+        rulesets = json.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         rules = json.select("rules").asOpt[Seq[String]].getOrElse(Seq.empty),
         // reads with a default, so a config written before the cap existed keeps working untouched
         oversizeBodyAction = json

@@ -19,7 +19,9 @@ PATCH  /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
 DELETE /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
 ```
 
-The same shape for `threat-feeds` and `crowdsec-bouncers`.
+The same shape for every other collection: `waf-rulesets`, `threat-policies`, `threat-feeds`,
+`asn-databases`, `crowdsec-bouncers`, `bot-policies`, `challenge-providers` and
+`honeypot-policies`.
 
 ```bash
 curl -u "$APIKEY_ID:$APIKEY_SECRET" \

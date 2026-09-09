@@ -15,6 +15,9 @@ class CompileButton extends Component {
     }).then(r => r.json()).then(r => {
       if (r.error) {
         this.setState({ error: r.error });
+      } else if ((r.missing_rulesets || []).length > 0) {
+        // it compiled, which is the misleading part: those references contribute nothing
+        this.setState({ error: 'Compiled, but these rulesets do not exist: ' + r.missing_rulesets.join(', ') });
       } else {
         this.setState({ error: null, msg: ' Compilation successful !' });
         setTimeout(() => {
@@ -123,6 +126,19 @@ function MonacoRule(props) {
   } }, '')
 }
 
+function RulesetSelect(props) {
+  return React.createElement(SelectInput, {
+    label: '',
+    value: props.value[props.idx],
+    valuesFrom: '/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/waf-rulesets',
+    transformer: (i) => ({ label: i.enabled ? i.name : i.name + ' (disabled)', value: i.id }),
+    onChange: (it) => {
+      props.value[props.idx] = it;
+      props.onChange(props.value);
+    },
+  }, null);
+}
+
 class WafConfigsPage extends Component {
 
   formSchema = {
@@ -190,6 +206,14 @@ class WafConfigsPage extends Component {
         ],
       },
     },
+    rulesets: {
+      type: 'array',
+      props: {
+        label: 'Rulesets',
+        component: RulesetSelect,
+        help: 'Applied in this order, before the inline rules below',
+      },
+    },
     rules: {
       type: 'array',
       props: { component: MonacoRule },
@@ -245,6 +269,7 @@ class WafConfigsPage extends Component {
     '>>>Body limits',
     'oversize_body_action',
     '<<<Rules',
+    'rulesets',
     'rules',
     'compile',
     '>>>Test',
@@ -278,6 +303,7 @@ class WafConfigsPage extends Component {
             output_body_limit: null,
             output_body_mimetypes: [],
             oversize_body_action: 'inspect_prefix',
+            rulesets: [],
             rules: [
               "@import_preset crs",
               "SecRuleEngine On",
