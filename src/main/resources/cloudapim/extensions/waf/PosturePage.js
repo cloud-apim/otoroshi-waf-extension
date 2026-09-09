@@ -1,69 +1,168 @@
+function postureBadge(label, kind) {
+  return React.createElement('span', { className: 'suite-badge suite-' + kind }, label);
+}
+
+function postureDash() {
+  return React.createElement('span', { className: 'suite-meta' }, '—');
+}
+
 class SecurityPosturePage extends Component {
-  state = { routes: [], summary: null, error: null, onlyGaps: false };
+  state = { summary: null, error: null };
+
+  columns = [
+    {
+      title: 'Route',
+      filterId: 'route_name',
+      content: (item) => item.route_name,
+      cell: (v, item) =>
+        React.createElement(
+          'a',
+          { href: '/bo/dashboard/routes/' + item.route_id + '?tab=flow' },
+          v || item.route_id
+        ),
+    },
+    {
+      title: 'Status',
+      filterId: 'status',
+      // the whole point of the page is this column, and its worst value sorts first
+      content: (item) => (!item.covered ? 'unprotected' : item.enforcing ? 'enforcing' : 'observing'),
+      cell: (v) => postureBadge(v, v === 'unprotected' ? 'danger' : v === 'enforcing' ? 'success' : 'warning'),
+      style: { width: 120, textAlign: 'center' },
+    },
+    {
+      title: 'WAF',
+      filterId: 'waf',
+      content: (item) => (item.waf ? (item.waf_blocking ? 'block' : 'monitor') : ''),
+      cell: (v, item) => (v ? postureBadge(item.waf + ' · ' + v, v === 'block' ? 'success' : 'warning') : postureDash()),
+      style: { width: 200 },
+    },
+    {
+      title: 'Reputation',
+      filterId: 'reputation',
+      content: (item) => item.reputation || '',
+      cell: (v) => (v ? postureBadge(v, v === 'block' ? 'success' : 'warning') : postureDash()),
+      style: { width: 120, textAlign: 'center' },
+    },
+    {
+      title: 'Bots',
+      filterId: 'bots',
+      content: (item) => (item.bots ? 'on' : ''),
+      cell: (v) => (v ? postureBadge('on', 'info') : postureDash()),
+      style: { width: 90, textAlign: 'center' },
+    },
+    {
+      title: 'Fail2ban',
+      filterId: 'fail2ban',
+      content: (item) => item.fail2ban || '',
+      cell: (v) => (v ? postureBadge(v, v === 'armed' ? 'success' : 'warning') : postureDash()),
+      style: { width: 110, textAlign: 'center' },
+    },
+    {
+      title: 'Fabric',
+      filterId: 'fabric',
+      content: (item) => (item.response ? (item.policy_dry_run ? 'dry run' : 'armed') : ''),
+      cell: (v, item) =>
+        v
+          ? React.createElement(
+              'span',
+              { title: item.policy || 'built-in policy' },
+              postureBadge(v, v === 'armed' ? 'success' : 'warning')
+            )
+          : postureDash(),
+      style: { width: 110, textAlign: 'center' },
+    },
+    {
+      title: 'Via preset',
+      filterId: 'via_preset',
+      content: (item) => (item.via_preset ? 'yes' : 'no'),
+      cell: (v) => (v === 'yes' ? postureBadge('preset', 'neutral') : postureDash()),
+      style: { width: 110, textAlign: 'center' },
+    },
+  ];
 
   componentDidMount() {
     ensureSuiteStyles();
     this.props.setTitle('Route posture');
-    this.load();
+    securityCall('/_posture')
+      .then((r) => this.setState({ summary: r.summary || null, error: null }))
+      .catch((e) => this.setState({ error: String(e.message || e) }));
   }
 
-  load = () => {
-    securityCall('/_posture')
-      .then((r) => this.setState({ routes: r.routes || [], summary: r.summary || null, error: null }))
-      .catch((e) => this.setState({ error: String(e.message || e) }));
-  };
+  fetch = () =>
+    securityCall('/_posture').then((r) => {
+      this.setState({ summary: r.summary || null });
+      return r.routes || [];
+    });
 
-  badge = (label, kind) =>
-    React.createElement('span', { className: 'suite-badge suite-' + kind, key: label }, label);
-
-  cell = (route) => {
-    // the point of the page: an empty row is the finding, so it must not look like an empty cell
-    if (!route.covered) return this.badge('unprotected', 'danger');
-    const badges = [];
-    if (route.waf) badges.push(this.badge('waf ' + (route.waf_blocking ? 'block' : 'monitor'), route.waf_blocking ? 'success' : 'warning'));
-    if (route.reputation) badges.push(this.badge('reputation ' + route.reputation, route.reputation === 'block' ? 'success' : 'warning'));
-    if (route.bots) badges.push(this.badge('bots', 'info'));
-    if (route.fail2ban) badges.push(this.badge('fail2ban ' + route.fail2ban, route.fail2ban === 'armed' ? 'success' : 'warning'));
-    if (route.response) badges.push(this.badge('fabric ' + (route.policy_dry_run ? 'dry run' : 'armed'), route.policy_dry_run ? 'warning' : 'success'));
-    return badges;
+  renderSummary = () => {
+    const s = this.state.summary;
+    if (!s) return null;
+    return React.createElement(
+      'div',
+      { className: 'suite-rows', style: { marginBottom: 12 } },
+      React.createElement(
+        'div',
+        { className: 'suite-row' },
+        React.createElement('span', null, 'Routes'),
+        React.createElement('span', null, String(s.total))
+      ),
+      React.createElement(
+        'div',
+        { className: 'suite-row' },
+        React.createElement('span', null, 'Covered'),
+        React.createElement('span', null, s.covered + ' of ' + s.total)
+      ),
+      React.createElement(
+        'div',
+        { className: 'suite-row' },
+        React.createElement('span', null, 'Enforcing'),
+        React.createElement('span', null, s.enforcing + ' of ' + s.total)
+      ),
+      React.createElement(
+        'div',
+        { className: 'suite-row' },
+        React.createElement('span', null, 'Unprotected'),
+        React.createElement(
+          'span',
+          null,
+          s.uncovered > 0
+            ? postureBadge(s.uncovered + ' route' + (s.uncovered > 1 ? 's' : ''), 'danger')
+            : postureBadge('none', 'success')
+        )
+      )
+    );
   };
 
   render() {
-    const s = this.state.summary;
-    const rows = this.state.onlyGaps ? this.state.routes.filter((r) => !r.covered || !r.enforcing) : this.state.routes;
-    return React.createElement('div', { className: 'suite-panel' },
+    return React.createElement(
+      'div',
+      null,
       this.state.error && React.createElement('div', { className: 'suite-notice' }, this.state.error),
-      s && React.createElement('div', { className: 'suite-rows' },
-        React.createElement('div', { className: 'suite-row' },
-          React.createElement('span', null, 'Routes'), React.createElement('span', null, String(s.total))),
-        React.createElement('div', { className: 'suite-row' },
-          React.createElement('span', null, 'Covered'), React.createElement('span', null, String(s.covered))),
-        React.createElement('div', { className: 'suite-row' },
-          React.createElement('span', null, 'Enforcing'), React.createElement('span', null, String(s.enforcing))),
-        React.createElement('div', { className: 'suite-row' },
-          React.createElement('span', null, 'Unprotected'), React.createElement('span', null, String(s.uncovered)))
-      ),
-      React.createElement('div', { style: { marginBottom: 10, display: 'flex', gap: 8 } },
-        React.createElement('button', {
-          className: 'btn btn-sm ' + (this.state.onlyGaps ? 'btn-primary' : 'btn-secondary'),
-          type: 'button',
-          onClick: () => this.setState({ onlyGaps: !this.state.onlyGaps }),
-        }, this.state.onlyGaps ? 'Showing gaps only' : 'Show gaps only'),
-        React.createElement('button', { className: 'btn btn-sm btn-secondary', type: 'button', onClick: this.load }, 'Refresh')
-      ),
-      React.createElement('div', { className: 'suite-rows' },
-        rows.map((r) =>
-          React.createElement('div', { className: 'suite-row', key: r.route_id },
-            React.createElement('span', { style: { flex: '0 0 240px' } },
-              React.createElement('a', { href: '/bo/dashboard/routes/' + r.route_id + '?tab=flow' }, r.route_name)),
-            React.createElement('span', { style: { flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap' } },
-              this.cell(r),
-              r.via_preset && this.badge('preset', 'neutral'))
-          )
-        )
-      ),
-      rows.length === 0 && React.createElement('div', { className: 'suite-meta' },
-        this.state.onlyGaps ? 'Every route is covered and enforcing.' : 'No routes yet.')
+      this.renderSummary(),
+      React.createElement(
+        Table,
+        {
+          parentProps: this.props,
+          selfUrl: 'extensions/cloud-apim/waf/posture',
+          defaultTitle: 'Route posture',
+          itemName: 'Route',
+          columns: this.columns,
+          fetchItems: () => this.fetch(),
+          // derived from live state: there is nothing here to create, edit or delete
+          showActions: false,
+          showLink: false,
+          hideAllActions: true,
+          hideAddItemAction: true,
+          hideEditButton: true,
+          rowNavigation: false,
+          extractKey: (item) => item.route_id,
+          defaultValue: () => ({}),
+          formSchema: {},
+          formFlow: [],
+          export: false,
+        },
+        null
+      )
     );
   }
 }

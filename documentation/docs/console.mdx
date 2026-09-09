@@ -21,16 +21,17 @@ Two surfaces, and they have very different requirements:
 
 It walks every route in the router and reports what is actually attached to it:
 
-```
-route            waf              reputation   bots   fail2ban   fabric
-public-api       waf block        block        ✓      armed      armed
-partner-api      waf monitor      monitor      ✓      dry run    dry run
-docs             waf monitor      —            ✓      —          dry run
-legacy-soap      —                —            —      —          —          ⚠ unprotected
-```
+| Route | Status | WAF | Reputation | Bots | Fail2ban | Fabric |
+|---|---|---|---|---|---|---|
+| public-api | `enforcing` | crs · block | block | on | armed | armed |
+| partner-api | `observing` | crs · monitor | monitor | on | dry run | dry run |
+| docs | `observing` | crs · monitor | — | on | — | dry run |
+| legacy-soap | `unprotected` | — | — | — | — | — |
 
-The row that earns the page is the last one. Nobody goes looking for a route they forgot to
-protect, so the page leads with the count and has a **Show gaps only** filter.
+It is the same sortable, searchable table as every other list in the backoffice, and the default
+order puts the gaps first — `unprotected` sorts before `observing` before `enforcing`. A summary
+strip above it leads with the count, because nobody goes looking for a route they forgot to
+protect.
 
 Two distinctions it is careful about:
 
