@@ -84,7 +84,11 @@ final case class CloudApimSecurityEvent(
 
   private val timestamp = DateTime.now()
 
-  override def toJson(using _env: Env): JsValue = Json.obj(
+  override def toJson(using _env: Env): JsValue = {
+    // resolved once here rather than threaded through every call site. without these the analytics
+    // row has no tenant, api or group, and the console's own filters return nothing on this table
+    val route = routeId.flatMap(id => _env.proxyState.route(id))
+    Json.obj(
     "@id"        -> `@id`,
     "@timestamp" -> play.api.libs.json.JodaWrites.JodaDateTimeNumberWrites.writes(timestamp),
     "@type"      -> `@type`,
@@ -113,14 +117,21 @@ final case class CloudApimSecurityEvent(
     "otoroshi"   -> Json.obj(
       "route_id"   -> routeId,
       "route_name" -> routeName,
-      "node"       -> node
+      "node"       -> node,
+      // resolved here rather than carried through every call site: without them an analytics row
+      // has no tenant, and a multi-tenant console cannot filter what it cannot see
+      "tenant"     -> route.map(_.location.tenant.value).getOrElse("default"),
+      "teams"      -> JsArray(route.map(_.location.teams.map(t => JsString(t.value))).getOrElse(Seq.empty)),
+      "api_id"     -> route.flatMap(_.apiRef).map(_.id),
+      "groups"     -> JsArray(route.map(_.groups.map(JsString.apply)).getOrElse(Seq.empty))
     ),
     "incident"   -> Json.obj(
       "id"    -> incidentId,
       "count" -> incidentCount
     ),
     "message"    -> message
-  ) ++ extra
+    ) ++ extra
+  }
 }
 
 /**

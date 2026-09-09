@@ -116,6 +116,7 @@ of a map lookup, without the rule engine ever seeing the request.
 | **Global plugins** | Three incoming-request validators — honeypot, WAF and IP reputation — evaluated before routing ([see the note](./reference/plugins.mdx#global-plugins-are-not-route-plugins)) |
 | **Admin UI** | One *Cloud APIM - Security Suite* section: WAF configs, threat policies, threat feeds and their catalog, ASN databases, CrowdSec bouncers, bot policies, challenge providers and presets, honeypots, and a live *Bans & incidents* view |
 | **Analytics** | Four event types, routable through any Otoroshi data exporter — including one normalised ECS-shaped `CloudApimSecurityEvent` |
+| **Console** | A [route posture view](./console.mdx) that needs nothing, plus twelve analytics queries and a seeded dashboard when the user-analytics exporter is configured |
 
 ## Design rules
 
@@ -137,4 +138,5 @@ These hold everywhere in the extension, and they explain most of the API shape:
 - [Quickstart](./quickstart.mdx) — a protected route in about ten minutes
 - [Protecting a route, end to end](./tutorial.mdx) — the long version: every entity, in the order
   that works, and how to arm it without breaking traffic
+- [Security console](./console.mdx) — reading the events back, and which routes are actually protected
 - [Tuning](./waf/tuning.mdx) — how to get from monitoring to blocking without breaking traffic

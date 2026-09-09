@@ -50,6 +50,13 @@ This extension is built on top of the following open-source Cloud APIM libraries
 - **AI crawler policy**: Per-category rules, actually enforced, with a matching `robots.txt` and `llms.txt` generated from them
 - **Honeypots**: Decoy paths and canary tokens, evaluated before routing
 
+### Console
+
+- **Route posture**: Which routes are protected, in which mode — and which ones nobody remembered to protect. Reads live state, needs no analytics backend
+- **Covered is not enforcing**: A route with the whole suite attached in dry run stops nothing, and the page counts the two separately
+- **Twelve analytics queries**: Attack volume, blocked versus observed, top sources, top signals, top triggered WAF rules, and what a monitoring WAF *would* have blocked
+- **A dashboard on first boot**: Seeded once, then yours — rearrange or delete it, it is an ordinary user dashboard
+
 ### Everywhere
 
 - **Analytics events**: Every detection is an Otoroshi analytic event, routable through any data exporter

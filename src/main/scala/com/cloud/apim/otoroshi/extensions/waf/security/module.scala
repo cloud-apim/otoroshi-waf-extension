@@ -328,6 +328,13 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "GET",
+      path = s"$basePath/_posture",
+      wantsBody = false,
+      handle = (_, _, _, _) =>
+        Results.Ok(com.cloud.apim.otoroshi.extensions.waf.analytics.PostureReport.json(using env)).vfuture
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
       path = s"$basePath/_bot_catalog",
       wantsBody = false,
       handle = (_, _, _, _) => Results.Ok(com.cloud.apim.otoroshi.extensions.waf.bots.BotCatalog.json).vfuture

@@ -1,0 +1,108 @@
+---
+sidebar_position: 5
+title: Security console
+description: Reading the events back — dashboards, queries, and which routes are actually protected.
+---
+
+# Security console
+
+Everything the suite decides is emitted as an event. This is the half that reads them back.
+
+Two surfaces, and they have very different requirements:
+
+| | Needs | Answers |
+|---|---|---|
+| **Route posture** | nothing | Which routes are protected, in which mode — *now* |
+| **Dashboards and queries** | the user-analytics exporter | What happened, over time |
+
+## Route posture
+
+**Cloud APIM - Security Suite → Route posture.**
+
+It walks every route in the router and reports what is actually attached to it:
+
+```
+route            waf              reputation   bots   fail2ban   fabric
+public-api       waf block        block        ✓      armed      armed
+partner-api      waf monitor      monitor      ✓      dry run    dry run
+docs             waf monitor      —            ✓      —          dry run
+legacy-soap      —                —            —      —          —          ⚠ unprotected
+```
+
+The row that earns the page is the last one. Nobody goes looking for a route they forgot to
+protect, so the page leads with the count and has a **Show gaps only** filter.
+
+Two distinctions it is careful about:
+
+- **Covered is not enforcing.** A route can have the whole suite attached and stop nothing — a WAF
+  in monitoring mode behind a threat policy in dry run. Both are counted separately, because
+  "protected" that means "configured" is how a rollout stalls for six months without anyone noticing.
+- **A preset counts as what it expands to.** The preset is one plugin slot that becomes five at
+  request time; the page reads its flags rather than running the expansion, so it reports coverage
+  with no request in flight. A section left off is not claimed.
+
+It reads live state and touches no analytics at all — it works before a single event has been
+emitted.
+
+## Dashboards and queries
+
+:::warning This half needs the user-analytics exporter
+Otoroshi stores analytics events in PostgreSQL, through a data exporter you configure
+(**Data exporters → user analytics**). Without one, the events are still emitted and still reach any
+exporter you have wired — but there is nothing to query, and the dashboards will be empty.
+:::
+
+### A dashboard, ready on first boot
+
+The suite seeds a **Security suite** dashboard the first time it runs against a configured exporter.
+It is an ordinary user dashboard: rearrange it, delete widgets, or delete the whole thing. It is
+only recreated if its marker is gone, so your edits survive a restart.
+
+The top row answers *is anything happening, and is any of it real*; the bottom row is the tuning
+backlog.
+
+### The queries
+
+All of them appear in the widget wizard, compose into your own dashboards, and can be alerted on.
+
+| Query | Shape | What it answers |
+|---|---|---|
+| `cloudapim_security_events_total` | metric | How many decisions the fabric took |
+| `cloudapim_security_enforced_total` | metric | How many of them actually stopped something |
+| `cloudapim_security_events_over_time` | area | Attack volume |
+| `cloudapim_security_enforced_over_time` | area | Enforcement volume |
+| `cloudapim_security_by_outcome` | donut | Blocked versus observed — the dry-run ratio |
+| `cloudapim_security_by_category` | donut | Which detector decided |
+| `cloudapim_security_by_action` | pie | Distribution across `log`, `tarpit`, `challenge`, `deny`, `ban` |
+| `cloudapim_security_top_sources` | bar | The addresses decided against most |
+| `cloudapim_security_top_tags` | bar | Which signal is actually catching things |
+| `cloudapim_security_top_routes` | bar | Where decisions are being taken |
+| `cloudapim_waf_top_rules` | bar | Top triggered SecLang rules |
+| `cloudapim_waf_would_have_blocked` | area | Requests a monitoring WAF reached a deny on |
+
+The last two are the tuning pair: **top rules** tells you what to look at, **would have blocked**
+tells you what arming will cost.
+
+`cloudapim_security_top_tags` is the one to reach for when someone asks whether a feed is worth
+keeping — it ranks by tag, so `reputation:firehol1`, `asn:hosting`, `bot:seo` and `waf:match` are
+all directly comparable.
+
+### The filters work like everywhere else
+
+Period, route, api, apikey, group and tenant apply to these queries exactly as they do to gateway
+traffic, because the tables declare the same column contract Otoroshi's own analytics use.
+
+## Where the rows live
+
+Two tables, alongside Otoroshi's own:
+
+| Table | Written by | Holds |
+|---|---|---|
+| `<table>_cloudapim_security` | every fabric decision | category, action, outcome, score, tags, `enforced`, incident |
+| `<table>_cloudapim_waf` | the WAF | rule ids, blocking mode, whether it reached a deny, truncation |
+
+Both honour the exporter's `retention_days`.
+
+`enforced` is denormalised on purpose: it is the only question a dry-run rollout asks, and a
+dashboard should not have to reach into the raw JSON to get it. The full event is kept in `raw`, so
+any row can be drilled into — including its signals, which is what answers *why*.

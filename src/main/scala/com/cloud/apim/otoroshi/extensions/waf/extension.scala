@@ -158,9 +158,21 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       // rulesets first: composing a config against a stale ruleset map would be wrong for one tick
       states.updateRulesets(rulesets)
       states.updateConfigs(configs)
+      com.cloud.apim.otoroshi.extensions.waf.analytics.SecurityDashboard.seedIfMissing()
       ()
     }
   }
+
+  override def analyticsQueries(): Seq[otoroshi.next.analytics.queries.AnalyticsQuery] =
+    com.cloud.apim.otoroshi.extensions.waf.analytics.SecurityQueries.all
+
+  // without this the suite's events reach whatever log pipeline the operator built and never a
+  // table anyone can query, which is what left `analyticsQueries()` with nothing to read
+  override def analyticsProjections(): Seq[otoroshi.next.analytics.exporter.AnalyticsProjection] =
+    Seq(
+      com.cloud.apim.otoroshi.extensions.waf.analytics.CloudApimSecurityEventProjection,
+      com.cloud.apim.otoroshi.extensions.waf.analytics.CloudApimWafTrailEventProjection
+    )
 
   override def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = {
     Seq(
@@ -183,6 +195,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val reputationImgCode = getResourceCode("cloudapim/extensions/waf/reputation-icon.svg")
   lazy val securityPagesCode = getResourceCode("cloudapim/extensions/waf/SecurityPages.js")
   lazy val wafRulesetsPageCode = getResourceCode("cloudapim/extensions/waf/WafRulesetsPage.js")
+  lazy val posturePageCode = getResourceCode("cloudapim/extensions/waf/PosturePage.js")
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
@@ -223,6 +236,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |    ${reputationPagesCode}
              |
              |    ${securityPagesCode}
+             |
+             |    ${posturePageCode}
              |
              |    return {
              |      id: extensionId,
@@ -283,6 +298,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          path: 'extensions/cloud-apim/waf/wafrulesets',
              |          icon: 'layer-group'
              |        },
+             |        {
+             |          title: 'Route posture',
+             |          text: 'Which routes are protected, in which mode',
+             |          path: 'extensions/cloud-apim/waf/posture',
+             |          icon: 'clipboard-check'
+             |        },
              |        ...ReputationSidebarItems,
              |        ...SecuritySidebarItems
              |      ],
@@ -294,6 +315,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          env: React.createElement('span', { className: "fas fa-atom" }, null),
              |          label: 'Cloud APIM Security Suite - WAF configs',
              |          value: 'wafconfigs',
+             |        },
+             |        {
+             |          action: () => {
+             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/posture`
+             |          },
+             |          env: React.createElement('span', { className: "fas fa-clipboard-check" }, null),
+             |          label: 'Cloud APIM Security Suite - Route posture',
+             |          value: 'posture',
              |        },
              |        {
              |          action: () => {
@@ -341,6 +370,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          path: '/extensions/cloud-apim/waf/wafrulesets',
              |          component: (props) => {
              |            return React.createElement(WafRulesetsPage, props, null)
+             |          }
+             |        },
+             |        {
+             |          path: '/extensions/cloud-apim/waf/posture',
+             |          component: (props) => {
+             |            return React.createElement(SecurityPosturePage, props, null)
              |          }
              |        },
              |        ...ReputationRoutes,

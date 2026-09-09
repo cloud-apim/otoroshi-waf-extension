@@ -1,6 +1,6 @@
 {
   "label": "Decision fabric",
-  "position": 5,
+  "position": 6,
   "link": {
     "type": "generated-index",
     "description": "The shared threat score every detector contributes to, the policy that turns it into one graded action, cluster-wide bans, and incident correlation."

@@ -48,15 +48,14 @@ lazy val root = (project in file("."))
       "-Wconf:msg=package scala contains object and package with same name:s",
     ),
     libraryDependencies ++= Seq(
-      "fr.maif" %% "otoroshi" % "18.0.0-preview6" % "provided",
+      // 18.0.0-dev is the locally published otoroshi, for the extensible analytics projections that
+    // OPS-1 needs. back to a released version once they ship.
+    "fr.maif" %% "otoroshi" % "18.0.0-dev" % "provided",
       "com.cloud-apim" %% "seclang-engine-coreruleset" % "2.1.0" excludeAll (all: _*),
       munit % Test,
       // the crowdsec integration suite drives a real Local API in a container; it skips itself
       // when no docker daemon is reachable, so `sbt test` stays runnable without one
-      testcontainers % Test,
-      // otoroshi's `JqPlugin` loads this at class-init time, and the published pom does not declare
-      // it — harmless for a plugin jar dropped next to a real otoroshi, needed to boot one in-process
-      "com.arakelian" % "java-jq" % "1.3.0" % Test
+      testcontainers % Test
     ),
     // otoroshi discovers extensions and plugins by scanning the classpath reflectively, which the
     // layered test class loader defeats: the extension's own classes live in a layer the scan
