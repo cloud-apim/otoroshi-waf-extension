@@ -27,8 +27,21 @@ class AdminAssetIT extends munit.FunSuite {
     ).foreach(cls => assert(script.contains(cls), s"$cls is missing from the assembled extension.js"))
   }
 
-  test("the posture page is routed and reachable from the sidebar") {
-    assert(script.contains("extensions/cloud-apim/waf/posture"))
+  test("every page the extension routes is also declared as a feature") {
+    // otoroshi's sidebar is built from `features` (`graph()` reads `ext.features` and
+    // `ext.categories[].features`); `sidebarItems` is consumed by nothing at all. a page declared
+    // only there is reachable by url and by search, and invisible in the menu — which is exactly
+    // how the posture page shipped the first time
+    Seq(
+      "/extensions/cloud-apim/waf/wafconfigs",
+      "/extensions/cloud-apim/waf/wafrulesets",
+      "/extensions/cloud-apim/waf/posture"
+    ).foreach { path =>
+      assert(
+        script.contains(s"link: '$path'"),
+        s"$path is routed but has no `link:` feature entry, so it will not appear in the sidebar"
+      )
+    }
     assert(script.contains("React.createElement(SecurityPosturePage"))
   }
 
