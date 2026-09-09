@@ -77,9 +77,10 @@ final case class CloudApimFail2BanConfig(
   /**
    * Same three notations Otoroshi's own plugin accepts, so an existing list can be pasted over.
    *
-   * With one repair: upstream hands the whole `Cidr(10.0.0.0/8)` string to `Cidr.fromString`, which
-   * does not know about the wrapper and returns `None` — so the notation parses to a filter that
-   * matches nothing. The prefix is stripped here, which is what makes it do what it says.
+   * With one repair: every released Otoroshi hands the whole `Cidr(10.0.0.0/8)` string to
+   * `Cidr.fromString`, which does not know about the wrapper and returns `None` — so the notation
+   * parses to a filter that matches nothing. The prefix is stripped here. The same fix has been
+   * made upstream, so this only differs from an Otoroshi new enough to carry it.
    */
   def isIgnored(value: String): Boolean = ignored.exists {
     // note that the bare form is a wildcard, not a regex — `RegexPool.apply` escapes `.` and
