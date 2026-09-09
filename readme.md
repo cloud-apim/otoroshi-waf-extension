@@ -6,7 +6,8 @@ intelligence feeds, CrowdSec and the public routing table, bot and AI-crawler co
 embedded proof-of-work challenge — and a decision fabric that makes those detectors feed one shared
 judgement instead of each blocking on its own.
 
-📖 **[Full documentation](https://cloud-apim.github.io/otoroshi-waf-extension/)**
+📖 **[Full documentation](https://cloud-apim.github.io/otoroshi-waf-extension/)** — start with
+[Protecting a route, end to end](https://cloud-apim.github.io/otoroshi-waf-extension/docs/tutorial)
 
 This extension is built on top of the following open-source Cloud APIM libraries:
 

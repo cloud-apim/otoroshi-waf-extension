@@ -1,6 +1,6 @@
 {
   "label": "IP reputation",
-  "position": 5,
+  "position": 7,
   "link": {
     "type": "generated-index",
     "description": "Threat intelligence feeds, the curated source catalog, and the CrowdSec integration."
