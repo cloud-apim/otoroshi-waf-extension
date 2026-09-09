@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: Entity reference
-description: Every field of WafConfig, ThreatFeed and CrowdSecBouncer.
+description: Every field of the eight entities the suite ships.
 ---
 
 # Entity reference
@@ -124,18 +124,96 @@ The list is **ordered**: the first matching category wins. See
 | `exemptions` | string[] | `[]` — addresses and CIDRs that bypass the fabric |
 | `ban_identity` | `auto` \| `ip` \| `apikey` | `auto` |
 | `waf_block_weight` | number | `50` |
+| `challenge_provider` | string \| null | `null` — required by a `challenge` tier |
 
 ### ThreatTier
 
 | Field | Type | Default |
 |---|---|---|
 | `min_score` | number | — |
-| `action` | `log` \| `tarpit` \| `deny` \| `ban` | `log` |
+| `action` | `log` \| `tarpit` \| `challenge` \| `deny` \| `ban` | `log` |
 | `tarpit_millis` | number | `3000` |
 | `ban_for_seconds` | number | `3600` |
 | `status` | number | `403` |
 
-An unrecognised action degrades to `log`, never to `deny`.
+An unrecognised action degrades to `log`, never to `deny`. There is deliberately no `throttle`: an
+action with no module behind it would be a tier that silently does nothing.
+
+## BotPolicy
+
+`bot-policies` · `waf.extensions.cloud-apim.com/BotPolicy`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `signatures` | BotSignature[] | the 27 built-in ones |
+| `rules` | BotRule[] | allow `search` and `monitoring`, monitor `ai`, monitor `seo` at weight 10 |
+| `verify_known_bots` | boolean | `true` — forward-confirmed reverse DNS |
+| `verified_bypass` | boolean | `true` — a *verified* crawler is let through |
+| `impersonator_weight` | number | `60` — what a failed verification is worth |
+| `impersonator_action` | `allow` \| `monitor` \| `deny` | `deny` |
+| `unknown_bot_weight` | number | `0` |
+| `deny_status` | number | `403` |
+| `robots_extra` | string | `""` — appended to the generated `robots.txt` |
+| `llms_txt` | string | `""` |
+
+### BotRule
+
+| Field | Type | Default |
+|---|---|---|
+| `target` | `category:<name>` \| `name:<bot>` \| `*` | `*` |
+| `action` | `allow` \| `monitor` \| `deny` | `monitor` |
+| `weight` | number | `0` |
+
+Categories are `search`, `ai`, `seo` and `monitoring`. There is no `challenge` action here on
+purpose — give the rule a weight that reaches a `challenge` tier in the threat policy, so the
+decision stays in one place. See [verified crawlers](../bots/crawlers.mdx).
+
+## ChallengeProvider
+
+`challenge-providers` · `waf.extensions.cloud-apim.com/ChallengeProvider`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `kind` | `pow` \| `vendor` | `pow` |
+| `difficulty_floor` | number | `18` — leading zero bits at the low end |
+| `difficulty_ceiling` | number | `24` — reached by a high-scoring caller |
+| `challenge_ttl_seconds` | number | `300` |
+| `clearance_ttl_seconds` | number | `1800` |
+| `cookie_name` | string | `cloud-apim-clearance` |
+| `secret` | string | `""` — falls back to the extension secret |
+| `bind_ip` / `bind_ua` | boolean | `true` — clearance is not transferable |
+| `title` / `message` | string | interstitial copy |
+
+`kind: vendor` adds `preset_ref`, `widget_script_url`, `widget_html`, `response_field`,
+`verify_url`, `site_key` and `secret_key`. The **Challenge presets** page fills those in for
+Friendly Captcha, captcha.eu, Turnstile and hCaptcha. See [challenges](../bots/challenge.mdx).
+
+## HoneypotPolicy
+
+`honeypot-policies` · `waf.extensions.cloud-apim.com/HoneypotPolicy`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `paths` | string[] | `/.env`, `/.git/config`, … |
+| `weight` | number | `100` |
+| `action` | `monitor` \| `deny` \| `ban` | `deny` |
+| `ban_for_seconds` | number | `86400` |
+| `status` | number | `404` — a decoy should look like it does not exist |
+| `canaries` | CanaryToken[] | `[]` |
+
+### CanaryToken
+
+| Field | Type | Default |
+|---|---|---|
+| `value` | string | — |
+| `description` | string | `""` |
+| `where` | `any` \| `header` \| `path` \| `query` | `any` |
+
+This one is evaluated **before routing**, from the global configuration — it has no route plugin.
+See [honeypots](../bots/honeypots.mdx).
 
 :::tip Secrets
 `headers` on a feed, and `api_key` / `push_password` on a bouncer, all go through Otoroshi's secret

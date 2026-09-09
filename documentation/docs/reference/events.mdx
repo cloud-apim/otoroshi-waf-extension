@@ -1,13 +1,66 @@
 ---
 sidebar_position: 4
 title: Analytics events
-description: The three event types, and what to do with them.
+description: The four event types, and what to do with them.
 ---
 
 # Analytics events
 
 Every event is an Otoroshi `AnalyticEvent`, so it flows through any data exporter — Elastic, Kafka,
 a webhook, a file — with no extra wiring.
+
+If you only wire one of them up, wire up the first.
+
+## CloudApimSecurityEvent
+
+The normalised one. Every component of the [fabric](../fabric/overview.mdx) — the threat response,
+the honeypot, fail2ban, a challenge, a ban — emits **this** shape rather than its own, so a SIEM
+needs one parser and one set of dashboards.
+
+The envelope is ECS-shaped, so `event.category`, `event.action`, `event.outcome` and `source.ip`
+land where an Elastic pipeline already looks for them.
+
+```json
+{
+  "@type": "CloudApimSecurityEvent",
+  "@timestamp": 1757340000000,
+  "@product": "otoroshi",
+  "event":    {
+    "kind": "alert", "module": "cloud-apim.security-suite",
+    "dataset": "cloud-apim.threat", "category": "threat",
+    "action": "tarpit", "outcome": "observed", "severity": 2
+  },
+  "source":   { "ip": "203.0.113.9", "apikey": null, "user": null },
+  "threat":   {
+    "score": 75,
+    "tags": ["reputation:firehol1", "waf:match", "bot:seo"],
+    "signals": [
+      { "source": "reputation.feed", "kind": "reputation", "weight": 50,
+        "tag": "reputation:firehol1", "confidence": 1.0, "effective_weight": 50 }
+    ]
+  },
+  "otoroshi": { "route_id": "route_...", "route_name": "public-api", "node": "otoroshi-node-1" },
+  "incident": { "id": "...", "count": 34 },
+  "message":  "score 75 reached tier 70 (tarpit)",
+  "decision": { "action": "tarpit", "score": 75, "tier": 1, "dry_run": true, "enforced": false }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `event.category` | Which component decided: `threat`, `honeypot`, `fail2ban`, `challenge` or `ban` |
+| `event.action` | `allow`, `log`, `tarpit`, `challenge`, `deny` or `ban` |
+| `event.outcome` | `blocked` when it was enforced, `observed` in dry run |
+| `event.severity` | `1` to `4`, derived from the score |
+| `threat.signals[]` | Full attribution — which detector contributed what, and how sure it was |
+| `incident.count` | How many events this identity has already produced in the window |
+| `decision.enforced` | The unambiguous answer to "did this actually do anything" |
+
+:::tip The pair to watch while tuning
+`outcome: "observed"` with a non-`log` action is the dry-run equivalent of "this would have been
+enforced". Counting those over a week of real traffic is what tells you whether your tiers are set
+correctly — the same discipline as `blocking: false` on the WAF trail event below.
+:::
 
 ## CloudApimWafTrailEvent
 
@@ -80,6 +133,9 @@ trail event — useful when debugging a specific rule, noisy as a permanent stre
 
 | Goal | Filter on |
 |---|---|
+| The one dashboard to build first | `@type: CloudApimSecurityEvent`, group by `event.category` and `event.action` |
+| Alerting without a pager storm | `@type: CloudApimSecurityEvent` with `event.outcome: blocked`, group by `incident.id` |
+| Is the policy ready to arm? | `@type: CloudApimSecurityEvent`, `outcome: observed` and `event.action != log` |
 | Attack dashboard | `@type: CloudApimWafTrailEvent`, group by `events[].rule_id` |
 | Tuning backlog | `blocking: false` and `block != null`, group by rule id |
 | Reputation coverage | `@type: CloudApimWafReputationEvent`, group by `verdict.tags` |

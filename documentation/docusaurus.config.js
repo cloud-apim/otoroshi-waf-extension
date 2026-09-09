@@ -6,7 +6,7 @@ const repo = 'https://github.com/cloud-apim/otoroshi-waf-extension';
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Cloud APIM Security Suite',
-  tagline: 'A WAF, threat intelligence feeds and CrowdSec for Otoroshi',
+  tagline: 'A WAF, ip reputation, bot control and a decision fabric for Otoroshi',
   favicon: 'img/favicon.svg',
 
   url: 'https://cloud-apim.github.io',

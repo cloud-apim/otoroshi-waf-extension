@@ -91,123 +91,126 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
 }
 ```
 
-## Configuration
+## Getting started
 
-### WAF Configuration Entity
+The fastest correct path is the **preset plugin**: one slot on a route that expands into the whole
+detection fabric, in the one order that makes it work.
 
-Create a WAF configuration with the following properties:
+1. Create a **threat policy** — it starts in dry run, recording everything and enforcing nothing.
+2. Create a **WAF config** whose rules are `@import_preset crs` and `SecRuleEngine On`.
+3. Create a **threat feed** from the catalog (FireHOL level 1 is the usual first one).
+4. Add **Cloud APIM Security Suite - Preset** to the route, referencing those three.
+5. Read the events for a week, then arm the four switches one at a time.
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `id` | String | - | Unique identifier (auto-generated) |
-| `name` | String | - | Configuration name |
-| `description` | String | `""` | Description |
-| `tags` | Array[String] | `[]` | Tags for organization |
-| `metadata` | Object | `{}` | Custom metadata |
-| `enabled` | Boolean | `true` | Enable/disable the WAF |
-| `block` | Boolean | `true` | Block requests when rules match (false = monitoring mode) |
-| `inspect_input_body` | Boolean | `true` | Inspect request body |
-| `inspect_output_body` | Boolean | `true` | Inspect response body |
-| `input_body_limit` | Number | `null` | Max request body size to inspect (bytes) |
-| `output_body_limit` | Number | `null` | Max response body size to inspect (bytes) |
-| `output_body_mimetypes` | Array[String] | `[]` | MIME types to inspect in responses |
-| `rules` | Array[String] | `[]` | SecLang rules to apply |
+→ **[Protecting a route, end to end](https://cloud-apim.github.io/otoroshi-waf-extension/docs/tutorial)**
+walks through every step, including what to look at before arming anything.
 
-### Example Configuration
+## Entities
 
-```json
-{
-  "id": "waf-config_xxxxx",
-  "name": "My WAF Config",
-  "description": "WAF configuration with CRS",
-  "tags": [],
-  "metadata": {},
-  "enabled": true,
-  "block": true,
-  "inspect_input_body": true,
-  "inspect_output_body": true,
-  "input_body_limit": 1048576,
-  "output_body_limit": 1048576,
-  "output_body_mimetypes": ["text/html", "application/json"],
-  "rules": [
-    "@import_preset crs",
-    "SecRuleEngine On"
-  ]
-}
-```
+Eight, all with full CRUD, admin API, import/export and Kubernetes CRDs, under the API group
+`waf.extensions.cloud-apim.com/v1`:
 
-## Usage
+| Entity | Collection | What it holds |
+|---|---|---|
+| `WafConfig` | `waf-configs` | SecLang rules, blocking mode, body inspection limits |
+| `ThreatPolicy` | `threat-policies` | Score tiers and the action at each, dry run, exemptions |
+| `ThreatFeed` | `threat-feeds` | A reputation source: url, format, refresh interval, weight, action |
+| `AsnDatabase` | `asn-databases` | Address-to-network table and its ordered categories |
+| `CrowdSecBouncer` | `crowdsec-bouncers` | A CrowdSec Local API connection, in both directions |
+| `BotPolicy` | `bot-policies` | Crawler signatures, per-category rules, `robots.txt` generation |
+| `ChallengeProvider` | `challenge-providers` | Proof of work settings, or a vendor widget |
+| `HoneypotPolicy` | `honeypot-policies` | Decoy paths and canary tokens |
 
-### Using the WAF Plugin
-
-Two plugins are available:
-
-1. **Cloud APIM WAF** (`CloudApimWaf`): Full WAF plugin that transforms requests and responses
-   - Supports request body inspection
-   - Supports response body inspection
-   - Can be used in blocking or monitoring mode
-
-2. **Cloud APIM WAF - Incoming Request Validator** (`IncomingRequestValidatorCloudApimWaf`): Global WAF plugin for Otoroshi
-   - Only inspects incoming requests (no body inspection)
-   - Always blocks on rule match
-   - Better performances for more traffic
-
-### Adding to a Route
-
-1. Go to the Otoroshi admin dashboard
-2. Navigate to your route configuration
-3. Add the "Cloud APIM WAF" plugin
-4. Select your WAF configuration from the dropdown
-
-### SecLang Rules
-
-The extension supports standard ModSecurity SecLang directives. You can use the embedded CRS by importing the preset:
-
-```
-@import_preset crs
-SecRuleEngine On
-```
-
-You can also write custom rules:
-
-```
-SecRule REQUEST_HEADERS:User-Agent "@pm firefox" "id:00001,phase:1,block,t:none,t:lowercase,msg:'someone used firefox to access',logdata:'someone used firefox to access',tag:'test',ver:'0.0.0-dev',status:403,severity:'CRITICAL'"
-SecRule REQUEST_URI "@contains /admin" "id:1001,phase:1,deny,status:403,msg:'Admin access denied'"
-SecRule ARGS "@rx <script>" "id:1002,phase:2,deny,status:403,msg:'XSS detected'"
-```
-
-or combine both
-
-```
-@import_preset crs
-
-SecRule REQUEST_HEADERS:User-Agent "@pm firefox" "id:00001,phase:1,block,t:none,t:lowercase,msg:'someone used firefox to access',logdata:'someone used firefox to access',tag:'test',ver:'0.0.0-dev',status:403,severity:'CRITICAL'"
-SecRule REQUEST_URI "@contains /admin" "id:1001,phase:1,deny,status:403,msg:'Admin access denied'"
-SecRule ARGS "@rx <script>" "id:1002,phase:2,deny,status:403,msg:'XSS detected'"
-
-SecRuleEngine On
-```
-
-## Analytics Events
-
-The extension generates two types of analytics events:
-
-- **CloudApimWafAuditEvent**: Audit events from SecLang rule execution
-- **CloudApimWafTrailEvent**: Trail events with match details and blocking information
-
-These events can be consumed by Otoroshi exporters for monitoring, alerting, and compliance purposes.
-
-## API
-
-The WAF configurations are exposed via the Otoroshi Admin API:
+Standard Otoroshi entity endpoints, authenticated with an admin apikey:
 
 ```
 GET    /apis/waf.extensions.cloud-apim.com/v1/waf-configs
 POST   /apis/waf.extensions.cloud-apim.com/v1/waf-configs
 GET    /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
 PUT    /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
+PATCH  /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
 DELETE /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
 ```
+
+Same shape for every collection above. Field-by-field reference:
+[Entity reference](https://cloud-apim.github.io/otoroshi-waf-extension/docs/reference/entities).
+
+## Plugins
+
+All under the **Cloud APIM - Security Suite** category in the route designer.
+
+| Plugin | Kind | Runs |
+|---|---|---|
+| Security Suite - Preset | `NgPresetPlugin` | Expands into the five below, correctly ordered |
+| Threat gate | `NgAccessValidator` | Refuses callers already banned, before any inspection |
+| Bot guard | `NgAccessValidator` | Identifies crawlers and verifies the ones that publish a method |
+| IP reputation | `NgAccessValidator` | Scores against feeds, CrowdSec and ASN |
+| Fail2ban | `NgAccessValidator` + `NgRequestTransformer` | Counts failed responses, bans cluster-wide |
+| Cloud APIM WAF | `NgRequestTransformer` | The rule engine, over the request and optionally the response |
+| Threat response | `NgRequestTransformer` | Reads the accumulated score and applies one graded action |
+
+Three more are **incoming request validators**, configured on the global configuration rather than
+on a route — they run before routing, so they also cover traffic matching no route at all: the
+honeypot, and validator variants of the WAF and IP reputation.
+
+The order of the route plugins matters: the threat response must run after everything that
+contributes to the score. That is exactly why the preset exists — it emits the chain with explicit
+`plugin_index` values, so the ordering is enforced by the engine rather than by a paragraph in a
+document.
+
+## SecLang rules
+
+Standard ModSecurity SecLang directives. The embedded CRS is one import away:
+
+```
+@import_preset crs
+SecRuleEngine On
+```
+
+Custom rules work the same way:
+
+```
+SecRule REQUEST_URI "@contains /admin" "id:1001,phase:1,deny,status:403,msg:'Admin access denied'"
+SecRule ARGS "@rx <script>" "id:1002,phase:2,deny,status:403,msg:'XSS detected'"
+```
+
+and the two combine:
+
+```
+@import_preset crs
+
+SecRule REQUEST_URI "@contains /admin" "id:1001,phase:1,deny,status:403,msg:'Admin access denied'"
+
+SecRuleEngine On
+```
+
+## Analytics events
+
+Four types, each an Otoroshi `AnalyticEvent`, so they flow through any data exporter with no extra
+wiring:
+
+| Event | Emitted by |
+|---|---|
+| `CloudApimSecurityEvent` | Every component of the fabric — normalised, ECS-shaped, correlated into incidents. **The one to wire up first** |
+| `CloudApimWafTrailEvent` | The WAF, once per request where a rule matched |
+| `CloudApimWafReputationEvent` | IP reputation, with the verdict and its sources |
+| `CloudApimWafAuditEvent` | SecLang `auditlog` actions — verbose, for debugging a specific rule |
+
+## Distributed state
+
+Bans, the ledger and fail2ban counters are shared. On a cluster, point them at a redis so they
+actually are:
+
+```hocon
+otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
+  security {
+    redis-uri = "redis://localhost:6379/3"
+  }
+}
+```
+
+Without it they fall back to Otoroshi's storage, which is genuinely distributed only when that
+storage is. The *Bans & incidents* page reports which mode is running.
 
 ## License
 
