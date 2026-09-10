@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.waf.learning
 
+import com.cloud.apim.otoroshi.extensions.waf.entities.CrsSettings
 import com.cloud.apim.otoroshi.extensions.waf.tuning.*
 import com.cloud.apim.seclang.impl.engine.SecLangEngine
 import com.cloud.apim.seclang.model.EngineMode
@@ -110,7 +111,8 @@ object LearningReporter {
       firstRuleId: Int,
       engineOf: Seq[String] => SecLangEngine,
       minCount: Long = defaultMinCount,
-      maxProposals: Int = defaultMaxProposals
+      maxProposals: Int = defaultMaxProposals,
+      crs: CrsSettings = CrsSettings.empty
   ): LearningReport = {
     val run       = snapshot.totals
     val entries   = snapshot.entries
@@ -146,8 +148,8 @@ object LearningReporter {
     }
 
     val accepted   = proposals.filter(_.accepted)
-    val paranoia   = LearningAdvice.paranoia(entries, LearningAdvice.currentParanoia(rules))
-    val threshold  = LearningAdvice.threshold(snapshot.samples, LearningAdvice.currentThreshold(rules))
+    val paranoia   = LearningAdvice.paranoia(entries, LearningAdvice.currentParanoia(rules, crs))
+    val threshold  = LearningAdvice.threshold(snapshot.samples, LearningAdvice.currentThreshold(rules, crs))
     val impact     = LearningAdvice.impact(run, snapshot.samples, accepted)
     val modeInfo   = modeAdvice(mode, configBlocking)
 

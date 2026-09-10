@@ -609,7 +609,10 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     case Some(ref) =>
       val duration = (body \ "duration_seconds").asOpt[Long].getOrElse(3600L).max(1L).seconds
       val reason   = (body \ "reason").asOpt[String].getOrElse("banned from the admin api")
-      bans.ban(ref, duration, reason, Seq("manual"), issuedBy = operatorOf(user).some).map { outcome =>
+      // an operator banning from an incident row has the evidence in front of them; dropping it
+      // here would produce the one kind of ban nobody can later justify
+      val timeline = incidents.byKey(ref.key).toSeq.flatMap(_.timeline)
+      bans.ban(ref, duration, reason, Seq("manual"), timeline = timeline, issuedBy = operatorOf(user).some).map { outcome =>
         audit(
           user,
           if (outcome.issued) "ban" else "ban-refused",

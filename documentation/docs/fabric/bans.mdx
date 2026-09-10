@@ -56,8 +56,13 @@ copy, a ban issued an hour ago has nothing behind it by the time anyone asks why
 when the question gets asked.
 
 Bans issued by the scored response engine carry the **signals** as well: which detector contributed
-what, and how confident it was. A manual ban carries neither, and the console says so rather than
-showing an empty panel.
+what, and how confident it was. A ban with neither — a hand-typed one against a caller nobody has an
+incident for — says so rather than showing an empty panel.
+
+![A ban opened, showing who issued it and what the caller did](/img/screenshots/ban-evidence.png)
+
+*Banning from an incident row copies that incident's timeline into the ban, so it still answers "why"
+an hour later when the incident itself has been evicted.*
 
 ### Managing them
 
@@ -96,6 +101,11 @@ curl -X POST .../security/_disallow -d '{"ref":"apikey:partner-ci"}'
 The entry is permanent unless you pass `duration_seconds`. A bounded one is useful — *leave them
 alone while we tune* — but it is not the default, because the case the primitive exists for is the
 permanent one.
+
+![The allowlist panel with one permanent entry](/img/screenshots/allowlist.png)
+
+*The reason is required, not optional. It is the only thing that tells whoever finds this entry in
+six months whether it can go.*
 
 ### Two things it does, and one it does not
 

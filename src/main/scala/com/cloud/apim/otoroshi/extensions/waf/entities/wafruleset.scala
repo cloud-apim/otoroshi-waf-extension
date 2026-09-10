@@ -123,9 +123,20 @@ class KvWafRulesetDatastore(extensionId: AdminExtensionId, redisCli: RedisLike, 
  * A reference that resolves to nothing is the dangerous case: the config still compiles, still
  * runs, and quietly protects less than it says it does. It is reported rather than swallowed.
  */
-final case class ComposedRules(rules: Seq[String], missing: Seq[String], disabled: Seq[String]) {
-  def complete: Boolean = missing.isEmpty && disabled.isEmpty
-  def json: JsValue     = Json.obj("count" -> rules.size, "missing" -> missing, "disabled" -> disabled)
+final case class ComposedRules(
+    rules: Seq[String],
+    missing: Seq[String],
+    disabled: Seq[String],
+    /** CRS settings were configured, but nothing in the composition imports CRS to read them. */
+    crsIgnored: Boolean = false
+) {
+  def complete: Boolean = missing.isEmpty && disabled.isEmpty && !crsIgnored
+  def json: JsValue     = Json.obj(
+    "count"       -> rules.size,
+    "missing"     -> missing,
+    "disabled"    -> disabled,
+    "crs_ignored" -> crsIgnored
+  )
 }
 
 object WafRuleComposition {
@@ -137,19 +148,39 @@ object WafRuleComposition {
    * refer to what it defines, and an exclusion has to come after the rule it excludes. Listing
    * order is therefore the composition order, and inline rules land last — which is what makes
    * "a shared baseline plus this route's exceptions" the natural arrangement.
+   *
+   * The one thing that comes before the presets is the generated CRS preamble, for the opposite
+   * reason: it has to win against defaults the preset would otherwise set for itself.
    */
+  /** `@import_preset crs`, whitespace and case allowed for. */
+  private val crsImport = """(?im)^\s*@import_preset\s+crs\s*$""".r
+
+  def importsCrs(rules: Seq[String]): Boolean = rules.exists(r => crsImport.findFirstIn(r).isDefined)
+
   def compose(config: CloudApimWafConfig, resolve: String => Option[WafRuleset]): ComposedRules = {
     val missing  = Seq.newBuilder[String]
     val disabled = Seq.newBuilder[String]
-    val rules    = Seq.newBuilder[String]
+    val body     = Seq.newBuilder[String]
     config.rulesets.foreach { ref =>
       resolve(ref) match {
         case None                        => missing += ref
         case Some(rs) if !rs.enabled     => disabled += ref
-        case Some(rs)                    => rules ++= rs.rules
+        case Some(rs)                    => body ++= rs.rules
       }
     }
-    rules ++= config.rules
-    ComposedRules(rules.result(), missing.result(), disabled.result())
+    body ++= config.rules
+    val composed = body.result()
+
+    // the dials only mean something to CRS. Emitting them into a configuration that never imports it
+    // would write a rule that sets variables nothing reads — and would take an id in someone else's
+    // program to do it. So the composition is scanned first, and the mistake is reported rather than
+    // compiled into a no-op
+    val wantsCrs = config.crs.nonEmpty
+    val hasCrs   = importsCrs(composed)
+    val preamble = if (wantsCrs && hasCrs) CrsSettings.preamble(config.crs) else Seq.empty
+
+    // ahead of everything: the initialisation rules inside the preset only apply their defaults to
+    // variables nobody has set, so being first is what makes them take
+    ComposedRules(preamble ++ composed, missing.result(), disabled.result(), crsIgnored = wantsCrs && !hasCrs)
   }
 }

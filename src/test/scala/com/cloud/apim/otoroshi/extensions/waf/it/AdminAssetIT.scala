@@ -86,6 +86,17 @@ class AdminAssetIT extends munit.FunSuite {
     assert(page.take(600).contains("'button'"), "and be a real button")
   }
 
+  test("buttons are not styled with bootstrap's theme-blind colour utilities") {
+    // Otoroshi flips its own css variables between dark and light; bootstrap's btn-* utilities are
+    // not flipped, and btn-warning renders as dim grey on grey — which made the allowlist action,
+    // the most consequential one on the console, read as disabled next to three that were not
+    // btn-success and btn-danger do read on both themes; btn-warning is the one that does not, so
+    // it is the one pinned rather than the whole bootstrap button set
+    // the trailing quote is what makes this a class name rather than the word in a comment
+    assert(!script.contains("btn-warning'"), "btn-warning is unreadable on the dark backoffice theme")
+    assert(script.contains("'suite-btn '"), "the console drives its buttons from the suite accents")
+  }
+
   test("the posture page uses the shared table rather than hand-rolled rows") {
     // it reads like every other list in the backoffice, with the sorting and filtering that implies
     val page = script.substring(script.indexOf("class SecurityPosturePage"))

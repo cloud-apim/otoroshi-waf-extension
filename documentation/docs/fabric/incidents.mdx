@@ -57,6 +57,13 @@ Twenty is deliberate. This is a triage view, not a forensic record — the full 
 [analytics tables](../console.mdx), and an incident that needs more than twenty lines is one you
 open a dashboard for.
 
+![An incident opened: counters, the nodes that saw it, and the last twenty events](/img/screenshots/incident-timeline.png)
+
+*`24 recorded, 0 enforced` is the dry-run rollout in one line: the fabric decided twenty-four times
+and stopped nothing. `Seen by` names every node that published this caller, and the two timestamps
+in the timeline are two separate runs merged into one ordering. `Currently: banned` saves
+cross-referencing the list above.*
+
 ### State, so a team can work them
 
 An incident carries a state — **open**, **acknowledged** or **resolved** — with who set it, when,

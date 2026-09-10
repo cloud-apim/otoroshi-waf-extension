@@ -19,7 +19,7 @@ import otoroshi.next.extensions.*
 import otoroshi.security.IdGenerator
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits.*
-import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.json.{JsNull, JsObject, JsString, JsValue, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.api.{Configuration, Logger}
 
@@ -74,6 +74,13 @@ class WafExtensionState() {
       // so it gets said out loud rather than swallowed
       if (composed.missing.nonEmpty) {
         logger.warn(s"waf config '${config.name}' references unknown rulesets: ${composed.missing.mkString(", ")}")
+      }
+      // same reasoning: a dial nobody reads is a setting that silently does nothing
+      if (composed.crsIgnored) {
+        logger.warn(
+          s"waf config '${config.name}' sets Core Rule Set options but never imports CRS " +
+          s"(no '@import_preset crs' in its rulesets or rules), so they are not applied"
+        )
       }
       _composed.put(config.id, composed)
     }
@@ -563,12 +570,31 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
         val missing  = resolved.collect { case (ref, None) => ref }
         val composed = resolved.collect { case (_, Some(rs)) if rs.enabled => rs.rules }.flatten ++
           bodyJson.select("rules").asOpt[List[String]].getOrElse(List.empty)
-        val rules = composed.filterNot(_.trim.startsWith("@import_preset ")).mkString("\n\n")
+        // the dials are only read by CRS, so a config that sets them without importing it is told
+        val crs        = CrsSettings.read(bodyJson.select("crs").asOpt[JsValue].getOrElse(Json.obj()))
+        val crsIgnored = crs.nonEmpty && !WafRuleComposition.importsCrs(composed)
+        val preamble   = if (crs.nonEmpty && !crsIgnored) CrsSettings.preamble(crs) else Seq.empty
+        val rules = (preamble ++ composed).filterNot(_.trim.startsWith("@import_preset ")).mkString("\n\n")
         (SecLang.parse(rules) match {
           case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err.msg))
           case Right(conf) => Try(SecLang.compile(conf)) match {
             case Failure(err) => Results.Ok(Json.obj("done" -> false, "error" -> err.getMessage))
-            case Success(_) => Results.Ok(Json.obj("done" -> true, "missing_rulesets" -> missing))
+            case Success(_) =>
+              Results.Ok(
+                Json.obj(
+                  "done"             -> true,
+                  "missing_rulesets" -> missing,
+                  "crs_ignored"      -> crsIgnored,
+                  "warning"          -> Option
+                    .when(crsIgnored)(
+                      "This config sets Core Rule Set options but never imports CRS, so they do nothing. " +
+                      "Add '@import_preset crs' to a ruleset or to the rules below."
+                    )
+                    .map(JsString.apply)
+                    .getOrElse(JsNull)
+                    .asInstanceOf[JsValue]
+                )
+              )
           }
         }).vfuture
       }

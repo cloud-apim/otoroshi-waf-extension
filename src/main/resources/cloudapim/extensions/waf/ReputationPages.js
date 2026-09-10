@@ -49,6 +49,11 @@ function ensureSuiteStyles() {
     '.suite-code { max-height: 260px; overflow: auto; background: var(--bg-color_level3);',
     '  color: var(--color_level2); border: 1px solid var(--border-color); border-radius: 3px;',
     '  padding: 8px 10px; margin-bottom: 0; }',
+    '.suite-btn { font: inherit; font-size: 12px; line-height: 1.5; padding: 2px 10px;',
+    '  border-radius: 3px; border: 1px solid var(--suite-accent); color: var(--suite-accent);',
+    '  background: transparent; cursor: pointer; white-space: nowrap; }',
+    '.suite-btn:hover:not(:disabled) { background: var(--suite-accent); color: var(--bg-color_level2); }',
+    '.suite-btn:disabled { opacity: 0.35; cursor: not-allowed; }',
     '.suite-neutral { --suite-accent: var(--border-color-strong); }',
     '.suite-info { --suite-accent: var(--color-blue); }',
     '.suite-success { --suite-accent: var(--color-green); }',
@@ -174,7 +179,8 @@ class ThreatFeedStatus extends Component {
             ? React.createElement(
                 'button',
                 {
-                  className: 'btn btn-sm btn-warning',
+                  // btn-warning is dim grey on grey in the dark theme — see .suite-btn
+                  className: 'suite-btn suite-warning',
                   type: 'button',
                   style: { marginLeft: 8 },
                   onClick: this.rollback,

@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.waf.learning
 
+import com.cloud.apim.otoroshi.extensions.waf.entities.CrsSettings
 import com.cloud.apim.otoroshi.extensions.waf.tuning.{ExclusionProposal, PreviewResult}
 import play.api.libs.json.*
 
@@ -81,19 +82,30 @@ final case class ArmingImpact(
 
 object LearningAdvice {
 
-  /** What the CRS defaults to when a configuration says nothing. */
-  val defaultParanoia: Int  = 1
-  val defaultThreshold: Int = 5
+  /** What the CRS defaults to when a configuration says nothing. Owned by [[CrsSettings]]. */
+  val defaultParanoia: Int  = CrsSettings.defaultParanoia
+  val defaultThreshold: Int = CrsSettings.defaultInboundThreshold
 
   private val paranoiaSetting  = """(?i)setvar\s*:\s*'?tx\.(?:blocking_)?paranoia_level\s*=\s*(\d+)'?""".r
   private val thresholdSetting = """(?i)setvar\s*:\s*'?tx\.inbound_anomaly_score_threshold\s*=\s*(\d+)'?""".r
 
-  /** Read out of the configuration itself, so the advice is relative to what is actually running. */
-  def currentParanoia(rules: Seq[String]): Int =
-    paranoiaSetting.findAllMatchIn(rules.mkString("\n")).map(_.group(1).toInt).toSeq.lastOption.getOrElse(defaultParanoia)
+  /**
+   * Read out of the configuration itself, so the advice is relative to what is actually running.
+   *
+   * The typed [[CrsSettings]] fields win when they are set. Scanning the rule text still matters
+   * and is not a fallback for old data: a `SecAction` written by hand — in the config, or in any
+   * ruleset it references — is just as real as the generated one, and reporting a level the
+   * operator did not set would make every number after it wrong.
+   */
+  def currentParanoia(rules: Seq[String], crs: CrsSettings = CrsSettings.empty): Int =
+    crs.paranoiaLevel.getOrElse(fromRules(paranoiaSetting, rules, defaultParanoia))
 
-  def currentThreshold(rules: Seq[String]): Int =
-    thresholdSetting.findAllMatchIn(rules.mkString("\n")).map(_.group(1).toInt).toSeq.lastOption.getOrElse(defaultThreshold)
+  def currentThreshold(rules: Seq[String], crs: CrsSettings = CrsSettings.empty): Int =
+    crs.inboundThreshold.getOrElse(fromRules(thresholdSetting, rules, defaultThreshold))
+
+  /** The last one wins, because that is the one SecLang leaves standing. */
+  private def fromRules(pattern: scala.util.matching.Regex, rules: Seq[String], fallback: Int): Int =
+    pattern.findAllMatchIn(rules.mkString("\n")).map(_.group(1).toInt).toSeq.lastOption.getOrElse(fallback)
 
   /**
    * Whether dropping a level would remove most of the noise.

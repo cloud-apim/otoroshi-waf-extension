@@ -32,6 +32,66 @@ rulesets first, then the inline entries — with a `Compile` button that checks 
 | `oversize_body_action` | `inspect_prefix` | What to do with a body longer than the limit: inspect the beginning and let it through, or `reject` |
 | `rulesets` | `[]` | [Rulesets](./rulesets.mdx) to run, in order, **before** the inline rules |
 | `rules` | `[]` | Inline SecLang, applied after every referenced ruleset |
+| `crs` | `{}` | The [Core Rule Set dials](#the-core-rule-set-dials) — paranoia level and anomaly thresholds, as fields |
+
+## The Core Rule Set dials
+
+CRS is driven by a paranoia level and an anomaly threshold. Setting either used to mean hand-writing
+a `SecAction` with `tx.` variables into the rule text — the single most common tuning operation in
+the product, expressed as folklore. They are fields now.
+
+| Field | CRS variable | Default | What raising it costs |
+|---|---|---|---|
+| `crs.paranoia_level` | `tx.blocking_paranoia_level` | 1 | Each level adds broader rules and more false positives |
+| `crs.detection_paranoia_level` | `tx.detection_paranoia_level` | same as above | Nothing — the extra rules run without affecting the verdict |
+| `crs.inbound_anomaly_threshold` | `tx.inbound_anomaly_score_threshold` | 5 | Lowering it denies more; raising it tolerates more |
+| `crs.outbound_anomaly_threshold` | `tx.outbound_anomaly_score_threshold` | 4 | The same, for responses |
+| `crs.early_blocking` | `tx.early_blocking` | off | Denies at the end of phase 1, giving up the rules that need the body |
+
+![The paranoia level field, with the cost of each level next to it](/img/screenshots/crs-dials.png)
+
+*The point of the field is not that it is shorter than the `SecAction` — it is that the cost of each
+level is written next to the level.*
+
+```json5
+{
+  "crs": {
+    "paranoia_level": 1,
+    "detection_paranoia_level": 2,   // see what level 2 would cost, without paying it
+    "inbound_anomaly_threshold": 10  // more tolerant than the CRS default of 5
+  }
+}
+```
+
+They compile to one `SecAction` written **ahead of every ruleset and inline rule**. That order is
+the whole mechanism, not a preference: CRS applies its own defaults in
+`REQUEST-901-INITIALIZATION.conf` guarded by `&TX:name "@eq 0"` — *only if nobody has said
+otherwise* — so whichever `setvar` runs first wins. Emitted after the preset, they would do nothing.
+
+**An empty `crs` block emits nothing**, so a configuration that says nothing runs exactly what it ran
+before. These numbers decide what a WAF blocks, and an upgrade must not move them.
+
+:::caution Nothing is emitted without a CRS import
+The dials are read by CRS and by nothing else. A configuration that sets them but never imports CRS —
+no `@import_preset crs` in its rules or in any **enabled** ruleset it references — gets no generated
+rule at all, because one that sets variables nothing reads is a setting that silently does nothing.
+
+The mismatch is reported rather than swallowed: **Compile** says so, and the gateway logs a warning
+when the configuration is loaded.
+:::
+
+:::caution Detection may not be lower than blocking
+Rules above the detection level never run at all, so the blocking level would have nothing to act on.
+A configuration that says otherwise is refused on write rather than corrected — a paranoia level of 7
+is a mistake with a number in it, and storing 1 instead would leave you certain you had raised it.
+:::
+
+:::tip Start at paranoia level 1
+Level 1 with the default threshold is what CRS is tuned for. Raising the level before you have tuned
+level 1 produces a flood of false positives and usually ends with someone switching the WAF off. Use
+`detection_paranoia_level` to *measure* the next level first, then
+[learning mode](./learning.mdx) to decide whether to move.
+:::
 
 ## Body inspection
 

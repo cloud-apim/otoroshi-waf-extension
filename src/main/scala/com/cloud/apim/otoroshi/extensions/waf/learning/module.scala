@@ -154,7 +154,8 @@ class LearningModule(
               mode = modeOf(rules),
               configBlocking = config.block,
               firstRuleId = ExclusionBuilder.nextId(states.rulesetsFor(config).flatMap(_.rules)),
-              engineOf = engineOf
+              engineOf = engineOf,
+              crs = config.crs
             )
           )
         }

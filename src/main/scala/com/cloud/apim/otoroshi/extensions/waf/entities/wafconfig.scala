@@ -30,6 +30,7 @@ case class CloudApimWafConfig(
    rulesets: Seq[String] = Seq.empty,
    rules: Seq[String] = Seq.empty,
    oversizeBodyAction: String = CloudApimWafConfig.OversizeInspectPrefix,
+   crs: CrsSettings = CrsSettings.empty,
 ) extends EntityLocationSupport {
 
   override def internalId: String               = id
@@ -96,6 +97,7 @@ object CloudApimWafConfig {
       "rulesets" -> o.rulesets,
       "rules" -> o.rules,
       "oversize_body_action" -> o.oversizeBodyAction,
+      "crs" -> o.crs.json,
     )
     override def reads(json: JsValue): JsResult[CloudApimWafConfig] = Try {
       CloudApimWafConfig(
@@ -123,10 +125,17 @@ object CloudApimWafConfig {
           .map(_.trim.toLowerCase)
           .filter(CloudApimWafConfig.oversizeActions.contains)
           .getOrElse(CloudApimWafConfig.OversizeInspectPrefix),
+        // absent on every config written before the fields existed, and absence means "say nothing",
+        // which is exactly what those configs did
+        crs = (json \ "crs").asOpt[JsValue].map(CrsSettings.read).getOrElse(CrsSettings.empty),
       )
     } match {
-      case Failure(ex)    => JsError(ex.getMessage)
-      case Success(value) => JsSuccess(value)
+      case Failure(ex)                            => JsError(ex.getMessage)
+      // refused on the way in rather than sanitised: a paranoia level of 7 is a mistake with a
+      // number in it, and quietly storing 1 instead would leave someone certain they raised it.
+      // These fields are new, so nothing already stored can be made unreadable by this
+      case Success(value) if value.crs.errors.nonEmpty => JsError(value.crs.errors.mkString("; "))
+      case Success(value)                         => JsSuccess(value)
     }
   }
   def resource(env: Env, datastores: WafExtensionDatastores, states: WafExtensionState): Resource = {

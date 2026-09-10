@@ -18,6 +18,9 @@ class CompileButton extends Component {
       } else if ((r.missing_rulesets || []).length > 0) {
         // it compiled, which is the misleading part: those references contribute nothing
         this.setState({ error: 'Compiled, but these rulesets do not exist: ' + r.missing_rulesets.join(', ') });
+      } else if (r.warning) {
+        // same shape of trap: it compiles, and part of what you configured is not in the program
+        this.setState({ error: 'Compiled. ' + r.warning });
       } else {
         this.setState({ error: null, msg: ' Compilation successful !' });
         setTimeout(() => {
@@ -206,6 +209,63 @@ class WafConfigsPage extends Component {
         ],
       },
     },
+    'crs.paranoia_level': {
+      type: 'select',
+      props: {
+        label: 'Paranoia level',
+        help:
+          'How much of CRS runs. Each level adds rules that catch more and object more often — 1 is ' +
+          'the default and is what most APIs should stay on. Leave empty to say nothing and let CRS ' +
+          'choose (level 1).',
+        possibleValues: [
+          { label: 'Leave to CRS (level 1)', value: null },
+          { label: '1 — the default: almost no false positives', value: 1 },
+          { label: '2 — noticeably stricter, expect to tune', value: 2 },
+          { label: '3 — high, for hardened endpoints only', value: 3 },
+          { label: '4 — maximum, near-guaranteed false positives', value: 4 },
+        ],
+      },
+    },
+    'crs.detection_paranoia_level': {
+      type: 'select',
+      props: {
+        label: 'Detection paranoia level',
+        help:
+          'Runs the rules up to this level without letting them affect the verdict. Set it above the ' +
+          'paranoia level to see what raising it would cost before you pay it. It may never be lower.',
+        possibleValues: [
+          { label: 'Same as the paranoia level', value: null },
+          { label: '1', value: 1 },
+          { label: '2', value: 2 },
+          { label: '3', value: 3 },
+          { label: '4', value: 4 },
+        ],
+      },
+    },
+    'crs.inbound_anomaly_threshold': {
+      type: 'number',
+      props: {
+        label: 'Inbound anomaly threshold',
+        placeholder: '5',
+        help:
+          'The score a request has to reach before CRS denies it. Higher means more tolerant: 5 is the ' +
+          'CRS default, and raising it to 10 or 15 is the usual first move on a noisy deployment. Empty ' +
+          'means the default.',
+      },
+    },
+    'crs.outbound_anomaly_threshold': {
+      type: 'number',
+      props: { label: 'Outbound anomaly threshold', placeholder: '4', help: 'The same, for responses. Empty means the CRS default of 4.' },
+    },
+    'crs.early_blocking': {
+      type: 'bool',
+      props: {
+        label: 'Early blocking',
+        help:
+          'Lets CRS deny at the end of phase 1 when the score is already over the threshold, instead of ' +
+          'waiting for the body. Cheaper, and it gives up the rules that need the body to decide.',
+      },
+    },
     rulesets: {
       type: 'array',
       props: {
@@ -268,6 +328,12 @@ class WafConfigsPage extends Component {
     'output_body_mimetypes',
     '>>>Body limits',
     'oversize_body_action',
+    '>>>Core Rule Set',
+    'crs.paranoia_level',
+    'crs.detection_paranoia_level',
+    'crs.inbound_anomaly_threshold',
+    'crs.outbound_anomaly_threshold',
+    'crs.early_blocking',
     '<<<Rules',
     'rulesets',
     'rules',

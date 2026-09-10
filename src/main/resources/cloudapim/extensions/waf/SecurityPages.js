@@ -335,13 +335,20 @@ function suiteRemaining(until) {
   return 'in ' + Math.round(seconds / 86400) + 'd';
 }
 
+/**
+ * Driven by the suite's accent variables rather than by bootstrap's `btn-*` utilities.
+ *
+ * Those utilities are not flipped for Otoroshi's dark theme — `btn-warning` renders as dim grey on
+ * grey, so the most consequential action on this page read as disabled sitting next to three that
+ * were not. Same reason `.suite-panel` exists instead of `.card`.
+ */
 function suiteButton(key, label, tone, onClick, disabled) {
   return React.createElement(
     'button',
     {
       key: key,
       type: 'button',
-      className: 'btn btn-sm btn-' + (tone || 'secondary'),
+      className: 'suite-btn ' + suiteTone(tone),
       style: { marginRight: 6 },
       disabled: !!disabled,
       onClick: onClick,
@@ -535,7 +542,7 @@ class SecurityDashboardPage extends Component {
         INCIDENT_FILTERS.map((f) => React.createElement('option', { key: f.value, value: f.value }, f.label))
       ),
       React.createElement('span', { key: 'sep', style: { flex: 1 } }),
-      suiteButton('refresh', 'Refresh', 'secondary', this.load, this.state.busy)
+      suiteButton('refresh', 'Refresh', 'neutral', this.load, this.state.busy)
     );
 
   // -------------------------------------------------------------------------------------------
@@ -552,7 +559,7 @@ class SecurityDashboardPage extends Component {
       suiteButton(
         'ext-' + ext.label,
         ext.label,
-        'secondary',
+        'neutral',
         () => this.act('/_extend', { ref: b.key, duration_seconds: ext.seconds }, 'Ban on ' + b.key + ' extended by ' + ext.label + '.'),
         this.state.busy
       )
@@ -645,7 +652,7 @@ class SecurityDashboardPage extends Component {
           // read months later by someone deciding whether to remove it
           this.state.busy || (allow && p.value.trim().length === 0)
         ),
-        suiteButton('cancel', 'Cancel', 'secondary', this.cancelPending, false)
+        suiteButton('cancel', 'Cancel', 'neutral', this.cancelPending, false)
       )
     );
   };
@@ -776,7 +783,7 @@ class SecurityDashboardPage extends Component {
       ? suiteButton(
           'ack',
           'Acknowledge',
-          'secondary',
+          'neutral',
           () => this.ask('inc', 'state', i.key, 'acknowledged'),
           this.state.busy
         )
@@ -788,7 +795,7 @@ class SecurityDashboardPage extends Component {
       ? suiteButton(
           'reopen',
           'Reopen',
-          'secondary',
+          'neutral',
           () => this.act('/_incident_state', { key: i.key, state: 'open' }, i.key + ' is open again.'),
           this.state.busy
         )

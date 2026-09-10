@@ -101,16 +101,32 @@ denied once the score crosses a threshold. Two knobs control how aggressive that
   up adds broader rules and more false positives.
 - the **anomaly threshold** — how much accumulated score denies a request. Lower is stricter.
 
-Both are set with `SecAction` before the CRS import:
+Both are [fields on the configuration](./configs.mdx#the-core-rule-set-dials) — you do not write
+them by hand:
+
+```json5
+{ "crs": { "paranoia_level": 1, "inbound_anomaly_threshold": 5 } }
+```
+
+They generate exactly the directives you would have written, placed ahead of every ruleset:
 
 ```
-SecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.blocking_paranoia_level=1"
-SecAction "id:900110,phase:1,nolog,pass,t:none,setvar:tx.inbound_anomaly_score_threshold=5"
+SecAction \
+    "id:40000,\
+    phase:1,\
+    nolog,\
+    pass,\
+    t:none,\
+    setvar:'tx.blocking_paranoia_level=1',\
+    setvar:'tx.inbound_anomaly_score_threshold=5'"
 
 @import_preset crs
 
 SecRuleEngine On
 ```
+
+Writing the `SecAction` yourself still works and still wins if it comes later — the fields are a
+shortcut for the common case, not a replacement for SecLang.
 
 :::tip Start at paranoia level 1
 Level 1 with the default threshold is what the CRS is tuned for. Raising the paranoia level before
