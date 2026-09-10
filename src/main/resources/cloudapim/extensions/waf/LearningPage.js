@@ -41,9 +41,26 @@ class WafLearningPage extends Component {
     // the same client every other page in this extension uses
     BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'waf-configs')
       .findAll()
-      .then((cs) => this.setState({ configs: Array.isArray(cs) ? cs : cs && cs.data ? cs.data : [] }))
+      .then((cs) => {
+        const configs = Array.isArray(cs) ? cs : cs && cs.data ? cs.data : [];
+        // a page that opens on nothing and needs a dropdown before it says anything is a page people
+        // bounce off. the url carries the choice, so a report can also be linked to.
+        const wanted = new URLSearchParams(window.location.search).get('config');
+        const chosen = configs.find((c) => c.id === wanted) || configs[0];
+        this.setState({ configs, configRef: chosen ? chosen.id : null }, () => {
+          if (chosen) this.refresh();
+        });
+      })
       .catch((e) => this.setState({ error: 'could not list the waf configs: ' + String(e.message || e) }));
   }
+
+  selectConfig = (v) => {
+    const url = new URL(window.location.href);
+    if (v) url.searchParams.set('config', v);
+    else url.searchParams.delete('config');
+    window.history.replaceState({}, '', url.toString());
+    this.setState({ configRef: v, report: null, selected: {}, applied: null }, this.refresh);
+  };
 
   refresh = () => {
     if (!this.state.configRef) return;
@@ -83,7 +100,7 @@ class WafLearningPage extends Component {
         React.createElement(SelectInput, {
           label: 'WAF config',
           value: this.state.configRef,
-          onChange: (v) => this.setState({ configRef: v, report: null, selected: {} }, this.refresh),
+          onChange: this.selectConfig,
           possibleValues: options,
         })
       ),

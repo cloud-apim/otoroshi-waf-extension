@@ -24,6 +24,11 @@ The two pages that need nothing still need the shared state to see the whole clu
 
 **Cloud APIM - Security Suite → Route posture.**
 
+![The posture summary and table: 302 of 304 routes with nothing attached](/img/screenshots/route-posture.png)
+
+*The summary is the point of the page. "Covered" and "Enforcing" are counted separately because a
+route with the whole suite attached in dry run stops nothing.*
+
 It walks every route in the router and reports what is actually attached to it:
 
 | Route | Status | WAF | Reputation | Bots | Fail2ban | Fabric |

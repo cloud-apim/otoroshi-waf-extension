@@ -17,6 +17,12 @@ and says plainly what arming today would still break.
 
 Find it under *Cloud APIM - Security Suite → WAF learning mode*.
 
+![The verdict, the engine-mode note, and the window's counts](/img/screenshots/learning-window.png)
+
+*The verdict comes first and is usually an honest "not yet". Below it, what the window actually
+measured — and `Requests that matched` counts requests where a rule objected to an input, not every
+request the engine emitted an event for.*
+
 ## What it measures
 
 | | |
@@ -65,6 +71,11 @@ that would silence it and **runs it** — the same measurement the tuning assist
 - gives up known attacks in the same input → shown, marked *needs a decision*, not selectable in bulk
 - ineffective or unverifiable → shown with the reason
 
+![Two proposals: one flagged as needing a decision, one verified and selectable](/img/screenshots/learning-proposals.png)
+
+*The same measurement the tuning assistant makes, applied to a whole window. Only the green one can
+be applied in bulk.*
+
 It also reports two configuration-level options, which sometimes replace a page of exclusions:
 
 **Paranoia level.** If a clear majority of what matched comes from rules above the level you are
@@ -83,6 +94,8 @@ The most useful line on the page is the last one:
 
 > Of 8 sampled requests the ruleset would have denied, 3 are fully accounted for by the exclusions
 > above and 5 are not.
+
+![Sampled denials, how many the proposed exclusions account for, and how many remain](/img/screenshots/learning-impact.png)
 
 Counting how often each rule fires says nothing about how many *requests* stop breaking, because a
 denial under anomaly scoring is usually several rules agreeing. So the run keeps a bounded reservoir

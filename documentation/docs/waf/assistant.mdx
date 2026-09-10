@@ -18,6 +18,11 @@ before it is offered to you**.
 
 Find it under *Cloud APIM - Security Suite → WAF tuning*.
 
+![The tuning candidates: which rule objected, to which input, on which endpoint, how often, and whether it actually blocked](/img/screenshots/tuning-candidates.png)
+
+*Every row is a rule objecting to one input of one endpoint. `INPUT` is the part that makes tuning
+possible — without it there is nothing to exclude but the rule itself.*
+
 ## The guarantee
 
 > Nothing is written that has not been demonstrated to work.
@@ -37,6 +42,12 @@ and again before it is saved, the assistant:
 Step 5 is the one that matters most. `SecRuleUpdateTargetById 942100 "!ARGS:query"` on a search
 endpoint is a reasonable-looking line that hands the search box to anyone who asks; the assistant
 tells you that before you save it, not afterwards.
+
+![A proposal with its generated SecLang, what it still catches, what it gives up, and the measured verdict](/img/screenshots/tuning-proposal.png)
+
+*The narrowest option, already run. `Verified` says the rule stops firing; `Attack corpus` says what
+that cost — here, two SQL injection payloads that would no longer be caught in the same parameter.
+The button reads "Apply anyway" rather than "Apply" for exactly that reason.*
 
 ## The four options
 
