@@ -117,6 +117,7 @@ of a map lookup, without the rule engine ever seeing the request.
 | **Admin UI** | One *Cloud APIM - Security Suite* section: WAF configs, threat policies, threat feeds and their catalog, ASN databases, CrowdSec bouncers, bot policies, challenge providers and presets, honeypots, and a live *Bans & incidents* view |
 | **Analytics** | Four event types, routable through any Otoroshi data exporter — including one normalised ECS-shaped `CloudApimSecurityEvent` |
 | **Console** | A [route posture view](./console.mdx) that needs nothing, plus twelve analytics queries and a seeded dashboard when the user-analytics exporter is configured |
+| **Tuning** | A [false-positive assistant](./waf/assistant.mdx) that turns an observed match into an exclusion, having run it against your configuration first |
 
 ## Design rules
 
@@ -140,3 +141,5 @@ These hold everywhere in the extension, and they explain most of the API shape:
   that works, and how to arm it without breaking traffic
 - [Security console](./console.mdx) — reading the events back, and which routes are actually protected
 - [Tuning](./waf/tuning.mdx) — how to get from monitoring to blocking without breaking traffic
+- [Tuning assistant](./waf/assistant.mdx) — the same work, from the admin UI, with every exclusion
+  proven before it is saved

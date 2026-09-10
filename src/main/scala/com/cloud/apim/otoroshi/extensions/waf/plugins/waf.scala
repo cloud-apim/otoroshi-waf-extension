@@ -207,6 +207,34 @@ class CloudApimWaf extends NgRequestTransformer {
   }
 
   /**
+   * Keeps the match as a tuning candidate, alongside reporting it.
+   *
+   * Only what an exclusion can be written against is retained — see [[TuningStore.recordAll]] — so
+   * the anomaly-score and correlation rules that fire on every match do not fill the list with
+   * entries nobody can act on. Bounded and in memory: this is a source of examples, not a ledger,
+   * and the ledger is the analytics table.
+   */
+  private def recordForTuning(
+    res: EngineResult,
+    config: CloudApimWafConfig,
+    route: NgRoute,
+    request: RequestHeader,
+    blocked: Boolean
+  )(using env: Env): Unit = {
+    env.adminExtensions.extension[CloudApimWafExtension].foreach { ext =>
+      ext.tuning.store.recordAll(
+        events = res.events,
+        configRef = config.id,
+        routeId = Some(route.id),
+        routeName = Some(route.name),
+        method = request.method,
+        path = request.path,
+        blocked = blocked
+      )
+    }
+  }
+
+  /**
    * Turns one engine verdict into one outcome, for both directions.
    *
    * It exists because the four copies of this `match` that used to be inlined are exactly what let
@@ -217,6 +245,7 @@ class CloudApimWaf extends NgRequestTransformer {
     res: EngineResult,
     config: CloudApimWafConfig,
     route: NgRoute,
+    request: RequestHeader,
     attrs: TypedMap,
     payload: JsObject,
     truncated: Boolean,
@@ -227,16 +256,21 @@ class CloudApimWaf extends NgRequestTransformer {
     res.disposition match {
       case Disposition.Continue if res.events.nonEmpty =>
         report(res, payload, route, config.block, truncated)
+        recordForTuning(res, config, route, request, blocked = false)
         Right(forward()).vfuture
       case Disposition.Continue                        =>
         Right(forward()).vfuture
       case Disposition.Block(status, _, _) if config.block =>
         report(res, payload, route, config.block, truncated)
+        recordForTuning(res, config, route, request, blocked = true)
         triggerFail2Ban(attrs, status)
         drain()
         deny(status).map(Left.apply)
       case Disposition.Block(_, _, _)                  =>
         report(res, payload, route, config.block, truncated)
+        // it did not block, but it is exactly what would break once this config is armed, which is
+        // the case a tuning session exists to work through
+        recordForTuning(res, config, route, request, blocked = false)
         Right(forward()).vfuture
     }
   }
@@ -308,7 +342,7 @@ class CloudApimWaf extends NgRequestTransformer {
               }
               CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
               act(
-                res, config, ctx.route, ctx.attrs, payload, prefix.truncated,
+                res, config, ctx.route, ctx.request, ctx.attrs, payload, prefix.truncated,
                 forward = () => ctx.otoroshiRequest.copy(body = prefix.resume),
                 drain = () => prefix.drain(),
                 deny = deny
@@ -321,7 +355,7 @@ class CloudApimWaf extends NgRequestTransformer {
           }
           CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
           act(
-            res, config, ctx.route, ctx.attrs, payload, truncated = false,
+            res, config, ctx.route, ctx.request, ctx.attrs, payload, truncated = false,
             forward = () => ctx.otoroshiRequest,
             drain = () => (),
             deny = deny
@@ -361,7 +395,7 @@ class CloudApimWaf extends NgRequestTransformer {
               }
               CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
               act(
-                res, config, ctx.route, ctx.attrs, payload, prefix.truncated,
+                res, config, ctx.route, ctx.request, ctx.attrs, payload, prefix.truncated,
                 forward = () => ctx.otoroshiResponse.copy(body = prefix.resume),
                 drain = () => prefix.drain(),
                 deny = deny
@@ -374,7 +408,7 @@ class CloudApimWaf extends NgRequestTransformer {
           }
           CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
           act(
-            res, config, ctx.route, ctx.attrs, payload, truncated = false,
+            res, config, ctx.route, ctx.request, ctx.attrs, payload, truncated = false,
             forward = () => ctx.otoroshiResponse,
             drain = () => (),
             deny = deny

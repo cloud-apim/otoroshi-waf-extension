@@ -57,6 +57,13 @@ This extension is built on top of the following open-source Cloud APIM libraries
 - **Twelve analytics queries**: Attack volume, blocked versus observed, top sources, top signals, top triggered WAF rules, and what a monitoring WAF *would* have blocked
 - **A dashboard on first boot**: Seeded once, then yours — rearrange or delete it, it is an ordinary user dashboard
 
+### Tuning
+
+- **False-positive assistant**: One observed match becomes a set of candidate exclusions, ordered from surgical to blunt, with what each one gives up written out
+- **Nothing unproven is saved**: Every option is run against your configuration before it is offered and again before it is written — an exclusion the engine would ignore is refused, not stored
+- **Blast radius, measured**: Known attacks are replayed through the same input, and anything that stops being caught is reported before you commit to it
+- **Written where it works**: The runtime and declarative forms go to separate rulesets, ordered so each one's mechanism can actually take effect, with the reason and the author recorded next to the rule
+
 ### Everywhere
 
 - **Analytics events**: Every detection is an Otoroshi analytic event, routable through any data exporter

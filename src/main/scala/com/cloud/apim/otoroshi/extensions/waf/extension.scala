@@ -57,6 +57,9 @@ class WafExtensionState() {
     recompose()
   }
 
+  /** The ruleset entities a config resolves to, in the order it lists them. */
+  def rulesetsFor(config: CloudApimWafConfig): Seq[WafRuleset] = config.rulesets.flatMap(ruleset)
+
   /** The rules a config actually runs — its rulesets in order, then its own inline rules. */
   def composedFor(config: CloudApimWafConfig): ComposedRules =
     _composed.getOrElse(config.id, WafRuleComposition.compose(config, ruleset))
@@ -117,6 +120,35 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val reputation = new ReputationModule(env, id, configuration)
   // the decision fabric every detector contributes to, and the one thing that acts on it
   lazy val security = new SecurityModule(env, id, configuration)
+  // OPS-2: turns one observed match into an exclusion, having run it first
+  lazy val tuning = new com.cloud.apim.otoroshi.extensions.waf.tuning.TuningModule(
+    env,
+    new com.cloud.apim.otoroshi.extensions.waf.tuning.TuningStates {
+      override def config(id: String)                            = states.config(id)
+      override def allRulesets()                                 = states.allRulesets()
+      override def rulesetsFor(c: CloudApimWafConfig)            = states.rulesetsFor(c)
+      override def rulesFor(c: CloudApimWafConfig)               = states.rulesFor(c)
+      override def saveRuleset(ruleset: WafRuleset)              = {
+        given ExecutionContext = env.otoroshiExecutionContext
+        given Env              = env
+        datastores.wafRulesetDatastore.set(ruleset).map { ok =>
+          // the state is refreshed on the next sync tick anyway, but a proposal computed against a
+          // stale ruleset would allocate an id that was just taken
+          if (ok) states.updateRulesets(states.allRulesets().filterNot(_.id == ruleset.id) :+ ruleset)
+          ok
+        }
+      }
+      override def saveConfig(config: CloudApimWafConfig)        = {
+        given ExecutionContext = env.otoroshiExecutionContext
+        given Env              = env
+        datastores.wafConfigDatastore.set(config).map { ok =>
+          if (ok) states.updateConfigs(states.allConfigs().filterNot(_.id == config.id) :+ config)
+          ok
+        }
+      }
+    },
+    rules => factory.engine(rules.toList)
+  )
   private val logger = Logger("cloud-apim-waf-extension")
   private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
@@ -196,6 +228,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val securityPagesCode = getResourceCode("cloudapim/extensions/waf/SecurityPages.js")
   lazy val wafRulesetsPageCode = getResourceCode("cloudapim/extensions/waf/WafRulesetsPage.js")
   lazy val posturePageCode = getResourceCode("cloudapim/extensions/waf/PosturePage.js")
+  lazy val tuningPageCode = getResourceCode("cloudapim/extensions/waf/TuningPage.js")
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
@@ -239,6 +272,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |
              |    ${posturePageCode}
              |
+             |    ${tuningPageCode}
+             |
              |    return {
              |      id: extensionId,
              |      categories:[{
@@ -269,6 +304,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            display: () => true,
              |            icon: () => 'fa-clipboard-check',
              |          },
+             |          {
+             |            title: 'WAF tuning',
+             |            description: 'Turn a false positive into a verified exclusion',
+             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |            link: '/extensions/cloud-apim/waf/tuning',
+             |            display: () => true,
+             |            icon: () => 'fa-wand-magic-sparkles',
+             |          },
              |          ...ReputationFeatures,
              |          ...SecurityFeatures
              |        ]
@@ -298,6 +341,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          display: () => true,
              |          icon: () => 'fa-clipboard-check',
              |        },
+             |        {
+             |          title: 'WAF tuning',
+             |          description: 'Turn a false positive into a verified exclusion',
+             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |          link: '/extensions/cloud-apim/waf/tuning',
+             |          display: () => true,
+             |          icon: () => 'fa-wand-magic-sparkles',
+             |        },
              |        ...ReputationFeatures,
              |        ...SecurityFeatures
              |      ],
@@ -320,6 +371,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          path: 'extensions/cloud-apim/waf/posture',
              |          icon: 'clipboard-check'
              |        },
+             |        {
+             |          title: 'WAF tuning',
+             |          text: 'Turn a false positive into a verified exclusion',
+             |          path: 'extensions/cloud-apim/waf/tuning',
+             |          icon: 'wand-magic-sparkles'
+             |        },
              |        ...ReputationSidebarItems,
              |        ...SecuritySidebarItems
              |      ],
@@ -339,6 +396,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          env: React.createElement('span', { className: "fas fa-clipboard-check" }, null),
              |          label: 'Cloud APIM Security Suite - Route posture',
              |          value: 'posture',
+             |        },
+             |        {
+             |          action: () => {
+             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/tuning`
+             |          },
+             |          env: React.createElement('span', { className: "fas fa-wand-magic-sparkles" }, null),
+             |          label: 'Cloud APIM Security Suite - WAF tuning',
+             |          value: 'tuning',
              |        },
              |        {
              |          action: () => {
@@ -394,6 +459,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            return React.createElement(SecurityPosturePage, props, null)
              |          }
              |        },
+             |        {
+             |          path: '/extensions/cloud-apim/waf/tuning',
+             |          component: (props) => {
+             |            return React.createElement(WafTuningPage, props, null)
+             |          }
+             |        },
              |        ...ReputationRoutes,
              |        ...SecurityRoutes
              |      ]
@@ -418,7 +489,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleTest(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes()
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes()
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext

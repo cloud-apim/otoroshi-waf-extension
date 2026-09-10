@@ -131,6 +131,31 @@ trail event — useful when debugging a specific rule, noisy as a permanent stre
 }
 ```
 
+## CloudApimWafTuningAudit
+
+An Otoroshi audit event, emitted when the [tuning assistant](../waf/assistant.mdx) writes an
+exclusion. It records the decision and the evidence together.
+
+```json
+{
+  "@type": "CloudApimWafTuningAudit",
+  "audit": "WAF_EXCLUSION_APPLIED",
+  "user": { "name": "Ada", "email": "ada@example.com" },
+  "config": "waf-config_x",
+  "rule_id": 942100,
+  "target": "ARGS:comment",
+  "kind": "update_target",
+  "seclang": "SecRuleUpdateTargetById 942100 \"!ARGS:comment\"",
+  "reason": "the comment field legitimately contains SQL snippets",
+  "ruleset": { "id": "waf-ruleset_y", "created": true },
+  "preview": { "reproduced": true, "effective": true, "regressions": [], "collateral_rules": [] },
+  "forced": false
+}
+```
+
+`preview` is the measured consequence at the moment of the decision — what was verified, and what
+was knowingly given up. `forced` is true only when the operator overrode a warning.
+
 ## Suggested exporters
 
 | Goal | Filter on |

@@ -60,6 +60,87 @@ POST /extensions/cloud-apim/extensions/waf/utils/_test
 
 Returns the full engine result — matched rules, phases, disposition.
 
+## Tuning endpoints
+
+Backoffice-authenticated. These back the [tuning assistant](../waf/assistant.mdx).
+
+### Recent candidates
+
+```http
+GET /extensions/cloud-apim/extensions/waf/tuning/_matches
+```
+
+```json
+{
+  "store": { "retained": 42, "max": 500 },
+  "scope": "this node, within the retained window",
+  "matches": [
+    {
+      "key": "waf-config_x|942100|ARGS:comment|/api/posts",
+      "count": 7,
+      "id": "…",
+      "rule_id": 942100,
+      "target": { "collection": "ARGS", "member": "comment", "full": "ARGS:comment", "excludable": true },
+      "method": "POST",
+      "path": "/api/posts",
+      "blocked": true
+    }
+  ]
+}
+```
+
+Only matches naming an input an exclusion can be written against are retained.
+
+### Propose exclusions
+
+```http
+POST /extensions/cloud-apim/extensions/waf/tuning/_propose
+{ "sample_id": "…" }
+```
+
+Or without a stored sample:
+
+```http
+{ "config_ref": "waf-config_x", "rule_id": 942100, "target": "ARGS:comment", "path": "/api/posts" }
+```
+
+Returns the candidates narrowest first, each carrying its generated `seclang`, its `reach`, where it
+gets written (`placement`), and a `preview` — the measured result of running it.
+
+### Preview an arbitrary exclusion
+
+```http
+POST /extensions/cloud-apim/extensions/waf/tuning/_preview
+{ "sample_id": "…", "seclang": "SecRuleUpdateTargetById 942100 \"!ARGS:comment\"", "kind": "update_target" }
+```
+
+```json
+{
+  "compiles": true,
+  "reproduced": true,
+  "effective": true,
+  "safe": false,
+  "regressions": [{ "name": "sqli-union", "category": "sqli", "caught_before": true, "caught_after": false }],
+  "collateral_rules": [942190]
+}
+```
+
+`reproduced` and `effective` are separate claims: the first says the match was rebuilt and observed,
+the second that the exclusion removed it. Without the first, the second means nothing.
+
+### Apply
+
+```http
+POST /extensions/cloud-apim/extensions/waf/tuning/_apply
+{ "sample_id": "…", "seclang": "…", "kind": "update_target", "reason": "…", "force": false }
+```
+
+| Response | When |
+|---|---|
+| `200` | Written. The body carries the ruleset it went to and the preview it was verified against |
+| `400` | It does not compile, or it does not stop the rule firing |
+| `409` + `needs_force` | The match could not be reproduced, or known attacks stop being caught |
+
 ## Reputation endpoints
 
 All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authenticated.

@@ -23,6 +23,7 @@ class AdminAssetIT extends munit.FunSuite {
       "class WafConfigsPage",
       "class WafRulesetsPage",
       "class SecurityPosturePage",
+      "class WafTuningPage",
       "class SecurityDashboardPage"
     ).foreach(cls => assert(script.contains(cls), s"$cls is missing from the assembled extension.js"))
   }
@@ -35,7 +36,8 @@ class AdminAssetIT extends munit.FunSuite {
     Seq(
       "/extensions/cloud-apim/waf/wafconfigs",
       "/extensions/cloud-apim/waf/wafrulesets",
-      "/extensions/cloud-apim/waf/posture"
+      "/extensions/cloud-apim/waf/posture",
+      "/extensions/cloud-apim/waf/tuning"
     ).foreach { path =>
       assert(
         script.contains(s"link: '$path'"),
@@ -43,6 +45,16 @@ class AdminAssetIT extends munit.FunSuite {
       )
     }
     assert(script.contains("React.createElement(SecurityPosturePage"))
+    assert(script.contains("React.createElement(WafTuningPage"))
+  }
+
+  test("no column is declared without an id react-table can use") {
+    // Table builds the react-table column id from `filterId || title`, and react-table 6 throws
+    // "A column id is required if using a non-string accessor" when that is empty — every Otoroshi
+    // column uses a function accessor, so an untitled column takes the whole page down with a bare
+    // "Something went wrong !!!" and no logged cause
+    assert(!script.contains("title: ''"), "a column with an empty title and no filterId will crash the table")
+    assert(!script.contains("title: \"\""), "a column with an empty title and no filterId will crash the table")
   }
 
   test("the posture page uses the shared table rather than hand-rolled rows") {

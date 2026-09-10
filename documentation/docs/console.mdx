@@ -13,6 +13,7 @@ Two surfaces, and they have very different requirements:
 | | Needs | Answers |
 |---|---|---|
 | **Route posture** | nothing | Which routes are protected, in which mode — *now* |
+| **WAF tuning** | nothing | Which rules are firing on legitimate traffic, and what to do about it |
 | **Dashboards and queries** | the user-analytics exporter | What happened, over time |
 
 ## Route posture
@@ -82,7 +83,9 @@ All of them appear in the widget wizard, compose into your own dashboards, and c
 | `cloudapim_waf_would_have_blocked` | area | Requests a monitoring WAF reached a deny on |
 
 The last two are the tuning pair: **top rules** tells you what to look at, **would have blocked**
-tells you what arming will cost.
+tells you what arming will cost. Once you know which rule to look at, the
+[tuning assistant](./waf/assistant.mdx) is where you act on it — it works from its own in-memory
+sample of recent matches, so it needs none of this.
 
 `cloudapim_security_top_tags` is the one to reach for when someone asks whether a feed is worth
 keeping — it ranks by tag, so `reputation:firehol1`, `asn:hosting`, `bot:seo` and `waf:match` are

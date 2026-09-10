@@ -46,6 +46,13 @@ denied**. That number, over real traffic, is the cost of arming the WAF.
 
 An exclusion narrows a rule instead of removing it. Prefer the narrowest form that works.
 
+:::tip There is an assistant for this
+The [tuning assistant](./assistant.mdx) generates every form below from an observed match, runs each
+one against your configuration before offering it, and reports which known attacks stop being caught
+if you take it. This section is what it generates — worth reading either way, and necessary if you
+are writing them by hand.
+:::
+
 ### Exclude one parameter from one rule
 
 The most common fix. A search box legitimately contains SQL-looking text:
@@ -75,9 +82,20 @@ SecRuleRemoveById 942100
 
 Last resort. It removes the protection everywhere, for every route sharing the configuration.
 
-:::tip Exclusions go after the import
-`@import_preset crs` loads the rules; an exclusion has to be declared after the rule it modifies
-exists. Put exclusions between the import and `SecRuleEngine On`.
+:::tip Where an exclusion has to sit
+It depends on which kind it is, and getting it wrong fails silently rather than loudly.
+
+`SecRuleUpdateTargetById`, `SecRuleUpdateTargetByTag` and `SecRuleRemoveById` are declarations: the
+engine collects them across the whole configuration, so they work from anywhere — including from a
+ruleset listed after the one carrying `@import_preset crs`.
+
+The `ctl:` forms are different. They are ordinary phase 1 rules that set state the target rule reads
+afterwards, so they have to be **evaluated before it**. Put them in a ruleset listed *first*. Placed
+after the CRS they are too late for anything the CRS does in phase 1, and they will appear to do
+nothing.
+
+The [tuning assistant](./assistant.mdx) handles this for you, and keeps the two kinds in separate
+rulesets for exactly this reason.
 :::
 
 ## Anomaly scoring, in practice
@@ -107,6 +125,8 @@ traffic — public, authenticated, internal — rather than one per route.
 - [ ] Monitoring ran for at least one full traffic cycle
 - [ ] The top ten matching rule ids have been reviewed individually
 - [ ] Every exclusion is scoped to a parameter or a path, not a global `SecRuleRemoveById`
+- [ ] Every exclusion has been verified to actually take effect — the [assistant](./assistant.mdx)
+      refuses to save one that does not
 - [ ] `input_body_limit` is set, and paired with a hard body-size limit on the route
 - [ ] The remaining would-be blocks have been checked as real attacks
 - [ ] Someone knows how to switch `block` back to `false` in a hurry
