@@ -56,6 +56,12 @@ object WafDetectionRelay {
       .filter(ip => IpParser.parseV4(ip).isDefined || IpParser.parseV6(ip).isDefined)
   }
 
+  /** The route the detection happened on, when the event carries one. */
+  def route(event: JsValue): (Option[String], Option[String]) = (
+    (event \ "route" \ "id").asOpt[String],
+    (event \ "route" \ "name").asOpt[String]
+  )
+
   private def header(headers: JsObject, name: String): Option[String] = {
     headers.value.collectFirst {
       case (key, JsString(value)) if key.equalsIgnoreCase(name) && value.trim.nonEmpty => value.trim

@@ -9,6 +9,7 @@ import play.api.libs.json.*
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.util.Try
 
 /** What the response engine decided to do. Also the `event.action` of the emitted event. */
 sealed trait ThreatAction {
@@ -135,6 +136,51 @@ final case class CloudApimSecurityEvent(
 }
 
 /**
+ * One thing that happened inside an incident, kept verbatim.
+ *
+ * The counters answer *how much*; this answers *what*, which is the question an operator actually
+ * has in front of the console. Bounded per incident — see [[IncidentCorrelator.maxTimeline]] —
+ * because an attack produces thousands of these and the last twenty tell the same story as the last
+ * twenty thousand.
+ */
+final case class IncidentEvent(
+    at: Long,
+    category: String,
+    action: String,
+    score: Int,
+    enforced: Boolean,
+    routeId: Option[String],
+    routeName: Option[String],
+    message: String
+) {
+  def json: JsValue = Json.obj(
+    "at"         -> at,
+    "category"   -> category,
+    "action"     -> action,
+    "score"      -> score,
+    "enforced"   -> enforced,
+    "route_id"   -> routeId,
+    "route_name" -> routeName,
+    "message"    -> message
+  )
+}
+
+object IncidentEvent {
+  def read(json: JsValue): Option[IncidentEvent] = Try {
+    IncidentEvent(
+      at = (json \ "at").asOpt[Long].getOrElse(0L),
+      category = (json \ "category").asOpt[String].getOrElse("unknown"),
+      action = (json \ "action").asOpt[String].getOrElse("log"),
+      score = (json \ "score").asOpt[Int].getOrElse(0),
+      enforced = (json \ "enforced").asOpt[Boolean].getOrElse(false),
+      routeId = (json \ "route_id").asOpt[String],
+      routeName = (json \ "route_name").asOpt[String],
+      message = (json \ "message").asOpt[String].getOrElse("")
+    )
+  }.toOption
+}
+
+/**
  * A run of events from one identity, collapsed into a single object.
  *
  * The value is in what it removes: an attack produces thousands of matches and one incident, so
@@ -150,31 +196,64 @@ final case class Incident(
     categories: Set[String],
     tags: Set[String],
     actions: Set[String],
-    lastMessage: String
+    lastMessage: String,
+    /** Newest first, bounded. */
+    timeline: Seq[IncidentEvent] = Seq.empty,
+    /** Which node observed it. Only meaningful once published — see [[IncidentBoard]]. */
+    node: Option[String] = None,
+    /** How many of the collapsed events were actually enforced rather than only recorded. */
+    enforcedCount: Int = 0,
+    routes: Set[String] = Set.empty
 ) {
   def json: JsValue = Json.obj(
-    "id"           -> id,
-    "ref"          -> ref.json,
-    "key"          -> ref.key,
-    "first_seen"   -> firstSeen,
-    "last_seen"    -> lastSeen,
-    "count"        -> count,
-    "max_score"    -> maxScore,
-    "categories"   -> categories.toSeq.sorted,
-    "tags"         -> tags.toSeq.sorted,
-    "actions"      -> actions.toSeq.sorted,
-    "last_message" -> lastMessage
+    "id"             -> id,
+    "ref"            -> ref.json,
+    "key"            -> ref.key,
+    "first_seen"     -> firstSeen,
+    "last_seen"      -> lastSeen,
+    "count"          -> count,
+    "enforced_count" -> enforcedCount,
+    "max_score"      -> maxScore,
+    "categories"     -> categories.toSeq.sorted,
+    "tags"           -> tags.toSeq.sorted,
+    "actions"        -> actions.toSeq.sorted,
+    "routes"         -> routes.toSeq.sorted,
+    "last_message"   -> lastMessage,
+    "node"           -> node,
+    "timeline"       -> JsArray(timeline.map(_.json))
   )
+}
+
+object Incident {
+  def read(json: JsValue): Option[Incident] = Try {
+    Incident(
+      id = (json \ "id").as[String],
+      ref = IdentityRef((json \ "ref" \ "kind").as[String], (json \ "ref" \ "value").as[String]),
+      firstSeen = (json \ "first_seen").asOpt[Long].getOrElse(0L),
+      lastSeen = (json \ "last_seen").asOpt[Long].getOrElse(0L),
+      count = (json \ "count").asOpt[Int].getOrElse(0),
+      maxScore = (json \ "max_score").asOpt[Int].getOrElse(0),
+      categories = (json \ "categories").asOpt[Seq[String]].getOrElse(Seq.empty).toSet,
+      tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty).toSet,
+      actions = (json \ "actions").asOpt[Seq[String]].getOrElse(Seq.empty).toSet,
+      lastMessage = (json \ "last_message").asOpt[String].getOrElse(""),
+      timeline = (json \ "timeline").asOpt[JsArray].map(_.value.toSeq).getOrElse(Seq.empty).flatMap(IncidentEvent.read),
+      node = (json \ "node").asOpt[String],
+      enforcedCount = (json \ "enforced_count").asOpt[Int].getOrElse(0),
+      routes = (json \ "routes").asOpt[Seq[String]].getOrElse(Seq.empty).toSet
+    )
+  }.toOption
 }
 
 /**
  * Windowed correlation, node-local.
  *
- * Incidents live in memory on the node that observed them: they are an operational view, not
- * durable state, and every node sees the traffic it handles. A cluster-wide view is the job of the
- * SIEM the normalised events are exported to.
+ * Correlation happens here, on the node that served the traffic, because it is fed from the request
+ * path and has to cost nothing. It is **not** where the operator reads incidents from: that is
+ * [[IncidentBoard]], which merges every node's published view. Keeping the two apart is what lets
+ * this stay a `TrieMap` with no I/O in it at all.
  */
-class IncidentCorrelator(window: () => FiniteDuration, maxIncidents: Int = 2000) {
+class IncidentCorrelator(window: () => FiniteDuration, maxIncidents: Int = 2000, node: Option[String] = None) {
 
   private val incidents = new TrieMap[String, Incident]()
 
@@ -184,21 +263,29 @@ class IncidentCorrelator(window: () => FiniteDuration, maxIncidents: Int = 2000)
       score: Int,
       tags: Seq[String],
       action: String,
-      message: String
+      message: String,
+      enforced: Boolean = false,
+      routeId: Option[String] = None,
+      routeName: Option[String] = None
   ): Incident = {
     val now      = System.currentTimeMillis()
     val cutoff   = now - window().toMillis
     val existing = incidents.get(ref.key).filter(_.lastSeen >= cutoff)
+    val event    = IncidentEvent(now, category, action, score, enforced, routeId, routeName, message)
+    val route    = routeName.orElse(routeId).toSet
     val next = existing match {
       case Some(inc) =>
         inc.copy(
           lastSeen = now,
           count = inc.count + 1,
+          enforcedCount = inc.enforcedCount + (if (enforced) 1 else 0),
           maxScore = math.max(inc.maxScore, score),
           categories = inc.categories + category,
           tags = inc.tags ++ tags,
           actions = inc.actions + action,
-          lastMessage = message
+          routes = inc.routes ++ route,
+          lastMessage = message,
+          timeline = (event +: inc.timeline).take(IncidentCorrelator.maxTimeline)
         )
       case None      =>
         Incident(
@@ -207,11 +294,15 @@ class IncidentCorrelator(window: () => FiniteDuration, maxIncidents: Int = 2000)
           firstSeen = now,
           lastSeen = now,
           count = 1,
+          enforcedCount = if (enforced) 1 else 0,
           maxScore = score,
           categories = Set(category),
           tags = tags.toSet,
           actions = Set(action),
-          lastMessage = message
+          routes = route,
+          lastMessage = message,
+          timeline = Seq(event),
+          node = node
         )
     }
     incidents.put(ref.key, next)
@@ -236,6 +327,9 @@ class IncidentCorrelator(window: () => FiniteDuration, maxIncidents: Int = 2000)
 
   def get(id: String): Option[Incident] = incidents.values.find(_.id == id)
 
+  /** By identity rather than by incident id — the key everything outside this class uses. */
+  def byKey(key: String): Option[Incident] = incidents.get(key)
+
   def forget(key: String): Unit = { incidents.remove(key); () }
 
   def size: Int = incidents.size
@@ -243,4 +337,13 @@ class IncidentCorrelator(window: () => FiniteDuration, maxIncidents: Int = 2000)
 
 object IncidentCorrelator {
   val defaultWindow: FiniteDuration = 30.minutes
+
+  /**
+   * How many events an incident keeps verbatim.
+   *
+   * Small on purpose. This is a triage view, not a forensic record — the full stream is in the
+   * analytics table, and an incident that needs more than twenty lines to understand is one you
+   * open the dashboard for.
+   */
+  val maxTimeline: Int = 20
 }

@@ -236,17 +236,31 @@ All under `/extensions/cloud-apim/extensions/waf/security`, backoffice-authentic
 
 | Method | Path | Body | Purpose |
 |---|---|---|---|
-| `GET` | `/_status` | — | Node id, ban count, shared-state mode, ledger settings |
+| `GET` | `/_status` | — | Node id, ban and allowlist counts, shared-state mode and why it is or is not distributed, ledger settings |
 | `GET` | `/_bans` | — | Every live ban with its evidence |
-| `GET` | `/_incidents` | — | Correlated incidents in the current window |
+| `GET` | `/_incidents` | — | Incidents in the current window, merged across every node, with their state |
+| `GET` | `/_allowlist` | — | The identities the fabric will never ban |
 | `POST` | `/_ban` | `{"ref":"ip:1.2.3.4","duration_seconds":3600,"reason":"..."}` | Ban by hand |
+| `POST` | `/_extend` | `{"ref":"ip:1.2.3.4","duration_seconds":86400}` | Push a live ban's end further out |
 | `POST` | `/_unban` | `{"ref":"ip:1.2.3.4"}` or `{"all":true}` | Lift one or all |
+| `POST` | `/_allow` | `{"ref":"apikey:partner-ci","reason":"...","unban":true,"duration_seconds":null}` | Allowlist, and lift what is held against them |
+| `POST` | `/_disallow` | `{"ref":"apikey:partner-ci"}` | Remove an allowlist entry |
+| `POST` | `/_incident_state` | `{"key":"ip:1.2.3.4","state":"acknowledged","note":"..."}` | Move an incident. `open` clears the state |
 | `POST` | `/_ledger` | `{}`, `{"ref":"..."}`, or `{"ref":"...","forget":true}` | Inspect or clear the cross-request memory |
 | `POST` | `/_simulate` | `{"score":75,"policy":"..."}` | What a policy would do at that score |
 | `GET` | `/_challenge_presets` | — | Ready-to-edit vendor challenge settings |
 | `POST` | `/_challenge_from_preset` | `{"preset":"friendly-captcha"}` | Build a provider from a preset |
 | `GET` | `/_bot_catalog` | — | Every known bot signature |
 | `POST` | `/_robots_txt` | `{"policy":"<id>"}` | The robots.txt a bot policy enforces |
+
+Two of these answer `done: false` for outcomes that are decisions rather than failures, and say
+which: `/_ban` returns `{"done":false,"refused":"allowlisted","allowlist":{…}}` when the identity is
+on the [allowlist](../fabric/bans.mdx#the-allowlist), and `/_extend` refuses when there is no live
+ban left to extend. Neither is an error — but neither did what was asked, so a caller that treats a
+200 as success will be wrong.
+
+Every mutating call here is recorded as a
+[`CloudApimWafSecurityAudit`](./events.mdx#cloudapimwafsecurityaudit) with the operator on it.
 
 `_status` is the one to monitor — `shared_state.dedicated_redis: false` means bans are only shared
 between nodes if the Otoroshi storage backend is.

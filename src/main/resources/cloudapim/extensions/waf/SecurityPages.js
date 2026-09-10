@@ -287,10 +287,125 @@ class ThreatPoliciesPage extends Component {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// OPS-7 — the operator's console during an incident.
+//
+// Three registers, in the order an incident is worked: what the fabric is holding right now
+// (bans), what it is still watching (incidents), and what it has been told to leave alone
+// (allowlist). Every row can be opened for its evidence, and every action is one click from the
+// evidence rather than from a separate form.
+// ---------------------------------------------------------------------------------------------
+
+const BAN_EXTENSIONS = [
+  { label: '+1h', seconds: 3600 },
+  { label: '+24h', seconds: 86400 },
+  { label: '+7d', seconds: 604800 },
+];
+
+const INCIDENT_FILTERS = [
+  { value: 'active', label: 'Needs attention' },
+  { value: 'all', label: 'All' },
+  { value: 'open', label: 'Open' },
+  { value: 'reopened', label: 'Reopened' },
+  { value: 'acknowledged', label: 'Acknowledged' },
+  { value: 'resolved', label: 'Resolved' },
+];
+
+function incidentTone(state) {
+  if (state === 'reopened') return 'danger';
+  if (state === 'open') return 'warning';
+  if (state === 'acknowledged') return 'info';
+  if (state === 'resolved') return 'success';
+  return 'neutral';
+}
+
+function suiteWhen(millis) {
+  if (!millis) return '—';
+  return new Date(millis).toLocaleString();
+}
+
+/** `ends in 42m`, or `lapsed` — the question in front of a ban is always how long is left. */
+function suiteRemaining(until) {
+  if (!until) return '—';
+  const seconds = Math.round((until - Date.now()) / 1000);
+  if (seconds <= 0) return 'lapsed';
+  if (seconds < 60) return 'in ' + seconds + 's';
+  if (seconds < 3600) return 'in ' + Math.round(seconds / 60) + 'm';
+  if (seconds < 86400) return 'in ' + Math.round(seconds / 3600) + 'h';
+  return 'in ' + Math.round(seconds / 86400) + 'd';
+}
+
+function suiteButton(key, label, tone, onClick, disabled) {
+  return React.createElement(
+    'button',
+    {
+      key: key,
+      type: 'button',
+      className: 'btn btn-sm btn-' + (tone || 'secondary'),
+      style: { marginRight: 6 },
+      disabled: !!disabled,
+      onClick: onClick,
+    },
+    label
+  );
+}
+
+/**
+ * A caret that also carries the row's identity, so the whole left column is the hit target.
+ *
+ * A real `button` rather than a span with a click handler: a span is not focusable, announces
+ * nothing, and cannot be reached by keyboard at all — which on this page would mean the evidence
+ * behind every ban is mouse-only. The browser chrome is reset rather than the element downgraded.
+ */
+function suiteDisclosure(open, label, onClick) {
+  return React.createElement(
+    'button',
+    {
+      type: 'button',
+      onClick: onClick,
+      'aria-expanded': open ? 'true' : 'false',
+      title: 'Show the evidence',
+      style: {
+        cursor: 'pointer',
+        userSelect: 'none',
+        width: 250,
+        flex: 'none',
+        color: 'var(--color_level3)',
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        font: 'inherit',
+        textAlign: 'left',
+      },
+    },
+    (open ? '▾ ' : '▸ ') + label
+  );
+}
+
 class SecurityDashboardPage extends Component {
-  state = { status: null, bans: [], incidents: [], error: null };
+  state = {
+    status: null,
+    bans: [],
+    incidents: [],
+    allowlist: [],
+    error: null,
+    boardError: null,
+    notice: null,
+    busy: false,
+    filter: '',
+    incidentFilter: 'active',
+    open: {},
+    // one inline form at a time, anchored to the row it belongs to: a reason for an allowlist
+    // entry, a note for an incident. Never a window.prompt — cancelling one of those on an
+    // *optional* note would abandon the action the operator actually asked for
+    pending: null,
+    banRef: '',
+    banDuration: 3600,
+    banReason: '',
+  };
 
   componentDidMount() {
+    ensureSuiteStyles();
     this.props.setTitle('Bans & incidents');
     this.load();
     this.timer = setInterval(this.load, 10000);
@@ -300,66 +415,547 @@ class SecurityDashboardPage extends Component {
     if (this.timer) clearInterval(this.timer);
   }
 
-  load = () => {
-    Promise.all([securityCall('/_status'), securityCall('/_bans'), securityCall('/_incidents')])
-      .then(([status, bans, incidents]) =>
-        this.setState({ status, bans: (bans && bans.bans) || [], incidents: (incidents && incidents.incidents) || [] })
+  load = () =>
+    Promise.all([
+      securityCall('/_status'),
+      securityCall('/_bans'),
+      securityCall('/_incidents'),
+      securityCall('/_allowlist'),
+    ])
+      .then(([status, bans, incidents, allowlist]) =>
+        this.setState({
+          status: status,
+          bans: (bans && bans.bans) || [],
+          incidents: (incidents && incidents.incidents) || [],
+          allowlist: (allowlist && allowlist.entries) || [],
+          // kept apart from `error`: this one is about the board, and the periodic reload must not
+          // wipe the refusal an operator has just been told about
+          boardError: (incidents && incidents.error) || null,
+        })
       )
       .catch((e) => this.setState({ error: String(e.message || e) }));
+
+  /**
+   * Runs one operator action.
+   *
+   * The api answers `done: false` with a reason for the refusals that are decisions rather than
+   * failures — banning an allowlisted caller, extending a ban that just lapsed. Those have to
+   * reach the screen: silently doing nothing is how someone walks away believing a caller is
+   * banned when they are not.
+   */
+  act = (path, body, success) => {
+    this.setState({ busy: true, notice: null, error: null });
+    return securityCall(path, body)
+      .then((r) => {
+        const refused =
+          r && r.done === false
+            ? r.error || (r.refused === 'allowlisted' ? this.refusedMessage(r) : 'refused')
+            : null;
+        // the reload first, the message after — so what the operator reads is the state *after*
+        // the action, and a refusal is never overwritten by the response to its own reload
+        return this.load().then(() =>
+          this.setState(refused ? { error: refused, notice: null } : success ? { notice: success } : {})
+        );
+      })
+      .catch((e) => this.setState({ error: String(e.message || e) }))
+      .then(() => this.setState({ busy: false }));
   };
 
-  unban = (ref) => securityCall('/_unban', { ref: ref }).then(this.load);
+  refusedMessage = (r) => {
+    const entry = r.allowlist || {};
+    return (
+      'Refused: ' + (entry.key || 'this caller') + ' is on the allowlist' +
+      (entry.reason ? ' — ' + entry.reason : '') + '. Remove the allowlist entry first.'
+    );
+  };
+
+  toggle = (key) =>
+    this.setState((prev) => {
+      const open = Object.assign({}, prev.open);
+      if (open[key]) delete open[key];
+      else open[key] = true;
+      return { open: open };
+    });
+
+  matches = (text) => {
+    const needle = this.state.filter.trim().toLowerCase();
+    if (!needle) return true;
+    return String(text || '').toLowerCase().indexOf(needle) >= 0;
+  };
+
+  // -------------------------------------------------------------------------------------------
+  // status
+  // -------------------------------------------------------------------------------------------
 
   renderStatus = () => {
     const s = this.state.status;
     if (!s) return null;
+    const shared = s.shared_state || {};
     const rows = [
       ['Node', s.node],
       ['Bans held', String((s.bans && s.bans.bans) || 0)],
       ['Ban list refreshed', reputationAgo(s.bans && s.bans.last_refresh)],
-      ['Shared state', s.shared_state && s.shared_state.dedicated_redis ? 'dedicated redis' : 'otoroshi storage'],
-      ['Incidents held', String((s.incidents && s.incidents.held) || 0)],
+      ['Allowlisted', String((s.allowlist && s.allowlist.entries) || 0)],
+      ['Incidents on this node', String((s.incidents && s.incidents.held) || 0)],
+      ['Shared state', shared.dedicated_redis ? 'dedicated redis' : 'otoroshi storage'],
       ['Ledger', s.ledger && s.ledger.enabled ? 'on — bans at ' + s.ledger.ban_threshold : 'off'],
     ];
     return suitePanel('status', [
       React.createElement('div', { key: 't', className: 'suite-title' }, 'This node'),
       suiteRows(rows, 200),
       s.bans && s.bans.last_error ? suiteNotice('err', 'danger', s.bans.last_error) : null,
-      s.shared_state && !s.shared_state.dedicated_redis
-        ? suiteNotice(
-            'shared',
-            'warning',
-            'Bans are stored in the Otoroshi storage backend. They are only shared between nodes if that backend is. Set security.redis-uri to guarantee it.'
-          )
-        : null,
+      // said in words rather than left to be inferred from an empty list: on a leader/worker
+      // cluster the workers see the traffic and the leader serves this page
+      shared.warning ? suiteNotice('shared', 'warning', shared.warning) : null,
     ]);
   };
 
+  renderControls = () =>
+    React.createElement(
+      'div',
+      { key: 'controls', className: 'suite-panel', style: { display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' } },
+      React.createElement('input', {
+        key: 'filter',
+        type: 'text',
+        className: 'form-control',
+        style: { width: 260 },
+        placeholder: 'Filter by identity, reason or tag',
+        value: this.state.filter,
+        onChange: (e) => this.setState({ filter: e.target.value }),
+      }),
+      React.createElement(
+        'select',
+        {
+          key: 'state',
+          className: 'form-select',
+          style: { width: 200 },
+          value: this.state.incidentFilter,
+          onChange: (e) => this.setState({ incidentFilter: e.target.value }),
+        },
+        INCIDENT_FILTERS.map((f) => React.createElement('option', { key: f.value, value: f.value }, f.label))
+      ),
+      React.createElement('span', { key: 'sep', style: { flex: 1 } }),
+      suiteButton('refresh', 'Refresh', 'secondary', this.load, this.state.busy)
+    );
+
+  // -------------------------------------------------------------------------------------------
+  // bans
+  // -------------------------------------------------------------------------------------------
+
+  banActions = (b) => [
+    React.createElement(
+      'span',
+      { key: 'extend', className: 'suite-meta', style: { marginRight: 6 } },
+      'Extend'
+    ),
+    ...BAN_EXTENSIONS.map((ext) =>
+      suiteButton(
+        'ext-' + ext.label,
+        ext.label,
+        'secondary',
+        () => this.act('/_extend', { ref: b.key, duration_seconds: ext.seconds }, 'Ban on ' + b.key + ' extended by ' + ext.label + '.'),
+        this.state.busy
+      )
+    ),
+    suiteButton(
+      'unban',
+      'Unban',
+      'danger',
+      () => this.act('/_unban', { ref: b.key }, b.key + ' unbanned.'),
+      this.state.busy
+    ),
+    suiteButton(
+      'allow',
+      'Never ban this caller',
+      'warning',
+      () => this.ask('ban', 'allow', b.key),
+      this.state.busy
+    ),
+  ];
+
+  ask = (scope, kind, key, state) =>
+    this.setState((prev) => {
+      const open = Object.assign({}, prev.open);
+      // opening the row too, so the form is never rendered somewhere the operator cannot see it
+      open[scope + ':' + key] = true;
+      return { pending: { scope: scope, kind: kind, key: key, state: state, value: '' }, open: open };
+    });
+
+  cancelPending = () => this.setState({ pending: null });
+
+  confirmPending = () => {
+    const p = this.state.pending;
+    if (!p) return;
+    // Enter would otherwise get past the disabled button
+    if (p.kind === 'allow' && p.value.trim().length === 0) return;
+    this.setState({ pending: null });
+    if (p.kind === 'allow') {
+      return this.act(
+        '/_allow',
+        { ref: p.key, reason: p.value, unban: true },
+        p.key + ' is on the allowlist, and anything held against it has been lifted.'
+      );
+    }
+    return this.act(
+      '/_incident_state',
+      { key: p.key, state: p.state, note: p.value },
+      p.key + ' marked ' + p.state + '.'
+    );
+  };
+
+  renderPending = (scope, key) => {
+    const p = this.state.pending;
+    if (!p || p.scope !== scope || p.key !== key) return null;
+    const allow = p.kind === 'allow';
+    return React.createElement(
+      'div',
+      { key: 'pending', style: { marginTop: 10 } },
+      suiteNotice(
+        'why',
+        allow ? 'warning' : 'info',
+        allow
+          ? 'The fabric will never ban ' + key + ' again — fail2ban, the ledger and the response engine ' +
+            'included. It does not switch off inspection: the WAF still inspects and a tier that denies ' +
+            'still denies.'
+          : 'A note for whoever reads this next. Optional.'
+      ),
+      React.createElement(
+        'div',
+        { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+        React.createElement('input', {
+          type: 'text',
+          className: 'form-control',
+          autoFocus: true,
+          style: { flex: 1 },
+          placeholder: allow ? 'Why? — e.g. nightly integration suite' : 'e.g. confirmed false positive, tuning tracked in JIRA-123',
+          value: p.value,
+          onChange: (e) =>
+            this.setState({ pending: Object.assign({}, this.state.pending, { value: e.target.value }) }),
+          onKeyDown: (e) => {
+            if (e.key === 'Enter') this.confirmPending();
+            if (e.key === 'Escape') this.cancelPending();
+          },
+        }),
+        suiteButton(
+          'ok',
+          allow ? 'Allowlist' : 'Mark ' + p.state,
+          allow ? 'warning' : 'success',
+          this.confirmPending,
+          // a reason is required for an allowlist entry and optional for a note: one of them is
+          // read months later by someone deciding whether to remove it
+          this.state.busy || (allow && p.value.trim().length === 0)
+        ),
+        suiteButton('cancel', 'Cancel', 'secondary', this.cancelPending, false)
+      )
+    );
+  };
+
+  renderEvidence = (b) => {
+    const timeline = b.timeline || [];
+    const signals = Array.isArray(b.signals) ? b.signals : [];
+    return React.createElement(
+      'div',
+      { key: 'ev-' + b.key, style: { padding: '8px 10px 12px 18px' } },
+      suiteRows(
+        [
+          ['Identity', b.key],
+          ['Reason', b.reason || '—'],
+          ['Issued by', b.issued_by || '—'],
+          ['Issued at', suiteWhen(b.issued_at)],
+          ['Ends', suiteWhen(b.until) + ' (' + suiteRemaining(b.until) + ')'],
+          ['Tags', (b.tags || []).join(', ') || '—'],
+          b.last_action ? ['Last action', b.last_action + ' by ' + (b.last_action_by || '?') + ', ' + reputationAgo(b.last_action_at)] : null,
+        ].filter((r) => r),
+        140
+      ),
+      timeline.length > 0
+        ? React.createElement(
+            'div',
+            { key: 'tl' },
+            React.createElement('div', { className: 'suite-meta', style: { margin: '8px 0 4px' } }, 'What they did'),
+            this.renderTimeline(timeline)
+          )
+        : null,
+      signals.length > 0
+        ? React.createElement(
+            'div',
+            { key: 'sig' },
+            React.createElement('div', { className: 'suite-meta', style: { margin: '8px 0 4px' } }, 'Signals that scored it'),
+            React.createElement('pre', { className: 'suite-code' }, JSON.stringify(signals, null, 2))
+          )
+        : null,
+      timeline.length === 0 && signals.length === 0
+        ? suiteNotice(
+            'noev',
+            'neutral',
+            'No evidence was attached to this ban. Bans issued before the caller had an incident — a manual one, or one from a plugin that carries none — have nothing to show here.'
+          )
+        : null,
+      React.createElement('div', { key: 'act', style: { marginTop: 10 } }, this.banActions(b)),
+      this.renderPending('ban', b.key)
+    );
+  };
+
+  renderTimeline = (events) =>
+    React.createElement(
+      'div',
+      { className: 'suite-rows' },
+      events.map((e, i) =>
+        React.createElement(
+          'div',
+          { key: i, className: 'suite-row', style: { alignItems: 'baseline' } },
+          React.createElement('span', { style: { width: 90 } }, reputationAgo(e.at)),
+          suiteBadge('c-' + i, e.category, 'neutral'),
+          suiteBadge('a-' + i, e.action + (e.enforced ? '' : ' (observed)'), e.enforced ? 'danger' : 'warning'),
+          React.createElement('span', { style: { flex: 1 } }, e.message),
+          e.route_name ? React.createElement('span', { className: 'suite-meta', style: { width: 150 } }, e.route_name) : null
+        )
+      )
+    );
+
   renderBans = () => {
-    const bans = this.state.bans;
+    const bans = this.state.bans.filter((b) => this.matches(b.key + ' ' + b.reason + ' ' + (b.tags || []).join(' ')));
     return suitePanel('bans', [
       React.createElement('div', { key: 't', className: 'suite-title' }, 'Active bans (' + bans.length + ')'),
-      bans.length === 0
+      this.state.bans.length === 0
         ? suiteNotice('none', 'success', 'Nobody is banned right now.')
+        : bans.length === 0
+        ? suiteNotice('nomatch', 'neutral', 'No ban matches that filter.')
         : React.createElement(
             'div',
             { key: 'list' },
             bans.map((b) =>
               React.createElement(
                 'div',
-                {
-                  key: b.key,
-                  className: 'suite-row',
-                  style: { alignItems: 'center', borderBottom: '1px solid var(--border-color)' },
-                },
-                React.createElement('span', { style: { width: 220 } }, b.key),
-                React.createElement('span', { style: { flex: 1 } }, b.reason),
-                suiteBadge('score-' + b.key, 'score ' + b.score, b.score >= 90 ? 'danger' : 'warning'),
-                React.createElement('span', { className: 'suite-meta', style: { width: 120 } }, 'ends ' + reputationAgo(b.until)),
+                { key: b.key, style: { borderBottom: '1px solid var(--border-color)' } },
                 React.createElement(
-                  'button',
-                  { className: 'btn btn-sm btn-danger', type: 'button', onClick: () => this.unban(b.key) },
-                  ' Unban'
+                  'div',
+                  { className: 'suite-row', style: { alignItems: 'center' } },
+                  suiteDisclosure(this.state.open['ban:' + b.key], b.key, () => this.toggle('ban:' + b.key)),
+                  React.createElement('span', { style: { flex: 1 } }, b.reason),
+                  suiteBadge('score-' + b.key, 'score ' + b.score, b.score >= 90 ? 'danger' : 'warning'),
+                  (b.timeline || []).length > 0
+                    ? suiteBadge('ev-' + b.key, (b.timeline || []).length + ' events', 'neutral')
+                    : null,
+                  React.createElement(
+                    'span',
+                    { className: 'suite-meta', style: { width: 110, textAlign: 'right' } },
+                    'ends ' + suiteRemaining(b.until)
+                  )
+                ),
+                this.state.open['ban:' + b.key] ? this.renderEvidence(b) : null
+              )
+            )
+          ),
+      this.state.bans.length > 1
+        ? React.createElement(
+            'div',
+            { key: 'all', style: { marginTop: 10 } },
+            suiteButton(
+              'unban-all',
+              'Unban everyone',
+              'danger',
+              () => {
+                if (window.confirm('Lift all ' + this.state.bans.length + ' bans?')) {
+                  this.act('/_unban', { all: true }, 'Every ban has been lifted.');
+                }
+              },
+              this.state.busy
+            )
+          )
+        : null,
+    ]);
+  };
+
+  // -------------------------------------------------------------------------------------------
+  // incidents
+  // -------------------------------------------------------------------------------------------
+
+  incidentActions = (i) => [
+    i.state !== 'acknowledged'
+      ? suiteButton(
+          'ack',
+          'Acknowledge',
+          'secondary',
+          () => this.ask('inc', 'state', i.key, 'acknowledged'),
+          this.state.busy
+        )
+      : null,
+    i.state !== 'resolved'
+      ? suiteButton('resolve', 'Resolve', 'success', () => this.ask('inc', 'state', i.key, 'resolved'), this.state.busy)
+      : null,
+    i.workflow
+      ? suiteButton(
+          'reopen',
+          'Reopen',
+          'secondary',
+          () => this.act('/_incident_state', { key: i.key, state: 'open' }, i.key + ' is open again.'),
+          this.state.busy
+        )
+      : null,
+    !i.banned && !i.allowlisted
+      ? suiteButton(
+          'ban',
+          'Ban for an hour',
+          'danger',
+          () =>
+            this.act(
+              '/_ban',
+              { ref: i.key, duration_seconds: 3600, reason: 'banned from the incident console — ' + i.last_message },
+              i.key + ' banned for an hour.'
+            ),
+          this.state.busy
+        )
+      : null,
+    !i.allowlisted
+      ? suiteButton('allow', 'Never ban this caller', 'warning', () => this.ask('inc', 'allow', i.key), this.state.busy)
+      : null,
+  ].filter((b) => b);
+
+
+
+  visibleIncidents = () => {
+    const filter = this.state.incidentFilter;
+    return this.state.incidents
+      .filter((i) => this.matches(i.key + ' ' + i.last_message + ' ' + (i.tags || []).join(' ')))
+      .filter((i) => {
+        if (filter === 'all') return true;
+        if (filter === 'active') return i.state === 'open' || i.state === 'reopened';
+        return i.state === filter;
+      });
+  };
+
+  renderIncidentDetail = (i) =>
+    React.createElement(
+      'div',
+      { key: 'd-' + i.key, style: { padding: '8px 10px 12px 18px' } },
+      suiteRows(
+        [
+          ['Identity', i.key],
+          ['First seen', suiteWhen(i.first_seen)],
+          ['Last seen', suiteWhen(i.last_seen) + ' (' + reputationAgo(i.last_seen) + ')'],
+          ['Events', i.count + ' recorded, ' + (i.enforced_count || 0) + ' enforced'],
+          ['Categories', (i.categories || []).join(', ') || '—'],
+          ['Actions taken', (i.actions || []).join(', ') || '—'],
+          ['Tags', (i.tags || []).join(', ') || '—'],
+          ['Routes', (i.routes || []).join(', ') || '—'],
+          // only the merged view can answer this, and "one caller, three nodes" is a different
+          // problem from "one caller, one node"
+          ['Seen by', (i.nodes || []).join(', ') || '—'],
+          i.workflow
+            ? [
+                'State',
+                i.workflow.state + ' by ' + i.workflow.by + ', ' + reputationAgo(i.workflow.at) +
+                  (i.workflow.note ? ' — ' + i.workflow.note : ''),
+              ]
+            : null,
+          i.banned ? ['Currently', 'banned, ends ' + suiteRemaining(i.ban && i.ban.until)] : null,
+          i.allowlisted ? ['Currently', 'allowlisted — the fabric will not ban this caller'] : null,
+        ].filter((r) => r),
+        140
+      ),
+      (i.timeline || []).length > 0
+        ? React.createElement(
+            'div',
+            { key: 'tl' },
+            React.createElement(
+              'div',
+              { className: 'suite-meta', style: { margin: '8px 0 4px' } },
+              'The last ' + (i.timeline || []).length + ' of ' + i.count + ' events'
+            ),
+            this.renderTimeline(i.timeline)
+          )
+        : null,
+      React.createElement('div', { key: 'act', style: { marginTop: 10 } }, this.incidentActions(i)),
+      this.renderPending('inc', i.key)
+    );
+
+  renderIncidents = () => {
+    const incidents = this.visibleIncidents();
+    return suitePanel('incidents', [
+      React.createElement('div', { key: 't', className: 'suite-title' }, 'Incidents (' + incidents.length + ')'),
+      React.createElement(
+        'div',
+        { key: 'lede', className: 'suite-meta', style: { marginBottom: 10 } },
+        'One run of activity from one caller, collapsed and merged across every node. Acknowledging or ' +
+          'resolving one is shared with the rest of the team. A resolved caller who comes back reopens.'
+      ),
+      incidents.length === 0
+        ? suiteNotice(
+            'none',
+            'success',
+            this.state.incidents.length === 0
+              ? 'Nothing correlated in the current window.'
+              : 'Nothing matches that filter — ' + this.state.incidents.length + ' incidents are hidden by it.'
+          )
+        : React.createElement(
+            'div',
+            { key: 'list' },
+            incidents.map((i) =>
+              React.createElement(
+                'div',
+                { key: i.key, style: { borderBottom: '1px solid var(--border-color)' } },
+                React.createElement(
+                  'div',
+                  { className: 'suite-row', style: { alignItems: 'center' } },
+                  suiteDisclosure(this.state.open['inc:' + i.key], i.key, () => this.toggle('inc:' + i.key)),
+                  suiteBadge('st-' + i.key, i.state, incidentTone(i.state)),
+                  React.createElement('span', { style: { flex: 1 } }, i.last_message),
+                  i.banned ? suiteBadge('b-' + i.key, 'banned', 'danger') : null,
+                  i.allowlisted ? suiteBadge('a-' + i.key, 'allowlisted', 'info') : null,
+                  suiteBadge('c-' + i.key, i.count + ' events', 'neutral'),
+                  suiteBadge('s-' + i.key, 'max ' + i.max_score, i.max_score >= 90 ? 'danger' : 'warning'),
+                  React.createElement(
+                    'span',
+                    { className: 'suite-meta', style: { width: 90, textAlign: 'right' } },
+                    reputationAgo(i.last_seen)
+                  )
+                ),
+                this.state.open['inc:' + i.key] ? this.renderIncidentDetail(i) : null
+              )
+            )
+          ),
+    ]);
+  };
+
+  // -------------------------------------------------------------------------------------------
+  // allowlist and the manual ban
+  // -------------------------------------------------------------------------------------------
+
+  renderAllowlist = () => {
+    const entries = this.state.allowlist.filter((e) => this.matches(e.key + ' ' + e.reason));
+    return suitePanel('allowlist', [
+      React.createElement('div', { key: 't', className: 'suite-title' }, 'Allowlist (' + entries.length + ')'),
+      React.createElement(
+        'div',
+        { key: 'lede', className: 'suite-meta', style: { marginBottom: 10 } },
+        'Identities the fabric will never ban, whichever module asks. It does not switch off inspection — ' +
+          'the WAF and the response engine still apply. To exempt a caller from the fabric entirely, use a ' +
+          "threat policy's exemptions instead."
+      ),
+      entries.length === 0
+        ? suiteNotice('none', 'neutral', 'Nothing is allowlisted.')
+        : React.createElement(
+            'div',
+            { key: 'list' },
+            entries.map((e) =>
+              React.createElement(
+                'div',
+                { key: e.key, className: 'suite-row', style: { alignItems: 'center', borderBottom: '1px solid var(--border-color)' } },
+                React.createElement('span', { style: { width: 250, flex: 'none' } }, e.key),
+                React.createElement('span', { style: { flex: 1 } }, e.reason),
+                suiteBadge('p-' + e.key, e.permanent ? 'permanent' : 'until ' + suiteWhen(e.until), e.permanent ? 'info' : 'warning'),
+                React.createElement(
+                  'span',
+                  { className: 'suite-meta', style: { width: 200 } },
+                  'by ' + e.added_by + ', ' + reputationAgo(e.added_at)
+                ),
+                suiteButton(
+                  'rm-' + e.key,
+                  'Remove',
+                  'danger',
+                  () => this.act('/_disallow', { ref: e.key }, e.key + ' is no longer allowlisted.'),
+                  this.state.busy
                 )
               )
             )
@@ -367,43 +963,83 @@ class SecurityDashboardPage extends Component {
     ]);
   };
 
-  renderIncidents = () => {
-    const incidents = this.state.incidents;
-    return suitePanel('incidents', [
-      React.createElement('div', { key: 't', className: 'suite-title' }, 'Incidents (' + incidents.length + ')'),
+  renderManualBan = () =>
+    suitePanel('manual', [
+      React.createElement('div', { key: 't', className: 'suite-title' }, 'Ban a caller'),
       React.createElement(
         'div',
         { key: 'lede', className: 'suite-meta', style: { marginBottom: 10 } },
-        'One run of activity from one caller, collapsed. Alert on these rather than on individual matches.'
+        'An identity is a kind and a value: ip:1.2.3.4, apikey:client-id, user:someone@example.com, ' +
+          'fingerprint:… — a bare address is read as an ip.'
       ),
-      incidents.length === 0
-        ? suiteNotice('none', 'success', 'Nothing correlated in the current window.')
-        : React.createElement(
-            'div',
-            { key: 'list' },
-            incidents.map((i) =>
-              React.createElement(
-                'div',
-                { key: i.id, className: 'suite-row', style: { alignItems: 'center', borderBottom: '1px solid var(--border-color)' } },
-                React.createElement('span', { style: { width: 220 } }, i.key),
-                React.createElement('span', { style: { flex: 1 } }, i.last_message),
-                suiteBadge('c-' + i.id, i.count + ' events', 'neutral'),
-                suiteBadge('s-' + i.id, 'max ' + i.max_score, i.max_score >= 90 ? 'danger' : 'warning'),
-                React.createElement('span', { className: 'suite-meta', style: { width: 110 } }, reputationAgo(i.last_seen))
-              )
-            )
-          ),
+      React.createElement(
+        'div',
+        { key: 'form', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+        React.createElement('input', {
+          key: 'ref',
+          type: 'text',
+          className: 'form-control',
+          style: { width: 260 },
+          placeholder: 'ip:1.2.3.4',
+          value: this.state.banRef,
+          onChange: (e) => this.setState({ banRef: e.target.value }),
+        }),
+        React.createElement(
+          'select',
+          {
+            key: 'dur',
+            className: 'form-select',
+            style: { width: 160 },
+            value: String(this.state.banDuration),
+            onChange: (e) => this.setState({ banDuration: parseInt(e.target.value, 10) }),
+          },
+          [
+            { v: 3600, l: 'for an hour' },
+            { v: 86400, l: 'for a day' },
+            { v: 604800, l: 'for a week' },
+          ].map((o) => React.createElement('option', { key: o.v, value: String(o.v) }, o.l))
+        ),
+        React.createElement('input', {
+          key: 'reason',
+          type: 'text',
+          className: 'form-control',
+          style: { flex: 1, minWidth: 220 },
+          placeholder: 'Why?',
+          value: this.state.banReason,
+          onChange: (e) => this.setState({ banReason: e.target.value }),
+        }),
+        suiteButton(
+          'do',
+          'Ban',
+          'danger',
+          () =>
+            this.act(
+              '/_ban',
+              {
+                ref: this.state.banRef.trim(),
+                duration_seconds: this.state.banDuration,
+                reason: this.state.banReason.trim() || 'banned from the incident console',
+              },
+              this.state.banRef.trim() + ' banned.'
+            ).then(() => this.setState({ banRef: '', banReason: '' })),
+          this.state.busy || this.state.banRef.trim().length === 0
+        )
+      ),
     ]);
-  };
 
   render() {
     return React.createElement(
       'div',
       {},
       this.state.error ? suiteNotice('e', 'danger', this.state.error) : null,
+      this.state.boardError ? suiteNotice('be', 'warning', this.state.boardError) : null,
+      this.state.notice ? suiteNotice('n', 'success', this.state.notice) : null,
       this.renderStatus(),
+      this.renderControls(),
       this.renderBans(),
-      this.renderIncidents()
+      this.renderIncidents(),
+      this.renderAllowlist(),
+      this.renderManualBan()
     );
   }
 }
@@ -861,7 +1497,7 @@ const SecurityFeatures = [
   },
   {
     title: 'Bans & incidents',
-    description: 'Who is banned, why, and what is happening right now',
+    description: 'Who is banned, on what evidence, and what to do about them',
     absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
     link: '/extensions/cloud-apim/waf/security',
     display: () => true,

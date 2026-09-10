@@ -39,7 +39,8 @@ class AdminAssetIT extends munit.FunSuite {
       "/extensions/cloud-apim/waf/wafrulesets",
       "/extensions/cloud-apim/waf/posture",
       "/extensions/cloud-apim/waf/tuning",
-      "/extensions/cloud-apim/waf/learning"
+      "/extensions/cloud-apim/waf/learning",
+      "/extensions/cloud-apim/waf/security"
     ).foreach { path =>
       assert(
         script.contains(s"link: '$path'"),
@@ -58,6 +59,31 @@ class AdminAssetIT extends munit.FunSuite {
     // "Something went wrong !!!" and no logged cause
     assert(!script.contains("title: ''"), "a column with an empty title and no filterId will crash the table")
     assert(!script.contains("title: \"\""), "a column with an empty title and no filterId will crash the table")
+  }
+
+  test("the incident console surfaces a refusal instead of quietly doing nothing") {
+    // the api answers `done: false` for the refusals that are decisions rather than failures —
+    // banning an allowlisted caller, extending a lapsed ban. an operator who is not told walks away
+    // believing a caller is banned when they are not
+    val page = script.substring(script.indexOf("class SecurityDashboardPage"))
+    assert(page.contains("r.done === false"), "the console must read the api's refusals")
+    assert(page.contains("refusedMessage"), "and say which allowlist entry refused the ban")
+  }
+
+  test("the console asks for a reason inline rather than behind a modal") {
+    // window.prompt on an *optional* note is a trap: cancelling it abandons the action the operator
+    // asked for, not the note they were offered
+    val page = script.substring(script.indexOf("class SecurityDashboardPage"))
+    assert(!page.contains("window.prompt("), "an inline form, not a blocking dialog")
+    assert(page.contains("renderPending"), "the reason and the note are collected in the row")
+  }
+
+  test("the row that hides the evidence is reachable by keyboard") {
+    // a span with an onClick is not focusable and announces nothing, so the evidence behind every
+    // ban would be mouse-only — and it is invisible to any tool that reads the accessibility tree
+    val page = script.substring(script.indexOf("function suiteDisclosure"))
+    assert(page.take(600).contains("aria-expanded"), "the disclosure must declare its state")
+    assert(page.take(600).contains("'button'"), "and be a real button")
   }
 
   test("the posture page uses the shared table rather than hand-rolled rows") {

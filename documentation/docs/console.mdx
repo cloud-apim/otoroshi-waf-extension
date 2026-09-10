@@ -13,12 +13,14 @@ Two surfaces, and they have very different requirements:
 | | Needs | Answers |
 |---|---|---|
 | **Route posture** | nothing | Which routes are protected, in which mode — *now* |
+| **Bans & incidents** | nothing | Who is being stopped right now, on what evidence, and what to do about them |
 | **WAF tuning** | nothing | Which rules are firing on legitimate traffic, and what to do about it |
 | **WAF learning mode** | nothing | Whether this configuration can be armed yet, and what it would cost |
 | **Dashboards and queries** | the user-analytics exporter (postgres) | What happened, over time |
 
-The two pages that need nothing still need the shared state to see the whole cluster — see
-[what a complete deployment needs](./architecture.mdx).
+Three of those pages need nothing to *work*, but need the shared state to see the whole cluster —
+see [what a complete deployment needs](./architecture.mdx). Route posture is the exception: it reads
+live routing state, which every node already has.
 
 ## Route posture
 
@@ -54,6 +56,30 @@ Two distinctions it is careful about:
 
 It reads live state and touches no analytics at all — it works before a single event has been
 emitted.
+
+## Bans & incidents
+
+**Cloud APIM - Security Suite → Bans & incidents.** The console during an incident, rather than the
+report afterwards.
+
+Three registers, in the order an incident gets worked:
+
+| | |
+|---|---|
+| **Active bans** | What the fabric is holding right now — who, why, on what evidence, until when |
+| **Incidents** | What it is still watching, merged across every node, with a state a team can move |
+| **Allowlist** | What it has been told to leave alone |
+
+Every row opens for its evidence, and every action is one click from that evidence rather than from
+a separate form: extend a ban, lift it, acknowledge or resolve an incident, ban a caller for an
+hour, or put them on the allowlist for good.
+
+It reads the shared state and no analytics at all, so it works before an exporter exists — and it
+says which shared state it is reading, because on a leader/worker cluster without a
+`security.redis-uri` an empty list means "this node saw nothing", not "nothing happened".
+
+The detail is in [bans and the allowlist](./fabric/bans.mdx) and
+[events and incidents](./fabric/incidents.mdx).
 
 ## Dashboards and queries
 

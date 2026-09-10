@@ -129,7 +129,9 @@ class CloudApimThreatGate extends NgAccessValidator {
         val identity = ThreatSupport.identityOf(ctx.request, ctx.attrs)
         val policy   = mod.policyOrDefault(config.policy)
         ThreatBus.start(ctx.attrs, identity)
-        if (policy.isExempt(identity.ip)) {
+        // the allowlist already stops bans being *issued*; checking it here closes the window where
+        // a ban issued a moment earlier is still in this node's cache waiting for the next refresh
+        if (policy.isExempt(identity.ip) || mod.allowlist.check(identity).isDefined) {
           NgAccess.NgAllowed.vfuture
         } else {
           mod.bans.check(identity) match {
@@ -397,7 +399,10 @@ class CloudApimThreatResponse extends NgRequestTransformer {
               reason = decision.reason,
               tags = score.tags,
               score = score.score,
-              signals = JsArray(score.signals.map(_.json))
+              signals = JsArray(score.signals.map(_.json)),
+              // the signals say why this request scored; the timeline says what the caller has been
+              // doing up to now, and outlives the incident that holds it
+              timeline = mod.incidents.byKey(ref.key).toSeq.flatMap(_.timeline)
             )
           }
           ThreatSupport.denyT(tier.status, ctx).map(Left.apply)

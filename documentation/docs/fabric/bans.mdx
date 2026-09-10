@@ -45,16 +45,83 @@ The dedicated connection goes through the same stateful client manager Otoroshi'
 limiter uses.
 :::
 
+### On what evidence
+
+Open a ban on the console and it shows what the caller actually did: the timeline of the incident
+they were part of, copied into the ban **at the moment it was issued**.
+
+A copy rather than a lookup, because the two have different lifetimes. An incident is evicted after
+the correlation window — thirty minutes by default — and a ban routinely outlives it. Without the
+copy, a ban issued an hour ago has nothing behind it by the time anyone asks why, which is precisely
+when the question gets asked.
+
+Bans issued by the scored response engine carry the **signals** as well: which detector contributed
+what, and how confident it was. A manual ban carries neither, and the console says so rather than
+showing an empty panel.
+
 ### Managing them
 
 | | |
 |---|---|
 | `GET /_bans` | Every live ban with its evidence |
 | `POST /_ban` | `{"ref": "ip:1.2.3.4", "duration_seconds": 3600, "reason": "..."}` |
+| `POST /_extend` | `{"ref": "ip:1.2.3.4", "duration_seconds": 86400}` |
 | `POST /_unban` | `{"ref": "ip:1.2.3.4"}`, or `{"all": true}` |
 
-All under `/extensions/cloud-apim/extensions/waf/security`. The UI page does the same with a button
-per ban.
+All under `/extensions/cloud-apim/extensions/waf/security`. The console does the same from the row.
+
+**Extending measures from the current end, not from now.** Adding an hour to a ban with an hour left
+leaves two. And there is nothing to extend once a ban has lapsed: the call answers that it lapsed
+rather than quietly minting a fresh one nobody asked for.
+
+Every one of these actions is recorded as a `CloudApimWafSecurityAudit` with the operator's email on
+it. They are the decisions in this product that most need a name against them — taken under
+pressure, changing what the gateway does to real callers, and rarely asked about by the person who
+took them.
+
+## The allowlist
+
+Some callers must never be banned. The partner whose integration suite trips every rate limit, the
+monitoring probe, the office address.
+
+**Cloud APIM - Security Suite → Bans & incidents → Allowlist**, or one click from the row of the
+caller in front of you.
+
+```bash
+curl -X POST .../security/_allow \
+  -d '{"ref":"apikey:partner-ci","reason":"nightly integration suite","unban":true}'
+curl -X POST .../security/_disallow -d '{"ref":"apikey:partner-ci"}'
+```
+
+The entry is permanent unless you pass `duration_seconds`. A bounded one is useful — *leave them
+alone while we tune* — but it is not the default, because the case the primitive exists for is the
+permanent one.
+
+### Two things it does, and one it does not
+
+**It refuses the ban rather than removing it afterwards.** The check lives in the ban store, which
+is the single point every ban goes through, from every module — fail2ban, the ledger, the response
+engine, the honeypot, the admin API. "This caller is never banned" is only worth promising if it
+holds on every path, including the ones added later.
+
+**It lifts what is already held.** Allowlisting through the console also unbans the caller and
+forgets their ledger total. Either half on its own looks like the feature is broken: allowlisting
+alone leaves them banned until the current ban lapses, and unbanning alone leaves the ledger free to
+re-ban them inside the window.
+
+**It does not switch off inspection.** The WAF still inspects, the response engine still scores, and
+a tier that denies still denies. The allowlist governs *bans*, nothing else.
+
+:::note To exempt a caller from the fabric entirely
+Use a [threat policy's](./policies.mdx) `exemptions` instead. Those are address ranges, configured
+ahead of time, and they skip the gate outright. The allowlist is the operational counterpart: any
+kind of identity — apikey, user, fingerprint, address — added in one click during an incident,
+applying to every route at once.
+:::
+
+Entries live in the shared state and reach the other nodes on their next refresh, exactly like bans.
+And exactly like bans, a refresh that fails keeps the stale copy: dropping the allowlist would make
+the fabric *more* aggressive, which is not the direction to fail in.
 
 ## The ledger
 
@@ -79,6 +146,8 @@ path — the promotion writes a ban, and ban lookups are free. A per-request rou
 running total would undo the reason for having a cheap layer at all.
 
 When a ban is issued the total is consumed, so the next contribution does not re-ban instantly.
+The same happens when the ban is *refused* because the caller is allowlisted — otherwise every
+subsequent contribution would ask again, and be refused again, forever.
 
 ### What charges it
 

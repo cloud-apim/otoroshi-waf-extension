@@ -175,6 +175,28 @@ the decision was taken on, not only the change.
 }
 ```
 
+## CloudApimWafSecurityAudit
+
+Emitted for every operator action taken on the
+[Bans & incidents console](../fabric/bans.mdx) — a ban, an extension, an unban, an allowlist entry,
+or an incident moved to a new state.
+
+```json
+{
+  "@type": "CloudApimWafSecurityAudit",
+  "audit": "SECURITY_OPERATOR_ACTION",
+  "user": { "name": "Ada", "email": "ada@example.com" },
+  "action": "allowlist",
+  "ref": "apikey:partner-ci",
+  "detail": { "reason": "nightly integration suite", "until": null, "released": true }
+}
+```
+
+`action` is one of `ban`, `ban-refused`, `extend`, `unban`, `unban-all`, `allowlist`,
+`allowlist-remove`, `incident-acknowledged`, `incident-resolved` or `incident-open`. A refused ban is
+audited too: knowing that someone *tried* to ban a caller the allowlist protects is worth as much as
+knowing they succeeded.
+
 ## Suggested exporters
 
 | Goal | Filter on |
@@ -186,3 +208,4 @@ the decision was taken on, not only the change.
 | Tuning backlog | `blocking: false` and `block != null`, group by rule id |
 | Reputation coverage | `@type: CloudApimWafReputationEvent`, group by `verdict.tags` |
 | Alerting | `blocked: true` or `blocking: true` with `block != null`, over a burst window |
+| Who changed what during the incident | `@type: CloudApimWafSecurityAudit`, group by `user.email` |

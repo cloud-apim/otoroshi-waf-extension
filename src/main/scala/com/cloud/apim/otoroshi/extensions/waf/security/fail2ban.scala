@@ -6,7 +6,12 @@ import play.api.Logger
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future}
 
-final case class Fail2BanOutcome(count: Long, threshold: Int, ban: Option[BanEntry]) {
+final case class Fail2BanOutcome(
+    count: Long,
+    threshold: Int,
+    ban: Option[BanEntry],
+    allowlisted: Option[AllowlistEntry] = None
+) {
   def banned: Boolean  = ban.isDefined
   def reached: Boolean = count >= threshold
 }
@@ -91,8 +96,21 @@ class Fail2BanCounter(
                 tags = (tags :+ Fail2Ban.tag).distinct,
                 score = 100
               )
-              // the counter is consumed by the ban, otherwise the next failure re-bans instantly
-              .flatMap(entry => store.del(key).map(_ => Fail2BanOutcome(count, maxRetry, Some(entry))))
+              // the counter is consumed by the decision — ban or refusal — otherwise the next
+              // failure re-attempts instantly
+              .flatMap { outcome =>
+                store.del(key).map { _ =>
+                  Fail2BanOutcome(
+                    count,
+                    maxRetry,
+                    outcome.entry,
+                    outcome match {
+                      case BanOutcome.Allowlisted(allow) => Some(allow)
+                      case _                             => None
+                    }
+                  )
+                }
+              }
           }
         }
       }

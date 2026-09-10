@@ -37,7 +37,7 @@ This extension is built on top of the following open-source Cloud APIM libraries
 
 - **One shared threat score**: Detectors contribute weighted signals rather than each blocking alone, so a request is judged on the accumulation instead of on whichever check happens to fire first
 - **Graded response**: A threat policy maps score tiers to `log`, `tarpit`, `challenge`, `deny` or `ban` — and defaults to dry run, recording what it would have done and enforcing nothing
-- **Cluster-wide bans**: A shared ban store and a cross-request ledger, so a caller banned on one node is banned on every node
+- **Cluster-wide bans**: A shared ban store and a cross-request ledger, so a caller banned on one node is banned on every node — with an operator console that shows what each ban is based on, an allowlist that no module can ban through, and incidents merged across nodes with a state a team can work
 - **Distributed fail2ban**: Repeated failed responses ban the caller across the whole cluster — Otoroshi's own plugin keeps its counters and bans node-local, so its threshold means N times what you configured on N nodes
 - **Correlated incidents**: Normalised ECS-shaped events grouped into one incident rather than nine thousand alerts
 - **One preset plugin**: Lays the whole chain down on a route in the one order that makes it work, with each section switchable
@@ -80,7 +80,7 @@ This extension is built on top of the following open-source Cloud APIM libraries
 A single node needs nothing else. A complete deployment needs two things, and both fail quietly
 rather than loudly:
 
-- **a redis** (`security.redis-uri`) for shared state — bans, fail2ban counters, challenges, tuning
+- **a redis** (`security.redis-uri`) for shared state — bans, the allowlist, incidents, fail2ban counters, challenges, tuning
   candidates and learning windows. On a leader/worker cluster this is not optional: a worker never
   reaches your storage backend, so without it the workers record what they see and the leader that
   serves the admin UI never sees any of it

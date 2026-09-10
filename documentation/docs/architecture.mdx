@@ -18,7 +18,8 @@ This is the page to read before trusting a number.
 | | Needs | Without it |
 |---|---|---|
 | WAF, bots, reputation, honeypots, the preset | nothing | — |
-| Cluster-wide **bans**, **fail2ban**, **challenges**, the **ledger** | a redis | Each node keeps its own; a threshold means N× what you configured on N nodes |
+| Cluster-wide **bans**, the **allowlist**, **fail2ban**, **challenges**, the **ledger** | a redis | Each node keeps its own; a threshold means N× what you configured on N nodes |
+| **[Incidents](./fabric/incidents.mdx)** merged across nodes, and their state | a redis | The console shows only what the node serving it saw |
 | **[Tuning assistant](./waf/assistant.mdx)** candidates | a redis | On a leader/worker cluster, an empty page |
 | **[Learning mode](./waf/learning.mdx)** windows | a redis | Counts that never leave the workers |
 | **[Dashboards and analytics queries](./console.mdx)** | a postgres | No history, no volumes, no top-N |
@@ -57,7 +58,8 @@ is not reading it. Only a dedicated `security.redis-uri` puts every node on the 
 :::caution How you can tell
 The tuning page and the learning report both say so. The tuning page prints *"the shared state is
 not reaching the other nodes"*, and learning refuses to let its window be read as a measurement of
-your traffic. The *Bans & incidents* page reports which of the two stores is in use.
+your traffic. The *Bans & incidents* page reports which of the two stores is in use, and prints the
+reason it is not reaching the other nodes rather than leaving you to infer it from a short list.
 :::
 
 If your cluster mode is `off` — several nodes each talking directly to a shared Postgres or Redis
@@ -82,8 +84,9 @@ configured — they simply do not land anywhere a dashboard can query.
 
 Note the split of responsibilities, because it explains why both exist:
 
-- **Redis holds what is happening now** — bans, counters, tuning candidates, an open learning
-  window. Small, hot, read on the request path or a page refresh.
+- **Redis holds what is happening now** — bans, the allowlist, counters, live incidents and the
+  state a team put on them, tuning candidates, an open learning window. Small, hot, read on the
+  request path or a page refresh.
 - **Postgres holds what happened** — every event, retained and queryable. Large, cold, never on the
   request path.
 
@@ -105,7 +108,7 @@ keeps working when redis is down.
           └───┬───┘    └───┬───┘    └───┬───┘
               └────────────┼────────────┘
                            ▼
-                         redis      (shared state: bans, counters, tuning, learning)
+                         redis      (shared state: bans, incidents, counters, tuning, learning)
 ```
 
 The leader reads the admin API. The workers serve traffic and record what they see. The redis is
@@ -118,7 +121,7 @@ request, and never lets one through that a local rule would have stopped:
 
 | Failure | Effect |
 |---|---|
-| Redis unreachable | Bans already loaded keep applying; new ones do not propagate. The tuning page falls back to the node's own buffer and says so |
+| Redis unreachable | Bans and allowlist entries already loaded keep applying; new ones do not propagate. The incident console falls back to the node it is served by, and the tuning page to that node's own buffer, and both say so |
 | Postgres unreachable | Dashboards stop updating. Detection is unaffected |
 | Both | The WAF, bots, reputation and the fabric's local decisions all keep working |
 

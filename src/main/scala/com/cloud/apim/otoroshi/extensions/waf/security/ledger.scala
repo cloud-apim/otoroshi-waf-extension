@@ -32,7 +32,16 @@ class ThreatLedger(
     store: SharedStateStore,
     bans: BanStore,
     settings: () => LedgerSettings,
-    logger: Logger
+    logger: Logger,
+    /**
+     * What the caller did to earn the ban.
+     *
+     * The ledger holds a running total and nothing else, so a ban it promotes would otherwise
+     * arrive with no evidence at all — on precisely the bans that need it most, since nobody
+     * remembers what a caller was doing an hour ago. The module wires this to the incident timeline
+     * for the same identity.
+     */
+    evidence: IdentityRef => Seq[IncidentEvent] = _ => Seq.empty
 )(using ec: ExecutionContext) {
 
   private def keyOf(ref: IdentityRef): String = s"$prefix:${ref.kind}:${ref.value}"
@@ -54,17 +63,23 @@ class ThreatLedger(
         .flatMap { total =>
           store.pexpire(key, current.window.toMillis).flatMap { _ =>
             if (total >= current.banThreshold && bans.check(ref).isEmpty) {
-              logger.info(s"ledger promoted ${ref.key} to a ban: $total >= ${current.banThreshold}")
               bans
                 .ban(
                   ref = ref,
                   duration = current.banDuration,
                   reason = s"accumulated threat score $total over ${current.window.toMinutes}m — $reason",
                   tags = tags,
-                  score = math.min(100, total.toInt)
+                  score = math.min(100, total.toInt),
+                  timeline = evidence(ref)
                 )
-                // the total is consumed by the ban, otherwise the next contribution re-bans instantly
-                .flatMap(_ => store.del(key))
+                .flatMap { outcome =>
+                  if (outcome.issued) {
+                    logger.info(s"ledger promoted ${ref.key} to a ban: $total >= ${current.banThreshold}")
+                  }
+                  // the total is consumed by the decision either way, otherwise the next
+                  // contribution re-attempts instantly — including against an allowlisted caller
+                  store.del(key)
+                }
                 .map(_ => total)
             } else {
               total.vfuture

@@ -8,8 +8,10 @@ import org.apache.pekko.actor.Cancellable
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
+import org.joda.time.DateTime
 import otoroshi.env.Env
-import otoroshi.models.EntityLocationSupport
+import otoroshi.events.AuditEvent
+import otoroshi.models.{BackOfficeUser, EntityLocationSupport}
 import otoroshi.next.extensions.*
 import otoroshi.security.IdGenerator
 import otoroshi.utils.cache.types.UnboundedTrieMap
@@ -22,6 +24,43 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
+
+/**
+ * One operator action on the incident console, recorded.
+ *
+ * Bans, unbans and allowlist entries are the decisions in this product that most need a name
+ * against them: they are taken under pressure, they change what the gateway does to real callers,
+ * and the person who took one is rarely the person asked about it a week later.
+ */
+case class CloudApimWafSecurityAudit(
+    user: Option[BackOfficeUser],
+    action: String,
+    ref: Option[IdentityRef],
+    detail: JsObject
+) extends AuditEvent {
+
+  override def `@type`: String               = "CloudApimWafSecurityAudit"
+  override def `@service`: String            = "Otoroshi"
+  override def `@serviceId`: String          = "--"
+  val `@id`: String                          = IdGenerator.uuid
+  val `@timestamp`: DateTime                 = DateTime.now()
+  override def fromOrigin: Option[String]    = None
+  override def fromUserAgent: Option[String] = None
+
+  override def toJson(using _env: Env): JsValue = Json.obj(
+    "@id"        -> `@id`,
+    "@timestamp" -> play.api.libs.json.JodaWrites.JodaDateTimeNumberWrites.writes(`@timestamp`),
+    "@type"      -> `@type`,
+    "@product"   -> "otoroshi",
+    "@serviceId" -> `@serviceId`,
+    "@service"   -> `@service`,
+    "audit"      -> "SECURITY_OPERATOR_ACTION",
+    "user"       -> user.map(u => Json.obj("name" -> u.name, "email" -> u.email)).getOrElse(JsNull).asValue,
+    "action"     -> action,
+    "ref"        -> ref.map(r => JsString(r.key)).getOrElse(JsNull).asInstanceOf[JsValue],
+    "detail"     -> detail
+  )
+}
 
 class SecurityDatastores(env: Env, extensionId: AdminExtensionId) {
   val threatPolicyDatastore: ThreatPolicyDatastore =
@@ -154,10 +193,25 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
           "`security.redis-uri` at a redis to make it independent of the backend."
       )
   val states: SecurityState         = new SecurityState()
-  val bans: BanStore                = new BanStore(s"$keyPrefix:bans", sharedState, nodeId, logger)
-  val ledger: ThreatLedger          = new ThreatLedger(s"$keyPrefix:ledger", sharedState, bans, () => ledgerSettings, logger)
+
+  /** Declared before the bans, because the ban store consults it on every write. */
+  val allowlist: AllowlistStore     = new AllowlistStore(s"$keyPrefix:allowlist", sharedState, logger)
+  val bans: BanStore                =
+    new BanStore(s"$keyPrefix:bans", sharedState, nodeId, logger, allowlist.check(_: IdentityRef))
+  val incidents: IncidentCorrelator = new IncidentCorrelator(() => incidentWindow, node = Some(nodeId))
+  val ledger: ThreatLedger          = new ThreatLedger(
+    s"$keyPrefix:ledger",
+    sharedState,
+    bans,
+    () => ledgerSettings,
+    logger,
+    // the running total says how much, and nothing about what. The timeline the correlator already
+    // keeps for the same identity is the only record of that, so a promoted ban carries it
+    evidence = ref => incidents.byKey(ref.key).toSeq.flatMap(_.timeline)
+  )
   val fail2ban: Fail2BanCounter     = new Fail2BanCounter(s"$keyPrefix:fail2ban", sharedState, bans, logger)
-  val incidents: IncidentCorrelator = new IncidentCorrelator(() => incidentWindow)
+  val board: IncidentBoard          =
+    new IncidentBoard(keyPrefix, sharedState, nodeId, incidents, bans, allowlist, logger)
   val challenges: ChallengeService  = new ChallengeService(
     sharedState,
     new com.cloud.apim.otoroshi.extensions.waf.reputation.EnvHttpClient(env),
@@ -195,6 +249,7 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     weight = configuration.getOptional[Int]("security.ledger.waf-weight").getOrElse(25)
   )
 
+  private var ticks    = 0L
   private val ticker   = new AtomicReference[Option[Cancellable]](None)
   private val relay    = new AtomicReference[Option[org.apache.pekko.actor.ActorRef]](None)
   private val basePath = "/extensions/cloud-apim/extensions/waf/security"
@@ -205,7 +260,9 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
 
   def start(): Unit = {
     if (enabled) {
-      bans.refresh()
+      // the allowlist first, and only then the bans: a node that starts issuing bans before it
+      // knows who it must not ban would ban them
+      allowlist.refresh().flatMap(_ => bans.refresh())
       ticker.set(Some(env.otoroshiScheduler.scheduleWithFixedDelay(tickInterval, tickInterval)(() => tick())))
       startRelay()
       logger.info(
@@ -252,7 +309,18 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
         val ref      = identity.primary
         val message  = WafDetectionRelay.message(event, enforced)
         if (settings.correlate) {
-          incidents.record(ref, "waf", settings.weight, Seq("waf:match"), if (enforced) "deny" else "log", message)
+          val (routeId, routeName) = WafDetectionRelay.route(event)
+          incidents.record(
+            ref = ref,
+            category = "waf",
+            score = settings.weight,
+            tags = Seq("waf:match"),
+            action = if (enforced) "deny" else "log",
+            message = message,
+            enforced = enforced,
+            routeId = routeId,
+            routeName = routeName
+          )
         }
         val shouldCharge = (enforced && settings.feedLedgerOnBlock) || (!enforced && settings.feedLedgerOnMonitored)
         if (shouldCharge) ledger.record(ref, settings.weight, message, Seq("waf:match"))
@@ -285,8 +353,15 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
 
   private def tick(): Unit = {
     Try {
+      allowlist.refresh()
       bans.refresh()
       incidents.evict()
+      // publishing after evicting, so a node never shares what it has already dropped
+      board.publish()
+      ticks += 1
+      // the state hash only grows, and nothing else prunes it — but it is a slow leak, not a hot
+      // one, so once every few minutes is plenty
+      if (ticks % SecurityModule.pruneEvery == 0) board.pruneStates()
     } match {
       case scala.util.Failure(err) => logger.error("security tick failed", err)
       case _                       => ()
@@ -319,7 +394,17 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       ledgerWeight: Int = 0
   ): Incident = {
     val ref      = identity.refs.headOption.getOrElse(IdentityRef(IdentityRef.Ip, identity.ip))
-    val incident = incidents.record(ref, category, decision.score, tags, decision.action.name, message)
+    val incident = incidents.record(
+      ref = ref,
+      category = category,
+      score = decision.score,
+      tags = tags,
+      action = decision.action.name,
+      message = message,
+      enforced = decision.enforced,
+      routeId = routeId,
+      routeName = routeName
+    )
     CloudApimSecurityEvent(
       category = category,
       action = decision.action.name,
@@ -396,19 +481,54 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       method = "GET",
       path = s"$basePath/_incidents",
       wantsBody = false,
-      handle = (_, _, _, _) => Results.Ok(Json.obj("incidents" -> JsArray(incidents.all.map(_.json)))).vfuture
+      handle = (_, _, _, _) =>
+        board.all().map(views => Results.Ok(Json.obj("incidents" -> JsArray(views.map(_.json))))).recover {
+          case err: Throwable =>
+            logger.error("could not read the incident board", err)
+            Results.Ok(Json.obj("incidents" -> JsArray(Seq.empty), "error" -> err.getMessage))
+        }
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_incident_state",
+      wantsBody = true,
+      handle = (_, _, user, body) => withJsonBody(body)(handleIncidentState(user, _))
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = s"$basePath/_allowlist",
+      wantsBody = false,
+      handle = (_, _, _, _) => Results.Ok(Json.obj("entries" -> JsArray(allowlist.all.map(_.json)))).vfuture
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_allow",
+      wantsBody = true,
+      handle = (_, _, user, body) => withJsonBody(body)(handleAllow(user, _))
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_disallow",
+      wantsBody = true,
+      handle = (_, _, user, body) => withJsonBody(body)(handleDisallow(user, _))
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
       path = s"$basePath/_ban",
       wantsBody = true,
-      handle = (_, _, _, body) => withJsonBody(body)(handleBan)
+      handle = (_, _, user, body) => withJsonBody(body)(handleBan(user, _))
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_extend",
+      wantsBody = true,
+      handle = (_, _, user, body) => withJsonBody(body)(handleExtend(user, _))
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
       path = s"$basePath/_unban",
       wantsBody = true,
-      handle = (_, _, _, body) => withJsonBody(body)(handleUnban)
+      handle = (_, _, user, body) => withJsonBody(body)(handleUnban(user, _))
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -428,11 +548,14 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     "node"      -> nodeId,
     "enabled"   -> enabled,
     "bans"      -> bans.status,
+    "allowlist" -> allowlist.status,
     "shared_state" -> Json.obj(
       "dedicated_redis" -> distributedRedisUri.isDefined,
-      "distributed"     -> (distributedRedisUri.isDefined || env.datastores.redis.optimized)
+      "distributed"     -> sharedStateDistributed,
+      // the page prints this verbatim rather than inferring "empty means nothing happened"
+      "warning"         -> sharedStateWarning
     ),
-    "incidents" -> Json.obj("held" -> incidents.size, "window_seconds" -> incidentWindow.toSeconds),
+    "incidents" -> (board.status.as[JsObject] ++ Json.obj("window_seconds" -> incidentWindow.toSeconds)),
     "ledger"    -> Json.obj(
       "enabled"              -> ledgerSettings.enabled,
       "window_seconds"       -> ledgerSettings.window.toSeconds,
@@ -467,22 +590,113 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     }
   }
 
-  private def handleBan(body: JsValue): Future[Result] = refFrom(body) match {
+  /** Who is doing this, for the ban entry and the audit trail. */
+  private def operatorOf(user: Option[BackOfficeUser]): String =
+    user.map(u => u.email).filter(_.nonEmpty).getOrElse("admin api")
+
+  private def audit(
+      user: Option[BackOfficeUser],
+      action: String,
+      ref: Option[IdentityRef],
+      detail: JsObject
+  ): Unit = {
+    given Env = env
+    CloudApimWafSecurityAudit(user, action, ref, detail).toAnalytics()
+  }
+
+  private def handleBan(user: Option[BackOfficeUser], body: JsValue): Future[Result] = refFrom(body) match {
     case None      => Results.Ok(Json.obj("done" -> false, "error" -> "no identity provided")).vfuture
     case Some(ref) =>
       val duration = (body \ "duration_seconds").asOpt[Long].getOrElse(3600L).max(1L).seconds
       val reason   = (body \ "reason").asOpt[String].getOrElse("banned from the admin api")
-      bans.ban(ref, duration, reason, Seq("manual")).map(e => Results.Ok(Json.obj("done" -> true, "ban" -> e.json)))
+      bans.ban(ref, duration, reason, Seq("manual"), issuedBy = operatorOf(user).some).map { outcome =>
+        audit(
+          user,
+          if (outcome.issued) "ban" else "ban-refused",
+          ref.some,
+          Json.obj("duration_seconds" -> duration.toSeconds, "reason" -> reason)
+        )
+        Results.Ok(outcome.json)
+      }
   }
 
-  private def handleUnban(body: JsValue): Future[Result] = {
+  private def handleExtend(user: Option[BackOfficeUser], body: JsValue): Future[Result] = refFrom(body) match {
+    case None      => Results.Ok(Json.obj("done" -> false, "error" -> "no identity provided")).vfuture
+    case Some(ref) =>
+      val duration = (body \ "duration_seconds").asOpt[Long].getOrElse(3600L).max(1L).seconds
+      bans.extend(ref, duration, operatorOf(user)).map {
+        case None        =>
+          Results.Ok(Json.obj("done" -> false, "error" -> "there is no live ban on this identity to extend"))
+        case Some(entry) =>
+          audit(user, "extend", ref.some, Json.obj("duration_seconds" -> duration.toSeconds, "until" -> entry.until))
+          Results.Ok(Json.obj("done" -> true, "ban" -> entry.json))
+      }
+  }
+
+  private def handleUnban(user: Option[BackOfficeUser], body: JsValue): Future[Result] = {
     if ((body \ "all").asOpt[Boolean].contains(true)) {
-      bans.unbanAll().map(n => Results.Ok(Json.obj("done" -> true, "removed" -> n)))
+      bans.unbanAll().map { n =>
+        audit(user, "unban-all", None, Json.obj("removed" -> n))
+        Results.Ok(Json.obj("done" -> true, "removed" -> n))
+      }
     } else {
       refFrom(body) match {
         case None      => Results.Ok(Json.obj("done" -> false, "error" -> "no identity provided")).vfuture
-        case Some(ref) => bans.unban(ref).map(ok => Results.Ok(Json.obj("done" -> ok, "ref" -> ref.json)))
+        case Some(ref) =>
+          bans.unban(ref).map { ok =>
+            audit(user, "unban", ref.some, Json.obj())
+            Results.Ok(Json.obj("done" -> ok, "ref" -> ref.json))
+          }
       }
+    }
+  }
+
+  /**
+   * Allowlists an identity and, unless told otherwise, lifts whatever is currently held against it.
+   *
+   * Doing both is the point. Allowlisting alone leaves the caller banned until the current ban
+   * lapses, and unbanning alone leaves the ledger free to re-ban them within the window — either
+   * half on its own looks like the feature is broken.
+   */
+  private def handleAllow(user: Option[BackOfficeUser], body: JsValue): Future[Result] = refFrom(body) match {
+    case None      => Results.Ok(Json.obj("done" -> false, "error" -> "no identity provided")).vfuture
+    case Some(ref) =>
+      val reason  = (body \ "reason").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse("allowlisted by an operator")
+      val until   = (body \ "duration_seconds").asOpt[Long].filter(_ > 0L).map(s => System.currentTimeMillis() + s * 1000L)
+      val release = (body \ "unban").asOpt[Boolean].getOrElse(true)
+      for {
+        entry <- allowlist.allow(ref, reason, operatorOf(user), until)
+        _     <- if (release) bans.unban(ref).map(_ => ()) else ().vfuture
+        _     <- if (release) ledger.forget(ref).map(_ => ()) else ().vfuture
+      } yield {
+        audit(user, "allowlist", ref.some, Json.obj("reason" -> reason, "until" -> until, "released" -> release))
+        Results.Ok(Json.obj("done" -> true, "entry" -> entry.json, "released" -> release))
+      }
+  }
+
+  private def handleDisallow(user: Option[BackOfficeUser], body: JsValue): Future[Result] = refFrom(body) match {
+    case None      => Results.Ok(Json.obj("done" -> false, "error" -> "no identity provided")).vfuture
+    case Some(ref) =>
+      allowlist.remove(ref).map { ok =>
+        audit(user, "allowlist-remove", ref.some, Json.obj())
+        Results.Ok(Json.obj("done" -> ok, "ref" -> ref.json))
+      }
+  }
+
+  private def handleIncidentState(user: Option[BackOfficeUser], body: JsValue): Future[Result] = {
+    val key = (body \ "key").asOpt[String].map(_.trim).filter(_.nonEmpty)
+    (key, (body \ "state").asOpt[String].flatMap(IncidentState.parse)) match {
+      case (None, _)                => Results.Ok(Json.obj("done" -> false, "error" -> "no incident key")).vfuture
+      case (_, None)                =>
+        Results
+          .Ok(Json.obj("done" -> false, "error" -> s"state must be one of ${IncidentState.settable.mkString(", ")}"))
+          .vfuture
+      case (Some(k), Some(state))   =>
+        val note = (body \ "note").asOpt[String]
+        board.setState(k, state, operatorOf(user), note).map { entry =>
+          audit(user, s"incident-$state", IdentityRef.parse(k), Json.obj("note" -> entry.note))
+          Results.Ok(Json.obj("done" -> true, "workflow" -> entry.json))
+        }
     }
   }
 
@@ -532,6 +746,10 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
 }
 
 object SecurityModule {
+
+  /** Ticks between two prunes of the incident-state hash. At the default tick, every five minutes. */
+  val pruneEvery: Int = 30
+
   /** Used when a plugin references no policy: observe and record, never enforce. */
   val builtinPolicy: ThreatPolicy = ThreatPolicy(
     id = "builtin",

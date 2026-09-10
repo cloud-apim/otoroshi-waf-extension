@@ -40,15 +40,61 @@ An attack produces thousands of matches and one incident. Alerting on incidents 
 instead of nine thousand times.
 
 Events from one identity within a window (30 minutes by default) collapse into a single `Incident`
-carrying the first and last sighting, the count, the highest score seen, and the union of the
-categories, tags and actions involved. A caller returning after the window opens a new one.
+carrying the first and last sighting, the count, how many of those were actually **enforced**, the
+highest score seen, the routes touched, and the union of the categories, tags and actions involved.
+A caller returning after the window opens a new one.
 
-**Cloud APIM - Security Suite → Bans & incidents** shows the live view; `GET /_incidents` returns
+**Cloud APIM - Security Suite → Bans & incidents** is where you work them; `GET /_incidents` returns
 the same thing.
 
-:::note Incidents are node-local and in memory
-They are an operational view, not durable state — each node correlates the traffic it handles. The
-cluster-wide, durable view is the job of whatever SIEM you export the normalised events to.
+### The timeline
+
+Counters answer *how much*. The timeline answers *what*, which is the question actually in front of
+you: the last twenty events verbatim, each with its category, the action taken, whether that action
+was enforced or only recorded, and the route it happened on.
+
+Twenty is deliberate. This is a triage view, not a forensic record — the full stream is in the
+[analytics tables](../console.mdx), and an incident that needs more than twenty lines is one you
+open a dashboard for.
+
+### State, so a team can work them
+
+An incident carries a state — **open**, **acknowledged** or **resolved** — with who set it, when,
+and an optional note. It is shared across the cluster, so acknowledging one on the leader stops a
+colleague from picking it up ten seconds later.
+
+Two details that matter more than they look:
+
+**A resolved caller who comes back reads `reopened`, not `resolved`.** Quietly leaving them off the
+list is how an attacker gets a second run at you. It does not read `open` either, because "we have
+already looked at this once" is worth keeping.
+
+**Acknowledging is not undone by more of the same.** You acknowledged it *because* it is ongoing;
+reopening on every event would be noise.
+
+The state is keyed by identity rather than by incident id, because the id is minted by whichever
+node saw the caller first — two nodes watching the same attacker mint two. Acknowledging one and not
+the other would be worse than having no state at all.
+
+### One caller, however many nodes
+
+Correlation is node-local and in memory: it is fed from the request path and has to cost nothing.
+That makes it exactly the wrong thing to read a console from — on a leader/worker cluster the
+workers serve the traffic and the leader serves the admin API.
+
+So each node publishes a bounded snapshot of its correlator to the shared state on the same timer
+that refreshes the bans, under a field only it writes, and the console merges every field. Counts
+add up, extremes take the extreme, sets union, and the timelines interleave — which is the only
+place the order of events *across* the cluster can be seen at all. The detail panel names the nodes
+that saw the caller, because "one caller, three nodes" is a different problem from "one caller, one
+node".
+
+A node that dies stops publishing but leaves its field behind, so a field older than five minutes is
+ignored rather than shown as current.
+
+:::caution This needs the shared state
+Without a `security.redis-uri` on a leader/worker cluster, the console shows only what the node
+serving it happened to see. See [what a complete deployment needs](../architecture.mdx).
 :::
 
 ## Suggested alerting

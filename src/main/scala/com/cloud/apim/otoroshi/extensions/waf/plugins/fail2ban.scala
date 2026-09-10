@@ -306,13 +306,16 @@ private[plugins] object Fail2BanSupport {
               mod.ledger.recordAll(identity, config.fabricWeight, s"fail2ban — $reason", Seq("fail2ban"))
             }
             // one event on the outcome that matters, not one per failed response: the incident
-            // correlator is there to collapse repeats, not to be handed nine thousand of them
-            if (outcome.banned || (outcome.reached && config.dryRun)) {
+            // correlator is there to collapse repeats, not to be handed nine thousand of them.
+            // a threshold reached and refused by the allowlist is also an outcome that matters —
+            // without it, an allowlisted caller failing all night produces no record at all
+            val refused = outcome.allowlisted
+            if (outcome.banned || refused.isDefined || (outcome.reached && config.dryRun)) {
               mod.record(
                 category = "fail2ban",
                 identity = identity,
                 decision = ThreatDecision(
-                  action = ThreatAction.Ban,
+                  action = if (refused.isDefined) ThreatAction.Log else ThreatAction.Ban,
                   score = 100,
                   tier = None,
                   dryRun = config.dryRun,
@@ -320,15 +323,18 @@ private[plugins] object Fail2BanSupport {
                 ),
                 tags = Seq("fail2ban", s"fail2ban:$status"),
                 signals = Json.obj(
-                  "count"     -> outcome.count,
-                  "threshold" -> outcome.threshold,
-                  "scope"     -> scope,
-                  "ref"       -> ref.key
+                  "count"       -> outcome.count,
+                  "threshold"   -> outcome.threshold,
+                  "scope"       -> scope,
+                  "ref"         -> ref.key,
+                  "allowlisted" -> refused.map(_.reason)
                 ),
                 routeId = routeId,
                 routeName = routeName,
                 message =
                   if (outcome.banned) s"banned ${ref.key} after ${outcome.count} failed requests"
+                  else if (refused.isDefined)
+                    s"${ref.key} reached the fail2ban threshold and was not banned: allowlisted"
                   else s"would have banned ${ref.key} after ${outcome.count} failed requests"
               )
             }
