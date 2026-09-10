@@ -50,6 +50,10 @@ that survive a swap. So:
 This holds **whatever your storage backend is**. A shared Postgres does not help, because the worker
 is not reading it. Only a dedicated `security.redis-uri` puts every node on the same store.
 
+![The Bans and incidents page reporting which shared state is in use](/img/screenshots/bans-node.png)
+
+*`Shared state: otoroshi storage` is the fallback. The line under it is the one to act on.*
+
 :::caution How you can tell
 The tuning page and the learning report both say so. The tuning page prints *"the shared state is
 not reaching the other nodes"*, and learning refuses to let its window be read as a measurement of

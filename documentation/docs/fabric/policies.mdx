@@ -19,6 +19,11 @@ production, so the entity refuses to do it unless you say so explicitly.
 The sequence is the same as [tuning the WAF](../waf/tuning.mdx): run in dry run, read the events,
 check that what would have been denied deserves it, then turn it off.
 
+![A policy with three tiers: log at 40, tarpit at 70, ban at 90](/img/screenshots/threat-policy-escalation.png)
+
+*The graded response, as one screen. `Dry run` on means every tier is recorded and none of it is
+enforced — which is where a policy should start.*
+
 ## Tiers
 
 ```json

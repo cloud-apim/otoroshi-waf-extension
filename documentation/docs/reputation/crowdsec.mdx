@@ -14,6 +14,11 @@ back** — which makes Otoroshi a CrowdSec detector rather than only an enforcem
 
 **Cloud APIM - Security Suite → CrowdSec bouncers.**
 
+![The bouncer form: local API connection, decisions, reporting back, and the local mirror's status](/img/screenshots/crowdsec-bouncer.png)
+
+*Consuming decisions and reporting detections back are separate sections because they need separate
+credentials. The status block shows the local mirror, which is what the request path actually reads.*
+
 ## The two directions need different credentials
 
 CrowdSec models reading decisions and writing alerts as two different roles, so you need two sets of

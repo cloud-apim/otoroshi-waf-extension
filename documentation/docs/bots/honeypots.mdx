@@ -29,6 +29,11 @@ see [the note on global plugins](../reference/plugins.mdx#global-plugins-are-not
 }
 ```
 
+![A new honeypot policy, pre-filled with the paths scanners ask for](/img/screenshots/honeypot-policy.png)
+
+*The template arrives populated: `/.env`, `/.git/config`, `/wp-login.php` and friends. Nothing
+legitimate asks for these, which is what makes the signal so clean.*
+
 ## Paths
 
 The shipped list is deliberately short and unambiguous — `/.env`, `/.git/config`, `/wp-login.php`,

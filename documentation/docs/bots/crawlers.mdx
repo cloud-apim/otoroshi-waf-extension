@@ -8,6 +8,12 @@ description: Proving a crawler is who it says it is, and deciding what the rest 
 
 **Cloud APIM - Security Suite → Bot policies.**
 
+![A bot policy: verification settings, then per-category rules](/img/screenshots/bot-policy.png)
+
+*`Verify claimed crawlers` is what turns a user-agent string into a checked claim; `Impersonator
+action` is what happens when the check fails. Below it, the per-category rules — search and
+monitoring allowed, AI and SEO merely scored.*
+
 ## Verification is the valuable half
 
 `Googlebot` is the most forged user-agent string on the web. A policy built on the string alone is a
