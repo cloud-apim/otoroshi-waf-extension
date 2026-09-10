@@ -15,6 +15,7 @@ import org.joda.time.DateTime
 import play.api.libs.json.*
 import play.api.mvc.{Result, Results}
 
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
@@ -78,13 +79,37 @@ case class CloudApimWafTuningAudit(
 class TuningModule(
     env: Env,
     _states: => TuningStates,
-    engineOf: Seq[String] => SecLangEngine
+    engineOf: Seq[String] => SecLangEngine,
+    sharedState: com.cloud.apim.otoroshi.extensions.waf.security.SharedStateStore,
+    keyPrefix: String,
+    nodeId: String,
+    /** Whether what one node publishes is visible to the others — see `security.redis-uri`. */
+    distributed: () => Boolean
 ) {
+
+  private val logger = play.api.Logger("cloud-apim-waf-tuning")
 
   /** Exposed so an integration test can drive the very write path the routes use. */
   lazy val states: TuningStates = _states
 
-  val store = new TuningStore()
+  val store = new TuningStore(keyPrefix, sharedState, nodeId, logger)
+
+  private val flushEvery: FiniteDuration                         = 10.seconds
+  private var flusher: Option[org.apache.pekko.actor.Cancellable] = None
+
+  def start(): Unit =
+    flusher = Some(
+      env.otoroshiScheduler.scheduleAtFixedRate(flushEvery, flushEvery)(() => {
+        store.flush().recover { case e: Throwable => logger.warn("tuning flush failed", e); () }
+        ()
+      })
+    )
+
+  def stop(): Unit = {
+    Try(scala.concurrent.Await.result(store.flush(), 5.seconds))
+    flusher.foreach(_.cancel())
+    flusher = None
+  }
 
   private val basePath = "/extensions/cloud-apim/extensions/waf/tuning"
 
@@ -122,9 +147,14 @@ class TuningModule(
       routeName: Option[String]
   )
 
-  private def ask(json: JsValue): Either[String, Ask] = {
-    val fromSample = (json \ "sample_id").asOpt[String].flatMap(store.sample)
-    val configRef  = fromSample.map(_.configRef).orElse((json \ "config_ref").asOpt[String])
+  private def ask(json: JsValue): Future[Either[String, Ask]] =
+    (json \ "sample_id").asOpt[String] match {
+      case None     => Future.successful(askWith(json, None))
+      case Some(id) => store.sample(id).map(sample => askWith(json, sample))
+    }
+
+  private def askWith(json: JsValue, fromSample: Option[TuningSample]): Either[String, Ask] = {
+    val configRef = fromSample.map(_.configRef).orElse((json \ "config_ref").asOpt[String])
     configRef.flatMap(states.config) match {
       case None         => Left("unknown waf config")
       case Some(config) =>
@@ -148,18 +178,21 @@ class TuningModule(
   }
 
   private def handleMatches(): Future[Result] =
-    Results
-      .Ok(
+    store.groups().map { groups =>
+      Results.Ok(
         Json.obj(
-          "store"   -> store.status,
-          // said out loud so a count is never read as a cluster-wide total
-          "scope"   -> "this node, within the retained window",
-          "matches" -> JsArray(store.groups.map(_.json))
+          "store"       -> store.status,
+          "distributed" -> distributed(),
+          // an empty page has two very different causes, and the difference matters
+          "scope"       ->
+            (if (distributed()) "every node, within the retained window"
+             else "this node only — the shared state is not reaching the other nodes"),
+          "matches"     -> JsArray(groups.map(_.json))
         )
       )
-      .vfuture
+    }
 
-  private def handlePropose(json: JsValue): Future[Result] = ask(json) match {
+  private def handlePropose(json: JsValue): Future[Result] = ask(json).flatMap {
     case Left(err)  => Results.BadRequest(Json.obj("error" -> err)).vfuture
     case Right(a)   =>
       val nextId = ExclusionBuilder.nextId(states.rulesetsFor(a.config).flatMap(_.rules))
@@ -194,7 +227,7 @@ class TuningModule(
         .vfuture
   }
 
-  private def handlePreview(json: JsValue): Future[Result] = ask(json) match {
+  private def handlePreview(json: JsValue): Future[Result] = ask(json).flatMap {
     case Left(err) => Results.BadRequest(Json.obj("error" -> err)).vfuture
     case Right(a)  =>
       (json \ "seclang").asOpt[String].map(_.trim).filter(_.nonEmpty) match {
@@ -224,7 +257,7 @@ class TuningModule(
   // writing it down
   // -----------------------------------------------------------------------------------------------
 
-  private def handleApply(json: JsValue, user: Option[BackOfficeUser]): Future[Result] = ask(json) match {
+  private def handleApply(json: JsValue, user: Option[BackOfficeUser]): Future[Result] = ask(json).flatMap {
     case Left(err) => Results.BadRequest(Json.obj("error" -> err)).vfuture
     case Right(a)  =>
       (json \ "seclang").asOpt[String].map(_.trim).filter(_.nonEmpty) match {
@@ -355,6 +388,7 @@ class TuningModule(
 /** What the assistant needs from the extension, named so it can be faked in a test. */
 trait TuningStates {
   def config(id: String): Option[CloudApimWafConfig]
+  def allConfigs(): Seq[CloudApimWafConfig]
   def allRulesets(): Seq[WafRuleset]
   def rulesetsFor(config: CloudApimWafConfig): Seq[WafRuleset]
   def rulesFor(config: CloudApimWafConfig): Seq[String]

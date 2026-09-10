@@ -24,6 +24,7 @@ class AdminAssetIT extends munit.FunSuite {
       "class WafRulesetsPage",
       "class SecurityPosturePage",
       "class WafTuningPage",
+      "class WafLearningPage",
       "class SecurityDashboardPage"
     ).foreach(cls => assert(script.contains(cls), s"$cls is missing from the assembled extension.js"))
   }
@@ -37,7 +38,8 @@ class AdminAssetIT extends munit.FunSuite {
       "/extensions/cloud-apim/waf/wafconfigs",
       "/extensions/cloud-apim/waf/wafrulesets",
       "/extensions/cloud-apim/waf/posture",
-      "/extensions/cloud-apim/waf/tuning"
+      "/extensions/cloud-apim/waf/tuning",
+      "/extensions/cloud-apim/waf/learning"
     ).foreach { path =>
       assert(
         script.contains(s"link: '$path'"),
@@ -46,6 +48,7 @@ class AdminAssetIT extends munit.FunSuite {
     }
     assert(script.contains("React.createElement(SecurityPosturePage"))
     assert(script.contains("React.createElement(WafTuningPage"))
+    assert(script.contains("React.createElement(WafLearningPage"))
   }
 
   test("no column is declared without an id react-table can use") {

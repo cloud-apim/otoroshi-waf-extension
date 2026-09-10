@@ -63,6 +63,9 @@ This extension is built on top of the following open-source Cloud APIM libraries
 - **Nothing unproven is saved**: Every option is run against your configuration before it is offered and again before it is written — an exclusion the engine would ignore is refused, not stored
 - **Blast radius, measured**: Known attacks are replayed through the same input, and anything that stops being caught is reported before you commit to it
 - **Written where it works**: The runtime and declarative forms go to separate rulesets, ordered so each one's mechanism can actually take effect, with the reason and the author recorded next to the rule
+- **Learning mode**: Run a configuration in monitoring for a window, then read what arming it would actually cost — how much traffic breaks, which exclusions account for it, and how much residue is left
+- **A verdict, not a dashboard**: One sentence up front, and usually an honest "not yet" — a window under a day refuses to conclude, and an engine mode that cannot measure the cost of arming withholds the number instead of printing zero
+- **Paranoia and threshold, from evidence**: If most of the noise sits above the level you run, that is one line instead of forty exclusions; the anomaly threshold is offered as a curve, not a magic number
 
 ### Everywhere
 
@@ -73,6 +76,19 @@ This extension is built on top of the following open-source Cloud APIM libraries
 
 - Otoroshi 18.0.0 or later
 - Java 17 or later
+
+A single node needs nothing else. A complete deployment needs two things, and both fail quietly
+rather than loudly:
+
+- **a redis** (`security.redis-uri`) for shared state — bans, fail2ban counters, challenges, tuning
+  candidates and learning windows. On a leader/worker cluster this is not optional: a worker never
+  reaches your storage backend, so without it the workers record what they see and the leader that
+  serves the admin UI never sees any of it
+- **a postgres** for analytics — the console's dashboards and queries read events back through
+  Otoroshi's user-analytics exporter
+
+Detection itself never depends on either: everything that decides about a request is local and
+synchronous, and both dependencies fail open.
 
 ## Installation
 

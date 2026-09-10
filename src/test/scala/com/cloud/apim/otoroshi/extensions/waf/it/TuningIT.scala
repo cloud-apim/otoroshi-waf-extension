@@ -55,7 +55,7 @@ class TuningIT extends munit.FunSuite {
     val ref     = config()
     val route   = Gateway.createRoute("ops2", backend.port, Seq(wafPlugin(ref)))
     try {
-      ext.tuning.store.clear()
+      Await.result(ext.tuning.store.clear(), 10.seconds)
 
       // 1. the legitimate request an editorial tool would send, refused by the rule
       assertEquals(Gateway.call(route, "/api/posts?comment=select%20a%20plan").status, 403)
@@ -63,7 +63,7 @@ class TuningIT extends munit.FunSuite {
       assertEquals(Gateway.call(route, "/api/posts?id=1%20union%20select%20null").status, 403)
 
       // 2. the assistant saw both, and knows which input each landed in
-      val groups = ext.tuning.store.groups
+      val groups = Await.result(ext.tuning.store.groups(), 30.seconds)
       assert(groups.nonEmpty, "the match was not recorded as a tuning candidate")
       val sample = groups.map(_.sample).find(_.target.exists(_.full == "ARGS:comment")).getOrElse {
         fail(s"no sample on ARGS:comment, got ${groups.map(_.sample.target)}")

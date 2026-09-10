@@ -125,6 +125,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     env,
     new com.cloud.apim.otoroshi.extensions.waf.tuning.TuningStates {
       override def config(id: String)                            = states.config(id)
+      override def allConfigs()                                  = states.allConfigs()
       override def allRulesets()                                 = states.allRulesets()
       override def rulesetsFor(c: CloudApimWafConfig)            = states.rulesetsFor(c)
       override def rulesFor(c: CloudApimWafConfig)               = states.rulesFor(c)
@@ -147,7 +148,21 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
         }
       }
     },
-    rules => factory.engine(rules.toList)
+    rules => factory.engine(rules.toList),
+    security.sharedState,
+    s"${env.storageRoot}:extensions:${id.cleanup}",
+    security.nodeId,
+    () => security.sharedStateDistributed
+  )
+  // OPS-3: the same observations, counted over a window instead of sampled
+  lazy val learning = new com.cloud.apim.otoroshi.extensions.waf.learning.LearningModule(
+    env,
+    tuning.states,
+    rules => factory.engine(rules.toList),
+    security.sharedState,
+    s"${env.storageRoot}:extensions:${id.cleanup}",
+    security.nodeId,
+    () => security.sharedStateDistributed
   )
   private val logger = Logger("cloud-apim-waf-extension")
   private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
@@ -165,11 +180,15 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     logger.info("the 'Cloud APIM - Security Suite' extension is enabled !")
     reputation.start()
     security.start()
+    tuning.start()
+    learning.start()
   }
 
   override def stop(): Unit = {
     reputation.stop()
     security.stop()
+    tuning.stop()
+    learning.stop()
   }
 
   override def frontendExtensions(): Seq[AdminExtensionFrontendExtension] = Seq(
@@ -229,6 +248,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val wafRulesetsPageCode = getResourceCode("cloudapim/extensions/waf/WafRulesetsPage.js")
   lazy val posturePageCode = getResourceCode("cloudapim/extensions/waf/PosturePage.js")
   lazy val tuningPageCode = getResourceCode("cloudapim/extensions/waf/TuningPage.js")
+  lazy val learningPageCode = getResourceCode("cloudapim/extensions/waf/LearningPage.js")
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
@@ -274,6 +294,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |
              |    ${tuningPageCode}
              |
+             |    ${learningPageCode}
+             |
              |    return {
              |      id: extensionId,
              |      categories:[{
@@ -312,6 +334,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            display: () => true,
              |            icon: () => 'fa-wand-magic-sparkles',
              |          },
+             |          {
+             |            title: 'WAF learning mode',
+             |            description: 'Measure a window, then decide about arming',
+             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |            link: '/extensions/cloud-apim/waf/learning',
+             |            display: () => true,
+             |            icon: () => 'fa-graduation-cap',
+             |          },
              |          ...ReputationFeatures,
              |          ...SecurityFeatures
              |        ]
@@ -349,6 +379,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          display: () => true,
              |          icon: () => 'fa-wand-magic-sparkles',
              |        },
+             |        {
+             |          title: 'WAF learning mode',
+             |          description: 'Measure a window, then decide about arming',
+             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |          link: '/extensions/cloud-apim/waf/learning',
+             |          display: () => true,
+             |          icon: () => 'fa-graduation-cap',
+             |        },
              |        ...ReputationFeatures,
              |        ...SecurityFeatures
              |      ],
@@ -377,6 +415,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          path: 'extensions/cloud-apim/waf/tuning',
              |          icon: 'wand-magic-sparkles'
              |        },
+             |        {
+             |          title: 'WAF learning mode',
+             |          text: 'Measure a window, then decide about arming',
+             |          path: 'extensions/cloud-apim/waf/learning',
+             |          icon: 'graduation-cap'
+             |        },
              |        ...ReputationSidebarItems,
              |        ...SecuritySidebarItems
              |      ],
@@ -404,6 +448,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |          env: React.createElement('span', { className: "fas fa-wand-magic-sparkles" }, null),
              |          label: 'Cloud APIM Security Suite - WAF tuning',
              |          value: 'tuning',
+             |        },
+             |        {
+             |          action: () => {
+             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/learning`
+             |          },
+             |          env: React.createElement('span', { className: "fas fa-graduation-cap" }, null),
+             |          label: 'Cloud APIM Security Suite - WAF learning mode',
+             |          value: 'learning',
              |        },
              |        {
              |          action: () => {
@@ -465,6 +517,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            return React.createElement(WafTuningPage, props, null)
              |          }
              |        },
+             |        {
+             |          path: '/extensions/cloud-apim/waf/learning',
+             |          component: (props) => {
+             |            return React.createElement(WafLearningPage, props, null)
+             |          }
+             |        },
              |        ...ReputationRoutes,
              |        ...SecurityRoutes
              |      ]
@@ -489,7 +547,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleTest(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes()
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes()
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext

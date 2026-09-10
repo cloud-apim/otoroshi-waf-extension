@@ -124,6 +124,35 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
   private val keyPrefix: String = s"${env.storageRoot}:extensions:${extensionId.cleanup}"
 
   val sharedState: SharedStateStore = new RedisSharedStateStore(() => redis())
+
+  /**
+   * Whether what one node writes to the shared state is visible to the others.
+   *
+   * The leader/worker case is the one that surprises people. A worker never talks to the configured
+   * storage backend at all: Otoroshi hands it a `SwappableInMemoryDataStores` whose contents are
+   * replaced from the leader on every sync, and nothing under `:extensions:` is on the short list of
+   * keys that survive a swap. So a worker's writes are wiped seconds later and never reach the node
+   * serving the admin api — whatever the backend is. Only a dedicated `security.redis-uri` makes the
+   * shared state genuinely shared once the cluster is split in two.
+   */
+  lazy val sharedStateDistributed: Boolean =
+    distributedRedisUri.isDefined || (!env.clusterConfig.mode.clusterActive && env.datastores.redis.optimized)
+
+  /** Why it is not, in words a page can print. */
+  lazy val sharedStateWarning: Option[String] =
+    if (sharedStateDistributed) None
+    else if (env.clusterConfig.mode.clusterActive)
+      Some(
+        "This cluster is running in leader/worker mode without `security.redis-uri`. Workers write to " +
+          "an in-memory copy of the leader's state that is replaced on every sync, so nothing they record " +
+          "reaches the node serving this page. Point `security.redis-uri` at a redis to fix it."
+      )
+    else
+      Some(
+        "The shared state falls back to the Otoroshi storage backend, which is only shared between nodes " +
+          "if that backend is. With `file` or `inmemory` storage each node keeps its own. Point " +
+          "`security.redis-uri` at a redis to make it independent of the backend."
+      )
   val states: SecurityState         = new SecurityState()
   val bans: BanStore                = new BanStore(s"$keyPrefix:bans", sharedState, nodeId, logger)
   val ledger: ThreatLedger          = new ThreatLedger(s"$keyPrefix:ledger", sharedState, bans, () => ledgerSettings, logger)

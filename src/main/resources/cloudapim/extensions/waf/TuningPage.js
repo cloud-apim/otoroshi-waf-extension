@@ -36,6 +36,7 @@ class WafTuningPage extends Component {
     chosen: null,
     result: null,
     scope: null,
+    distributed: true,
   };
 
   columns = [
@@ -111,7 +112,7 @@ class WafTuningPage extends Component {
 
   fetch = () =>
     tuningCall('/_matches').then(({ json }) => {
-      this.setState({ scope: json.scope || null });
+      this.setState({ scope: json.scope || null, distributed: json.distributed !== false });
       return json.matches || [];
     });
 
@@ -312,8 +313,17 @@ class WafTuningPage extends Component {
         'div',
         { className: 'suite-notice' },
         'Every option below is run against this config before it is offered, and again before it is written. ' +
-          (this.state.scope ? 'Counts cover ' + this.state.scope + '.' : '')
+          (this.state.scope ? 'Candidates cover ' + this.state.scope + '.' : '')
       ),
+      // an empty page has two very different causes, and only one of them is good news
+      this.state.distributed === false
+        ? React.createElement(
+            'div',
+            { className: 'suite-notice suite-warning' },
+            'The shared state is not reaching the other nodes, so this page only sees what this node served. ' +
+              'On a leader/worker cluster that is usually nothing at all — point `security.redis-uri` at a redis.'
+          )
+        : null,
       React.createElement(
         Table,
         {

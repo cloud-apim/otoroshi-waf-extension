@@ -118,9 +118,19 @@ of **examples**, not a census — the census is the analytics table that the
 [security console](../console.mdx) fills, and counts here are labelled as covering one node within
 what it has retained.
 
-The practical consequence: on a cluster, tune from the list on any node, but read volumes from the
-dashboard. Only matches naming an input a rule can be excluded from are kept, so the anomaly-score
-and correlation rules that fire on every match do not fill the list with entries nobody can act on.
+Candidates are published to the shared state on a timer and merged on read, so a match seen by any
+node reaches the page. That needs the shared state to actually span the cluster — on a leader/worker
+Otoroshi it requires a dedicated redis, and the page says so when it does not have one. See
+[what a complete deployment needs](../architecture.mdx).
+
+Only matches naming an input a rule can be excluded from are kept, so the anomaly-score and
+correlation rules that fire on every match do not fill the list with entries nobody can act on.
+
+## One at a time, or a window at a time
+
+The assistant works on one false positive at a time, which is the right shape when something breaks
+today. When the question is instead "can this whole configuration be armed", the same machinery runs
+over a measured window: see [learning mode](./learning.mdx).
 
 ## Doing it by hand
 

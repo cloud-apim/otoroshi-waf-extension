@@ -4,6 +4,9 @@ import com.cloud.apim.seclang.model.*
 import com.cloud.apim.seclang.scaladsl.SecLang
 import com.cloud.apim.seclang.scaladsl.coreruleset.EmbeddedCRSPreset
 
+import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.duration.*
+
 class TargetSuite extends munit.FunSuite {
 
   test("a CRS log line names the parameter") {
@@ -317,15 +320,38 @@ class WriterSuite extends munit.FunSuite {
   }
 }
 
+/** An in-memory stand-in for the shared state, so the publish/merge path is exercised for real. */
+class FakeSharedStore extends com.cloud.apim.otoroshi.extensions.waf.security.SharedStateStore {
+  private val hashes = scala.collection.mutable.Map.empty[String, scala.collection.mutable.Map[String, String]]
+  private val values = scala.collection.mutable.Map.empty[String, String]
+  private def hash(k: String) = hashes.getOrElseUpdate(k, scala.collection.mutable.Map.empty)
+  override def set(key: String, value: String, ttlMillis: Option[Long]) = { values.put(key, value); Future.successful(()) }
+  override def hset(key: String, field: String, value: String)          = { hash(key).put(field, value); Future.successful(()) }
+  override def hgetall(key: String)                                     = Future.successful(hash(key).toMap)
+  override def hdel(key: String, fields: Seq[String])                   = { fields.foreach(hash(key).remove); Future.successful(()) }
+  override def del(key: String)                                         = { hashes.remove(key); values.remove(key); Future.successful(()) }
+  override def get(key: String)                                         = Future.successful(values.get(key))
+  override def incrBy(key: String, by: Long)                            = Future.successful(by)
+  override def pexpire(key: String, millis: Long)                       = Future.successful(())
+  override def keys(pattern: String)                                    = Future.successful(values.keys.toSeq)
+}
+
 class StoreSuite extends munit.FunSuite {
 
   import com.cloud.apim.seclang.model.MatchEvent
 
+  private given ExecutionContext = ExecutionContext.global
+
   private def event(id: Int, target: String, value: String) =
     MatchEvent(Some(id), Some("msg"), List(s"""[id "$id"] Matched Data: x found within $target: $value"""), 2, "{}")
 
+  private def newStore(shared: FakeSharedStore, node: String, max: Int = 500) =
+    new TuningStore("test", shared, node, play.api.Logger("test"), max)
+
+  private def await[A](f: Future[A]): A = Await.result(f, 5.seconds)
+
   test("only matches naming an excludable input are kept") {
-    val store = new TuningStore()
+    val store = newStore(new FakeSharedStore, "n1")
     store.recordAll(
       Seq(
         event(942100, "ARGS:comment", "1' or 1=1"),
@@ -334,28 +360,79 @@ class StoreSuite extends munit.FunSuite {
       ),
       "cfg", Some("r1"), Some("route"), "POST", "/api/posts", blocked = false
     )
-    assertEquals(store.all.map(_.ruleId), Seq(942100))
-    assertEquals(store.all.head.target, Some(MatchedTarget("ARGS", Some("comment"))))
-    assertEquals(store.all.head.matchedValue, Some("1' or 1=1"))
+    assertEquals(store.local.map(_.ruleId), Seq(942100))
+    assertEquals(store.local.head.target, Some(MatchedTarget("ARGS", Some("comment"))))
+    assertEquals(store.local.head.matchedValue, Some("1' or 1=1"))
   }
 
   test("the ring forgets the oldest rather than growing") {
-    val store = new TuningStore(max = 3)
+    val store = newStore(new FakeSharedStore, "n1", max = 3)
     (1 to 10).foreach { i =>
       store.recordAll(Seq(event(942100, "ARGS:a", s"v$i")), "cfg", None, None, "GET", "/x", blocked = false)
     }
-    assertEquals(store.all.size, 3)
-    assertEquals(store.all.map(_.matchedValue.get), Seq("v8", "v9", "v10"))
+    assertEquals(store.local.size, 3)
+    assertEquals(store.local.map(_.matchedValue.get), Seq("v8", "v9", "v10"))
   }
 
   test("the same rule on the same input of the same path is one group") {
-    val store = new TuningStore()
+    val store = newStore(new FakeSharedStore, "n1")
     (1 to 4).foreach { i =>
       store.recordAll(Seq(event(942100, "ARGS:a", s"v$i")), "cfg", None, None, "GET", "/x", blocked = false)
     }
     store.recordAll(Seq(event(942100, "ARGS:b", "v")), "cfg", None, None, "GET", "/x", blocked = false)
-    val groups = store.groups
+    val groups = await(store.groups())
     assertEquals(groups.size, 2)
     assertEquals(groups.map(_.count).sorted, Seq(1, 4))
+  }
+
+  /**
+   * The reason this store is not a plain in-memory buffer.
+   *
+   * Matches happen on the node that served the request; the page is served by whichever node the
+   * operator is talking to. On a leader/worker cluster those are never the same machine.
+   */
+  test("a match recorded on one node is visible from another") {
+    val shared = new FakeSharedStore
+    val worker = newStore(shared, "worker-1")
+    val leader = newStore(shared, "leader-1")
+
+    worker.recordAll(Seq(event(942100, "ARGS:comment", "1' or 1=1")), "cfg", None, None, "POST", "/api/posts", blocked = true)
+    assertEquals(await(leader.groups()), Seq.empty[TuningGroup], "not until it is published")
+
+    await(worker.flush())
+    val groups = await(leader.groups())
+    assertEquals(groups.size, 1)
+    assertEquals(groups.head.sample.ruleId, 942100)
+    assertEquals(await(leader.sample(groups.head.sample.id)).map(_.matchedValue), Some(Some("1' or 1=1")))
+  }
+
+  test("two nodes' candidates are merged, and neither overwrites the other") {
+    val shared = new FakeSharedStore
+    val a      = newStore(shared, "worker-a")
+    val b      = newStore(shared, "worker-b")
+    a.recordAll(Seq(event(942100, "ARGS:a", "x")), "cfg", None, None, "GET", "/x", blocked = false)
+    b.recordAll(Seq(event(941100, "ARGS:b", "y")), "cfg", None, None, "GET", "/y", blocked = false)
+    await(a.flush())
+    await(b.flush())
+    val reader = newStore(shared, "leader")
+    assertEquals(await(reader.all()).map(_.ruleId).sorted, Seq(941100, 942100))
+  }
+
+  test("a node's own live buffer replaces its published snapshot rather than doubling it") {
+    val shared = new FakeSharedStore
+    val store  = newStore(shared, "n1")
+    store.recordAll(Seq(event(942100, "ARGS:a", "x")), "cfg", None, None, "GET", "/x", blocked = false)
+    await(store.flush())
+    await(store.flush())
+    assertEquals(await(store.all()).size, 1)
+  }
+
+  test("a store that cannot reach the shared state still answers from its own buffer") {
+    val broken = new FakeSharedStore {
+      override def hgetall(key: String) = Future.failed(new RuntimeException("redis is down"))
+    }
+    val store = newStore(broken, "n1")
+    store.recordAll(Seq(event(942100, "ARGS:a", "x")), "cfg", None, None, "GET", "/x", blocked = false)
+    assertEquals(await(store.all()).size, 1, "a broken shared state must degrade, not blank the page")
   }
 }

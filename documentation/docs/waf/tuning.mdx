@@ -122,6 +122,12 @@ traffic — public, authenticated, internal — rather than one per route.
 
 ## Checklist before arming
 
+:::tip Or let it measure itself
+[Learning mode](./learning.mdx) runs this checklist for you: it counts a window, proposes the
+exclusions that account for it, and refuses to say "safe to arm" until the evidence supports it.
+:::
+
+
 - [ ] Monitoring ran for at least one full traffic cycle
 - [ ] The top ten matching rule ids have been reviewed individually
 - [ ] Every exclusion is scoped to a parameter or a path, not a global `SecRuleRemoveById`

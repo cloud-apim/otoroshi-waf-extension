@@ -29,6 +29,9 @@ import scala.util.{Failure, Success, Try}
 
 object CloudApimWafKeys {
   val SecLangEngineKey = TypedKey[ContextualCloudApimWafConfig]("otoroshi.next.plugins.SecLangEngine")
+  // one exchange is evaluated twice when response inspection is on; the learning window's headline
+  // numbers are per request, so the second half must not charge them again
+  val LearningCountedKey = TypedKey[Boolean]("cloud-apim.waf.learning.counted")
 }
 
 case class ContextualCloudApimWafConfig(engine: SecLangEngine, config: CloudApimWafConfig) {
@@ -219,6 +222,7 @@ class CloudApimWaf extends NgRequestTransformer {
     config: CloudApimWafConfig,
     route: NgRoute,
     request: RequestHeader,
+    attrs: TypedMap,
     blocked: Boolean
   )(using env: Env): Unit = {
     env.adminExtensions.extension[CloudApimWafExtension].foreach { ext =>
@@ -230,6 +234,23 @@ class CloudApimWaf extends NgRequestTransformer {
         method = request.method,
         path = request.path,
         blocked = blocked
+      )
+      val first = attrs.get(CloudApimWafKeys.LearningCountedKey).isEmpty
+      if (first) attrs.put(CloudApimWafKeys.LearningCountedKey -> true)
+      ext.learning.observe(
+        configRef = config.id,
+        events = res.events,
+        routeId = Some(route.id),
+        routeName = Some(route.name),
+        method = request.method,
+        path = request.path,
+        // in monitoring the engine reaches a deny and nothing is denied — which is precisely the
+        // request that breaks the day this configuration is armed
+        wouldBlock = res.disposition match {
+          case _: com.cloud.apim.seclang.model.Disposition.Block => true
+          case _                                                 => false
+        },
+        countRun = first
       )
     }
   }
@@ -256,13 +277,13 @@ class CloudApimWaf extends NgRequestTransformer {
     res.disposition match {
       case Disposition.Continue if res.events.nonEmpty =>
         report(res, payload, route, config.block, truncated)
-        recordForTuning(res, config, route, request, blocked = false)
+        recordForTuning(res, config, route, request, attrs, blocked = false)
         Right(forward()).vfuture
       case Disposition.Continue                        =>
         Right(forward()).vfuture
       case Disposition.Block(status, _, _) if config.block =>
         report(res, payload, route, config.block, truncated)
-        recordForTuning(res, config, route, request, blocked = true)
+        recordForTuning(res, config, route, request, attrs, blocked = true)
         triggerFail2Ban(attrs, status)
         drain()
         deny(status).map(Left.apply)
@@ -270,7 +291,7 @@ class CloudApimWaf extends NgRequestTransformer {
         report(res, payload, route, config.block, truncated)
         // it did not block, but it is exactly what would break once this config is armed, which is
         // the case a tuning session exists to work through
-        recordForTuning(res, config, route, request, blocked = false)
+        recordForTuning(res, config, route, request, attrs, blocked = false)
         Right(forward()).vfuture
     }
   }
@@ -302,6 +323,9 @@ class CloudApimWaf extends NgRequestTransformer {
     val config = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     val ext = env.adminExtensions.extension[CloudApimWafExtension].get
     ext.states.config(config.ref).filter(_.enabled).foreach { wafConfig =>
+      // every request the configuration looks at, matched or not: the denominator of every rate a
+      // learning report quotes
+      ext.learning.observeRequest(wafConfig.id)
       // the rules the config composes to, not only the ones written inside it
       val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
       ctx.attrs.put(CloudApimWafKeys.SecLangEngineKey -> ContextualCloudApimWafConfig(engine, wafConfig))

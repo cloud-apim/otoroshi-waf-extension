@@ -58,12 +58,19 @@ with a non-null `block`, grouped by source address, over a short window.
 
 ## Clustered deployments
 
-Every node keeps its own feed index and its own CrowdSec cursor. There is no shared state and
-nothing to coordinate, at the cost of each node fetching each feed independently — so outbound
-requests scale with the number of nodes. Nodes stagger their first refresh by a random 5–25 seconds
-so a rolling restart does not hit every provider simultaneously.
+**Reputation feeds** are per node by design. Every node keeps its own feed index and its own
+CrowdSec cursor: there is no shared state and nothing to coordinate, at the cost of each node
+fetching each feed independently — so outbound requests scale with the number of nodes. Nodes
+stagger their first refresh by a random 5–25 seconds so a rolling restart does not hit every
+provider simultaneously. Snapshot rollback is per node and in memory; it survives a refresh, not a
+restart.
 
-Snapshot rollback is per node and in memory. It survives a refresh, not a restart.
+**Everything that has to be shared is not.** Bans, the ledger, fail2ban counters, challenges, tuning
+candidates and learning windows all go through the shared state, and on a leader/worker cluster that
+requires a dedicated redis — a worker never reaches your storage backend at all. This is the single
+most common way to end up with a page that looks reassuringly empty.
+
+→ [What a complete deployment needs](./architecture.mdx)
 
 ## Memory
 

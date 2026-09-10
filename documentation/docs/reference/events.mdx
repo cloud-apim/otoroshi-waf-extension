@@ -156,6 +156,25 @@ exclusion. It records the decision and the evidence together.
 `preview` is the measured consequence at the moment of the decision — what was verified, and what
 was knowingly given up. `forced` is true only when the operator overrode a warning.
 
+## CloudApimWafLearningAudit
+
+Emitted when exclusions are applied from a [learning run](../waf/learning.mdx). It carries the window
+the decision was taken on, not only the change.
+
+```json
+{
+  "@type": "CloudApimWafLearningAudit",
+  "audit": "WAF_LEARNING_APPLIED",
+  "user": { "name": "Ada", "email": "ada@example.com" },
+  "config": "waf-config_x",
+  "applied": ["942100|ARGS:comment|/api/posts"],
+  "run": { "requests": 41203, "matched": 380, "would_block": 96, "duration_millis": 604800000 },
+  "impact": { "sampled": 200, "resolved": 187, "residual": 13 },
+  "paranoia": { "current": 1, "recommended": null },
+  "threshold": { "current": 5, "recommended": 15 }
+}
+```
+
 ## Suggested exporters
 
 | Goal | Filter on |

@@ -14,7 +14,11 @@ Two surfaces, and they have very different requirements:
 |---|---|---|
 | **Route posture** | nothing | Which routes are protected, in which mode — *now* |
 | **WAF tuning** | nothing | Which rules are firing on legitimate traffic, and what to do about it |
-| **Dashboards and queries** | the user-analytics exporter | What happened, over time |
+| **WAF learning mode** | nothing | Whether this configuration can be armed yet, and what it would cost |
+| **Dashboards and queries** | the user-analytics exporter (postgres) | What happened, over time |
+
+The two pages that need nothing still need the shared state to see the whole cluster — see
+[what a complete deployment needs](./architecture.mdx).
 
 ## Route posture
 

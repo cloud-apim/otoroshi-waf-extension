@@ -141,6 +141,56 @@ POST /extensions/cloud-apim/extensions/waf/tuning/_apply
 | `400` | It does not compile, or it does not stop the rule firing |
 | `409` + `needs_force` | The match could not be reproduced, or known attacks stop being caught |
 
+## Learning endpoints
+
+Backoffice-authenticated. These back [learning mode](../waf/learning.mdx).
+
+### Start, stop, discard a window
+
+```http
+POST /extensions/cloud-apim/extensions/waf/learning/_start
+POST /extensions/cloud-apim/extensions/waf/learning/_stop
+POST /extensions/cloud-apim/extensions/waf/learning/_discard
+{ "config_ref": "waf-config_x" }
+```
+
+`_start` answers with the engine-mode advice, so a window is never begun on a configuration whose
+mode cannot measure what the operator is about to ask it for.
+
+### Read the report
+
+```http
+POST /extensions/cloud-apim/extensions/waf/learning/_report
+{ "config_ref": "waf-config_x" }
+```
+
+```json
+{
+  "run": { "requests": 41203, "matched": 380, "would_block": 96, "would_block_rate": 0.0023, "duration_millis": 604800000 },
+  "nodes": 3,
+  "mode": { "arming_estimate_reliable": true, "rule_counts_complete": false, "note": "…" },
+  "entries": [ { "rule_id": 942100, "target": { "full": "ARGS:comment" }, "path": "/api/posts", "count": 212, "would_block": 61, "paranoia": 1 } ],
+  "exclusions": [ { "entry": {}, "proposal": {}, "preview": {}, "accepted": true, "note": "verified: …" } ],
+  "paranoia": { "current": 1, "recommended": null, "rationale": "…" },
+  "threshold": { "current": 5, "curve": [ { "threshold": 5, "still_denied": 96 } ], "recommended": 15, "rationale": "…" },
+  "impact": { "sampled": 200, "resolved": 187, "residual": 13, "rationale": "…" },
+  "verdict": "…"
+}
+```
+
+`entries` is everything counted; `exclusions` is what the report proposes acting on, each carrying
+the `preview` that earned or denied it a place.
+
+### Apply the verified exclusions
+
+```http
+POST /extensions/cloud-apim/extensions/waf/learning/_apply
+{ "config_ref": "waf-config_x", "keys": ["942100|ARGS:comment|/api/posts"], "reason": "…" }
+```
+
+`keys` selects a subset; omit it to apply every verified one. Anything the report did not verify is
+never applied, whether or not it is named.
+
 ## Reputation endpoints
 
 All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authenticated.
