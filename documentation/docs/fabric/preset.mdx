@@ -21,6 +21,12 @@ order, and covers what to read before arming it. This page is the reference for 
 **Cloud APIM Security Suite - Preset** removes the requirement. It is a single plugin that expands,
 at request time, into the whole chain with explicit ordering indices.
 
+![The five plugins the preset expands into, beside a route carrying only the preset](/img/screenshots/preset-plugin-picker.png)
+
+*On the left, the five plugins available individually. On the right, the same route protected by one
+slot. Composing them by hand works — the preset exists because their order matters and is easy to get
+wrong. (The preset is missing from the list because this route already carries it.)*
+
 ## What it expands into
 
 | Order | Plugin | Phase | Index |

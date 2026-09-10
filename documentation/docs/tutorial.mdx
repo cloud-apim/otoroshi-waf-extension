@@ -63,6 +63,8 @@ Do this before creating anything, because the answer changes what the rest is wo
 
 Open **Cloud APIM - Security Suite → Bans & incidents**. The header reports:
 
+![The Bans and incidents header, reporting the node and which shared state it uses](/img/screenshots/bans-node.png)
+
 ```
 Node             otoroshi-node-1
 Shared state     dedicated redis: no · distributed: no
@@ -132,6 +134,10 @@ the entity refuses it until the module exists.
 
 Our `/internal/*` traffic comes from `10.0.0.0/8`, hence the exemption. Do this now rather than
 after a self-inflicted incident.
+
+The ladder, once saved, reads like this:
+
+![A threat policy with three tiers: log at 40, tarpit at 70, ban at 90, with dry run on](/img/screenshots/threat-policy-escalation.png)
 
 ### Sanity-check the tiers before anything else exists
 
@@ -323,6 +329,12 @@ Now the part that used to be five plugins.
 Open the route, **Add plugin**, category **Cloud APIM - Security Suite**, pick **Cloud APIM
 Security Suite - Preset**. One slot:
 
+![One preset slot on the route, active on three phases, with its configuration](/img/screenshots/preset-configured.png)
+
+*One slot in the flow, active on `ValidateAccess`, `TransformRequest` and `TransformResponse` — and
+one panel with a switch per section. Everything the chain needs is here; the expansion happens at
+request time.*
+
 ```json
 {
   "threat_policy": "threat-policy_...",
@@ -415,6 +427,11 @@ Three fields carry the whole story:
 | What would the WAF have blocked? | `CloudApimWafTrailEvent` with `blocking: false` and a non-null `block` — see [tuning](./waf/tuning.mdx) |
 
 ### The live state
+
+**Route posture** answers the other half — whether this route is actually covered, and whether
+anything on it can stop a request yet:
+
+![The route posture page, counting covered and enforcing routes separately](/img/screenshots/route-posture.png)
 
 **Bans & incidents** shows what is currently held: active bans with their evidence, open incidents,
 and the ledger's running totals. In dry run the ban list should be empty; if it is not, the ledger
