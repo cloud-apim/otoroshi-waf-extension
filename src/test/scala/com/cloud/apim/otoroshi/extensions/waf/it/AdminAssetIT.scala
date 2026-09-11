@@ -120,6 +120,26 @@ class AdminAssetIT extends munit.FunSuite {
     assert(script.contains("'suite-btn '"), "the console drives its buttons from the suite accents")
   }
 
+  test("every page that centres itself also un-centres itself") {
+    // the modifier lives on Otoroshi's scroll container, which outlives our component — a page that
+    // sets it and does not clear it leaves the next table capped at 1000px
+    // counted as literals: the parentheses would otherwise be read as a regex capture group
+    def occurrences(needle: String): Int = script.split(java.util.regex.Pattern.quote(needle), -1).length - 1
+    val on  = occurrences("suiteCenterPage(true)")
+    val off = occurrences("suiteCenterPage(false)")
+    assert(on > 0, "no page opts into the centred layout")
+    assertEquals(off, on, s"$on pages centre themselves but only $off undo it on unmount")
+  }
+
+  test("list pages keep the full width a table needs") {
+    // the line is deliberate: panels and prose read better in a measure, a table with eight columns
+    // does not
+    Seq("class SecurityPosturePage", "class WafConfigsPage", "class ThreatPoliciesPage").foreach { cls =>
+      val page = script.substring(script.indexOf(cls), script.indexOf(cls) + 2500)
+      assert(!page.contains("suiteCenterPage"), s"$cls is a table page and must not be centred")
+    }
+  }
+
   test("the posture page uses the shared table rather than hand-rolled rows") {
     // it reads like every other list in the backoffice, with the sorting and filtering that implies
     val page = script.substring(script.indexOf("class SecurityPosturePage"))

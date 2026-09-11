@@ -413,12 +413,14 @@ class SecurityDashboardPage extends Component {
 
   componentDidMount() {
     ensureSuiteStyles();
+    suiteCenterPage(true);
     this.props.setTitle('Bans & incidents');
     this.load();
     this.timer = setInterval(this.load, 10000);
   }
 
   componentWillUnmount() {
+    suiteCenterPage(false);
     if (this.timer) clearInterval(this.timer);
   }
 
@@ -1344,7 +1346,14 @@ class ChallengeProvidersPage extends Component {
 }
 
 class ChallengePresetsPage extends Component {
-  componentDidMount() { this.props.setTitle('Challenge presets'); }
+  componentDidMount() {
+    suiteCenterPage(true);
+    this.props.setTitle('Challenge presets');
+  }
+
+  componentWillUnmount() {
+    suiteCenterPage(false);
+  }
   render() { return React.createElement(ChallengePresetPicker, this.props, null); }
 }
 

@@ -37,6 +37,7 @@ class WafLearningPage extends Component {
 
   componentDidMount() {
     ensureSuiteStyles();
+    suiteCenterPage(true);
     this.props.setTitle('WAF learning mode');
     // the same client every other page in this extension uses
     BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'waf-configs')
@@ -52,6 +53,10 @@ class WafLearningPage extends Component {
         });
       })
       .catch((e) => this.setState({ error: 'could not list the waf configs: ' + String(e.message || e) }));
+  }
+
+  componentWillUnmount() {
+    suiteCenterPage(false);
   }
 
   selectConfig = (v) => {

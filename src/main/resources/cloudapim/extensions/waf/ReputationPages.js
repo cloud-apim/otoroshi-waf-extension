@@ -73,6 +73,22 @@ ensureSuiteStyles();
 
 const suiteTone = (tone) => 'suite-' + (tone || 'neutral');
 
+/**
+ * Otoroshi's own centred-page modifier, borrowed rather than reimplemented.
+ *
+ * `.page-container--centered > *` caps the scroll container's direct children at 1000px and centres
+ * them — the treatment its entity forms already get. List pages keep the full width because a table
+ * with eight columns needs it; the pages that are prose and panels read far better in a measure.
+ *
+ * Toggling the class rather than wrapping our own div means the page title is centred with the
+ * content, and that we follow Otoroshi if it ever changes the number. Every caller must undo it on
+ * unmount, or the next table page inherits a 1000px cap.
+ */
+function suiteCenterPage(on) {
+  const el = document.getElementById('content-scroll-container');
+  if (el) el.classList.toggle('page-container--centered', !!on);
+}
+
 /** A panel, replacing .card — which paints itself white whatever the theme. */
 function suitePanel(key, children, extraStyle) {
   return React.createElement('div', { key: key, className: 'suite-panel', style: extraStyle || {} }, children);
@@ -270,8 +286,13 @@ class ThreatFeedCatalogPage extends Component {
   state = { entries: [], creating: null, created: {}, error: null };
 
   componentDidMount() {
+    suiteCenterPage(true);
     this.props.setTitle('Threat feed catalog');
     reputationCall('/_catalog').then((r) => this.setState({ entries: (r && r.entries) || [] }));
+  }
+
+  componentWillUnmount() {
+    suiteCenterPage(false);
   }
 
   client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'threat-feeds');

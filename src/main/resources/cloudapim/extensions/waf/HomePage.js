@@ -72,8 +72,13 @@ class SecurityHomePage extends Component {
 
   componentDidMount() {
     ensureSuiteStyles();
+    suiteCenterPage(true);
     this.props.setTitle('Cloud APIM - Security Suite');
     this.load();
+  }
+
+  componentWillUnmount() {
+    suiteCenterPage(false);
   }
 
   load = () => {
