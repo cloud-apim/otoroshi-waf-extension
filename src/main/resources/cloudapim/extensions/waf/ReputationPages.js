@@ -33,7 +33,9 @@ function ensureSuiteStyles() {
     '.suite-panel { background: var(--bg-color_level2); color: var(--color_level2);',
     '  border: 1px solid var(--border-color); border-radius: 4px; padding: 14px 16px; margin-bottom: 10px; }',
     '.suite-title { color: var(--color_level3); font-size: 17px; font-weight: 600; margin-bottom: 6px; }',
-    '.suite-meta { opacity: 0.65; font-size: 12px; word-break: break-all; }',
+    // `overflow-wrap: anywhere` rather than `word-break: break-all`: both keep a long key or an
+    // ipv6 address inside its column, but break-all also chops ordinary prose mid-word
+    '.suite-meta { opacity: 0.65; font-size: 12px; overflow-wrap: anywhere; }',
     '.suite-badge { display: inline-block; border: 1px solid var(--suite-accent);',
     '  color: var(--suite-accent); background: transparent; border-radius: 3px; padding: 1px 7px;',
     '  margin-right: 6px; font-size: 11px; letter-spacing: 0.02em; white-space: nowrap; }',

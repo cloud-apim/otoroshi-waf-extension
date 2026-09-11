@@ -256,6 +256,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val posturePageCode = getResourceCode("cloudapim/extensions/waf/PosturePage.js")
   lazy val tuningPageCode = getResourceCode("cloudapim/extensions/waf/TuningPage.js")
   lazy val learningPageCode = getResourceCode("cloudapim/extensions/waf/LearningPage.js")
+  lazy val homePageCode = getResourceCode("cloudapim/extensions/waf/HomePage.js")
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
@@ -303,12 +304,22 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |
              |    ${learningPageCode}
              |
+             |    ${homePageCode}
+             |
              |    return {
              |      id: extensionId,
              |      categories:[{
              |        title: 'Security Suite',
              |        description: 'Web application firewall, ip reputation and threat intelligence for Otoroshi',
              |        features: [
+             |          {
+             |            title: 'Security Suite',
+             |            description: 'What this is, and what to do next on this install',
+             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |            link: '/extensions/cloud-apim/waf/home',
+             |            display: () => true,
+             |            icon: () => 'fa-shield-halved',
+             |          },
              |          {
              |            title: 'WAF configs',
              |            description: 'ModSecurity SecLang rules and the OWASP Core Rule Set',
@@ -355,6 +366,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      }],
              |      features: [
              |        {
+             |          title: 'Security Suite',
+             |          description: 'What this is, and what to do next on this install',
+             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |          link: '/extensions/cloud-apim/waf/home',
+             |          display: () => true,
+             |          icon: () => 'fa-shield-halved',
+             |        },
+             |        {
              |          title: 'WAF configs',
              |          description: 'ModSecurity SecLang rules and the OWASP Core Rule Set',
              |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
@@ -399,6 +418,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      ],
              |      sidebarItems: [
              |        {
+             |          title: 'Security Suite',
+             |          text: 'What this is, and what to do next',
+             |          path: 'extensions/cloud-apim/waf/home',
+             |          icon: 'shield-halved'
+             |        },
+             |        {
              |          title: 'WAF configs',
              |          text: 'ModSecurity SecLang rules and the OWASP Core Rule Set',
              |          path: 'extensions/cloud-apim/waf/wafconfigs',
@@ -432,6 +457,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |        ...SecuritySidebarItems
              |      ],
              |      searchItems: [
+             |        {
+             |          action: () => {
+             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/home`
+             |          },
+             |          env: React.createElement('span', { className: "fas fa-shield-halved" }, null),
+             |          label: 'Cloud APIM Security Suite - Overview',
+             |          value: 'securitysuite',
+             |        },
              |        {
              |          action: () => {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/wafconfigs`
@@ -476,6 +509,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |        ...SecuritySearchItems
              |      ],
              |      routes: [
+             |        {
+             |          path: '/extensions/cloud-apim/waf/home',
+             |          component: (props) => {
+             |            return React.createElement(SecurityHomePage, props, null)
+             |          }
+             |        },
              |        {
              |          path: '/extensions/cloud-apim/waf/wafconfigs/:taction/:titem',
              |          component: (props) => {

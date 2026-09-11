@@ -8,7 +8,19 @@ description: Reading the events back — dashboards, queries, and which routes a
 
 Everything the suite decides is emitted as an event. This is the half that reads them back.
 
-Two surfaces, and they have very different requirements:
+The way in is **Cloud APIM - Security Suite → Security Suite**, the first entry in the menu. It
+explains how the pieces fit together and reads the live state of the install — routes protected,
+what is held right now, tuning candidates waiting, whether the shared state actually spans the
+cluster — and leads with the one thing worth doing next. It is a starting point rather than a
+second copy of the menu.
+
+![The suite overview: what needs doing on this install, and how the pieces fit together](/img/screenshots/suite-overview.png)
+
+*The line at the top is chosen from the numbers under it, ordered by what blocks what: a route with
+nothing attached beats a tuning backlog, and a shared state that is not shared beats both — because
+it makes every other number on the page unreliable.*
+
+The surfaces underneath it have very different requirements:
 
 | | Needs | Answers |
 |---|---|---|

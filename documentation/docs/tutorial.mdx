@@ -55,7 +55,10 @@ Six entities. Only two of them are strictly required.
 | **Challenge provider** | Only for a `challenge` tier | A challenge tier with no provider cannot present anything |
 | **ASN database** | Optional | No network classification signal |
 
-Everything lives under **Cloud APIM - Security Suite** in the Otoroshi sidebar.
+Everything lives under **Cloud APIM - Security Suite** in the Otoroshi sidebar. The first entry,
+**Security Suite**, is an overview page: it explains how the pieces fit together and reads the live
+state of your install to say what is worth doing next. If you get lost in this tutorial, it is the
+page to go back to.
 
 ## Step 0 — Check the shared state first
 
@@ -179,7 +182,23 @@ Press **Compile** to check the ruleset parses, then save with:
 
 `block: false` is the WAF's own dry run: every rule is evaluated and every match is reported, but
 nothing is denied. Note this is **separate** from the threat policy's `dry_run` — you will arm them
-one at a time, in [step 8](#step-8--arm-it-one-switch-at-a-time).
+one at a time, in [step 9](#step-9--arm-it-one-switch-at-a-time).
+
+### Leave the CRS dials alone for now
+
+The **Core Rule Set** section holds the two numbers that decide how aggressive CRS is: the paranoia
+level and the anomaly thresholds. They are fields, with the cost of each level written next to it —
+you do not hand-write `SecAction` directives for them.
+
+![The paranoia level field, with the cost of each level next to it](/img/screenshots/crs-dials.png)
+
+**Leave every one of them empty.** An empty section emits nothing, which means CRS runs its own
+defaults — paranoia level 1, threshold 5 — and that is exactly what you want for a first
+deployment. Level 1 is what CRS is tuned for, and raising it before you have tuned level 1 is the
+single most reliable way to end up with a WAF someone switches off.
+
+[Step 8](#step-8--let-the-evidence-decide-when-to-arm) is where you find out, with numbers, whether
+this install can afford more.
 
 :::note A monitoring WAF is not a silent WAF
 Even with `block: false`, the WAF contributes its matches to the threat score. That is the whole
@@ -382,7 +401,7 @@ every plugin it emits.
 
 The honeypot and the incoming-request-validator variants of the WAF and IP reputation run **before
 routing**, from the global configuration, where no route-level preset can reach them. That is
-[step 9](#step-9--the-global-layer-optional).
+[step 10](#step-10--the-global-layer-optional).
 
 ## Step 7 — Watch it, and read what it says
 
@@ -423,7 +442,7 @@ Three fields carry the whole story:
 | Would any tier have fired on a real customer? | Events with `outcome: observed` and a non-`log` action. Cross-check the source against your customer list |
 | What is the score distribution? | The `threat.score` on your events. If everything sits at 0–20 your tiers are too high; if ordinary traffic reaches 40 they are too low |
 | Which detector is loudest? | `threat.tags`. One tag dominating usually means one weight is wrong, not that you are under attack |
-| Is any partner apikey accumulating? | `source.apikey`. A partner with a broken retry loop looks exactly like an attacker |
+| Is any partner apikey accumulating? | `source.apikey`. A partner with a broken retry loop looks exactly like an attacker — and the [allowlist](./fabric/bans.mdx#the-allowlist) is the answer, not a lower threshold |
 | What would the WAF have blocked? | `CloudApimWafTrailEvent` with `blocking: false` and a non-null `block` — see [tuning](./waf/tuning.mdx) |
 
 ### The live state
@@ -433,9 +452,24 @@ anything on it can stop a request yet:
 
 ![The route posture page, counting covered and enforcing routes separately](/img/screenshots/route-posture.png)
 
-**Bans & incidents** shows what is currently held: active bans with their evidence, open incidents,
-and the ledger's running totals. In dry run the ban list should be empty; if it is not, the ledger
-promoted someone on accumulated weight, which is worth understanding before you go further.
+**Bans & incidents** shows what is currently held, and is where you work it:
+
+![An incident opened: counters, the nodes that saw it, and the last twenty events](/img/screenshots/incident-timeline.png)
+
+In dry run the ban list should be empty. If it is not, the ledger promoted someone on accumulated
+weight — open the ban and read what they actually did before deciding anything.
+
+Three things worth knowing while you are still in observation:
+
+- **`N recorded, 0 enforced` is the whole dry run in one line.** The fabric decided N times and
+  stopped nothing. When that second number stops being zero, something is armed.
+- **Incidents carry a state.** Acknowledge one and the rest of the team sees it; resolve one and it
+  drops off the list — until the same caller comes back, which reopens it rather than letting them
+  have a second quiet run.
+- **The allowlist is for the partner you just recognised.** It refuses the ban at the single point
+  every module goes through, so nothing can put them back — and it does *not* switch off inspection,
+  so the WAF keeps watching them. Lowering a threshold to accommodate one caller would have cost you
+  everywhere.
 
 Endpoints, if you would rather script it:
 
@@ -444,10 +478,56 @@ GET  /extensions/cloud-apim/extensions/waf/security/_status
 GET  /extensions/cloud-apim/extensions/waf/security/_bans
 GET  /extensions/cloud-apim/extensions/waf/security/_incidents
 GET  /extensions/cloud-apim/extensions/waf/security/_ledger
+GET  /extensions/cloud-apim/extensions/waf/security/_allowlist
 POST /extensions/cloud-apim/extensions/waf/security/_unban   { "ref": "ip:203.0.113.9" }
+POST /extensions/cloud-apim/extensions/waf/security/_allow   { "ref": "apikey:partner-ci", "reason": "nightly sync" }
 ```
 
-## Step 8 — Arm it, one switch at a time
+## Step 8 — Let the evidence decide when to arm
+
+Step 7 told you where to look. This step answers the question those numbers exist for: **can this
+configuration be armed, and what will it cost?** Guessing it is how a rollout either stalls in
+monitoring for eight months or breaks a customer on the first day.
+
+**Cloud APIM - Security Suite → WAF learning mode**, pick your WAF config, **Start**.
+
+Then leave it alone. A window is worth what the traffic in it is worth, so it needs to cover a
+representative period — a working week including a deploy is a good default. Batch jobs, a monthly
+close, a partner's nightly sync: if it happens, it should happen inside the window.
+
+Counting is per node, in memory, flushed to the shared state on a timer, so the request path pays
+nothing measurable and a restart does not lose the window.
+
+### Reading the report
+
+| What it says | What to do with it |
+|---|---|
+| **Paranoia advice** | If most of the noise lives above level 1, the level was raised past what this traffic tolerates — one line replaces forty exclusions |
+| **Threshold advice** | A curve, not a number: at each candidate threshold, how many of the sampled denials survive |
+| **Proposed exclusions** | Each one *run* before it is offered — the rule has to actually stop firing, and the attack corpus has to still be caught |
+| **Arming impact** | How many requests would newly be denied, and how much of that the proposal removes |
+
+Two things the report refuses to do, and both are the point:
+
+**It does not report a residue from rule counts.** A denial under anomaly scoring is several rules
+agreeing, so it keeps the actual combinations and calls a sample resolved only when *every* rule
+that fired on it is excluded. The estimate errs low, which is the right direction before arming.
+
+**It does not print an arming cost it cannot measure.** In `SecRuleEngine DetectionOnly` the engine
+keeps only the last phase's verdict, so the figure is withheld rather than shown as zero. The report
+says which mode it read and what that mode can tell you.
+
+Apply what it verified. Nothing is ever applied on its own, and nothing is written that has not been
+demonstrated to work — an exclusion the engine ignores is refused rather than saved, because a saved
+no-op is indistinguishable from a fix right up until the incident.
+
+:::tip The one-off false positive comes later
+Learning mode is for the batch. When a single rule starts objecting to one customer's perfectly
+ordinary input three weeks from now, the [tuning assistant](./waf/assistant.mdx) turns that one
+match into a verified exclusion without opening a window. Same verification, one sample.
+:::
+
+## Step 9 — Arm it, one switch at a time
 
 There are four independent switches. Turn them on **one per deployment**, and wait between them.
 If something breaks, you want to know which one did it.
@@ -461,6 +541,10 @@ If something breaks, you want to know which one did it.
 
 Between each one, go back to step 7 and read the events again. `outcome` flipping from `observed`
 to `blocked` on traffic you recognise is the signal to stop and tune rather than continue.
+
+Switch 1 is the one to have evidence for. If you did [step 8](#step-8--let-the-evidence-decide-when-to-arm),
+you already know roughly how many requests `block: true` will newly deny and which rules they will
+hit. If you skipped it, you are about to find out in production.
 
 :::tip Start the ban tier generous
 `ban_for_seconds: 3600` is a good first value. An hour is long enough to end an attack and short
@@ -476,7 +560,7 @@ Turn on `fail2ban: true`, leave `fail2ban_dry_run: true`, read the events for a 
 the plugin. Its defaults count `401, 403, 407, 429` — deliberately not `404` (ordinary traffic) or
 `5xx` (your own fault, and the ban would outlive the rollback). See [fail2ban](./fabric/fail2ban.mdx).
 
-## Step 9 — The global layer (optional)
+## Step 10 — The global layer (optional)
 
 Three plugins run before routing, off the global configuration. They cover traffic that matches no
 route at all, which a route plugin structurally cannot.
@@ -561,4 +645,7 @@ Where to go next:
 - [Bans and memory](./fabric/bans.mdx) — the ledger, and how a caller gets promoted to a ban
 - [Incidents](./fabric/incidents.mdx) — correlation, and what to feed a SIEM
 - [Tuning the WAF](./waf/tuning.mdx) — false positives, exclusions, going to blocking safely
+- [The tuning assistant](./waf/assistant.mdx) — one match, one verified exclusion
+- [Learning mode](./waf/learning.mdx) — the window, the report, and the arming estimate
+- [What a complete deployment needs](./architecture.mdx) — the redis and the postgres, and why
 - [Operations](./operations.mdx) — what to monitor once this is live

@@ -25,7 +25,8 @@ class AdminAssetIT extends munit.FunSuite {
       "class SecurityPosturePage",
       "class WafTuningPage",
       "class WafLearningPage",
-      "class SecurityDashboardPage"
+      "class SecurityDashboardPage",
+      "class SecurityHomePage"
     ).foreach(cls => assert(script.contains(cls), s"$cls is missing from the assembled extension.js"))
   }
 
@@ -40,13 +41,15 @@ class AdminAssetIT extends munit.FunSuite {
       "/extensions/cloud-apim/waf/posture",
       "/extensions/cloud-apim/waf/tuning",
       "/extensions/cloud-apim/waf/learning",
-      "/extensions/cloud-apim/waf/security"
+      "/extensions/cloud-apim/waf/security",
+      "/extensions/cloud-apim/waf/home"
     ).foreach { path =>
       assert(
         script.contains(s"link: '$path'"),
         s"$path is routed but has no `link:` feature entry, so it will not appear in the sidebar"
       )
     }
+    assert(script.contains("React.createElement(SecurityHomePage"))
     assert(script.contains("React.createElement(SecurityPosturePage"))
     assert(script.contains("React.createElement(WafTuningPage"))
     assert(script.contains("React.createElement(WafLearningPage"))
@@ -59,6 +62,26 @@ class AdminAssetIT extends munit.FunSuite {
     // "Something went wrong !!!" and no logged cause
     assert(!script.contains("title: ''"), "a column with an empty title and no filterId will crash the table")
     assert(!script.contains("title: \"\""), "a column with an empty title and no filterId will crash the table")
+  }
+
+  test("the overview is the first thing in the menu, and every tool it names is routed") {
+    // it exists to be arrived at cold, so it has to come first — and a card pointing at a page that
+    // does not exist is worse than no card
+    val sidebar = script.substring(script.indexOf("sidebarItems: ["))
+    assert(
+      sidebar.indexOf("extensions/cloud-apim/waf/home") < sidebar.indexOf("extensions/cloud-apim/waf/wafconfigs"),
+      "the overview must be the first sidebar entry"
+    )
+    val page  = script.substring(script.indexOf("const SUITE_TOOLS"), script.indexOf("class SecurityHomePage"))
+    val paths = "p: '([a-z]+)'".r.findAllMatchIn(page).map(_.group(1)).toSeq.distinct
+    assert(paths.size >= 12, s"expected the whole suite to be linked, found ${paths.size}")
+    paths.foreach { p =>
+      // entity pages are registered through the suiteEntityRoutes helper, which builds the path by
+      // concatenation — so the literal never appears and both shapes have to count
+      val routedLiterally = script.contains(s"path: '/extensions/cloud-apim/waf/$p'")
+      val routedByHelper  = script.contains(s"suiteEntityRoutes('$p'")
+      assert(routedLiterally || routedByHelper, s"the overview links to '$p', which is not routed")
+    }
   }
 
   test("the incident console surfaces a refusal instead of quietly doing nothing") {
