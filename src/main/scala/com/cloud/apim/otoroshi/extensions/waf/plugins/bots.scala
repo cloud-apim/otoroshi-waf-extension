@@ -55,7 +55,7 @@ class CloudApimBotGuard extends NgAccessValidator {
   override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
   override def multiInstance: Boolean                      = false
   override def core: Boolean                               = true
-  override def name: String                                = "Cloud APIM Security Suite - Bot guard"
+  override def name: String                                = "Cloud APIM Threat Protection - Bot guard"
   override def description: Option[String]                 =
     "Recognises known crawlers, verifies the ones that publish a method, and applies a per-category policy".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimBotConfig.default.some
@@ -162,7 +162,7 @@ class IncomingRequestValidatorCloudApimHoneypot extends NgIncomingRequestValidat
   override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
   override def multiInstance: Boolean                      = false
   override def core: Boolean                               = true
-  override def name: String                                = "Cloud APIM Security Suite - Honeypot (Incoming Request Validator)"
+  override def name: String                                = "Cloud APIM Threat Protection - Honeypot (Incoming Request Validator)"
   override def description: Option[String]                 =
     "Treats a request for a path nobody legitimate asks for as near-certain evidence".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimBotConfig.default.some

@@ -11,7 +11,7 @@ route behind the CRS in monitoring mode, look at what it catches, and only then 
 
 ## 1. Create a WAF configuration
 
-**Cloud APIM - Security Suite → WAF configs → Add item.**
+**Threat Protection → WAF configs → Add item.**
 
 The only field that matters to start is `rules`. Two lines get you the whole Core Rule Set:
 
@@ -61,7 +61,7 @@ you. See [Tuning](./waf/tuning.mdx).
 
 ## 4. Add an ip blocklist
 
-**Cloud APIM - Security Suite → Threat feed catalog.** Pick **FireHOL level 1** — a conservative
+**Threat Protection → Threat feed catalog.** Pick **FireHOL level 1** — a conservative
 aggregation of well-established blocklists, and the usual starting point — and press *Create a feed
 from this source*.
 
@@ -78,7 +78,7 @@ Test an address before trusting it, with the **Look up** box on the same page.
 
 ## 5. Attach reputation to the route
 
-Add the **Cloud APIM Security Suite - IP reputation** plugin. Start with:
+Add the **Cloud APIM Threat Protection - IP reputation** plugin. Start with:
 
 ```json
 {

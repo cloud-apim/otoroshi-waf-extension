@@ -1132,7 +1132,7 @@ const ReputationSearchItems = [
       window.location.href = '/bo/dashboard/extensions/cloud-apim/waf/threatfeeds';
     },
     env: React.createElement('span', { className: 'fas fa-shield-alt' }, null),
-    label: 'Cloud APIM Security Suite - Threat feeds',
+    label: 'Cloud APIM Threat Protection - Threat feeds',
     value: 'threatfeeds',
   },
   {
@@ -1140,7 +1140,7 @@ const ReputationSearchItems = [
       window.location.href = '/bo/dashboard/extensions/cloud-apim/waf/threatfeedcatalog';
     },
     env: React.createElement('span', { className: 'fas fa-book' }, null),
-    label: 'Cloud APIM Security Suite - Threat feed catalog',
+    label: 'Cloud APIM Threat Protection - Threat feed catalog',
     value: 'threatfeedcatalog',
   },
   {
@@ -1148,7 +1148,7 @@ const ReputationSearchItems = [
       window.location.href = '/bo/dashboard/extensions/cloud-apim/waf/crowdsecbouncers';
     },
     env: React.createElement('span', { className: 'fas fa-crow' }, null),
-    label: 'Cloud APIM Security Suite - CrowdSec bouncers',
+    label: 'Cloud APIM Threat Protection - CrowdSec bouncers',
     value: 'crowdsecbouncers',
   },
 ];

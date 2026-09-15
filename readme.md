@@ -1,4 +1,4 @@
-# Cloud APIM - Security Suite for Otoroshi
+# Cloud APIM - Threat Protection Suite for Otoroshi
 
 A security extension for [Otoroshi](https://www.otoroshi.io/): a JVM-native web application firewall
 speaking ModSecurity SecLang with the OWASP Core Rule Set embedded, ip reputation fed by threat
@@ -70,7 +70,7 @@ This extension is built on top of the following open-source Cloud APIM libraries
 ### Everywhere
 
 - **Analytics events**: Every detection is an Otoroshi analytic event, routable through any data exporter
-- **Backwards compatible**: Entities and plugins that predate the security suite are unchanged, and keep working without being edited
+- **Backwards compatible**: Entities and plugins that predate the threat protection suite are unchanged, and keep working without being edited
 
 ## Requirements
 
@@ -129,7 +129,7 @@ detection fabric, in the one order that makes it work.
 1. Create a **threat policy** — it starts in dry run, recording everything and enforcing nothing.
 2. Create a **WAF config** whose rules are `@import_preset crs` and `SecRuleEngine On`.
 3. Create a **threat feed** from the catalog (FireHOL level 1 is the usual first one).
-4. Add **Cloud APIM Security Suite - Preset** to the route, referencing those three.
+4. Add **Cloud APIM Threat Protection - Preset** to the route, referencing those three.
 5. Read the events for a week, then arm the four switches one at a time.
 
 → **[Protecting a route, end to end](https://cloud-apim.github.io/otoroshi-waf-extension/docs/tutorial)**
@@ -168,11 +168,11 @@ Same shape for every collection above. Field-by-field reference:
 
 ## Plugins
 
-All under the **Cloud APIM - Security Suite** category in the route designer.
+All under the **Threat Protection** category in the route designer.
 
 | Plugin | Kind | Runs |
 |---|---|---|
-| Security Suite - Preset | `NgPresetPlugin` | Expands into the five below, correctly ordered |
+| Threat Protection - Preset | `NgPresetPlugin` | Expands into the five below, correctly ordered |
 | Threat gate | `NgAccessValidator` | Refuses callers already banned, before any inspection |
 | Bot guard | `NgAccessValidator` | Identifies crawlers and verifies the ones that publish a method |
 | IP reputation | `NgAccessValidator` | Scores against feeds, CrowdSec and ASN |

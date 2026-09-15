@@ -34,8 +34,8 @@ object SecurityDashboard {
   private def dashboard(env: Env): UserDashboard = UserDashboard(
     location = EntityLocation.default,
     id = IdGenerator.namedId("dashboard", env),
-    name = "Security suite",
-    description = "What the security suite decided, and what it actually enforced",
+    name = "Threat protection",
+    description = "What threat protection decided, and what it actually enforced",
     tags = Seq("cloud-apim", "security"),
     metadata = Map(DefaultIdKey -> DefaultIdValue),
     enabled = true,

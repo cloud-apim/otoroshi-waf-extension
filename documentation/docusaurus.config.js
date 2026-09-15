@@ -5,7 +5,7 @@ const repo = 'https://github.com/cloud-apim/otoroshi-waf-extension';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Cloud APIM Security Suite',
+  title: 'Cloud APIM Threat Protection Suite',
   tagline: 'A WAF, ip reputation, bot control and a decision fabric for Otoroshi',
   favicon: 'img/favicon.svg',
 
@@ -72,9 +72,9 @@ const config = {
         respectPrefersColorScheme: true,
       },
       navbar: {
-        title: 'Security Suite',
+        title: 'Threat Protection',
         logo: {
-          alt: 'Cloud APIM Security Suite',
+          alt: 'Cloud APIM Threat Protection Suite',
           src: 'img/logo.svg',
         },
         items: [

@@ -368,7 +368,7 @@ class CloudApimFail2Ban extends NgAccessValidator with NgRequestTransformer {
   override def multiInstance: Boolean            = true
   override def core: Boolean                     = true
 
-  override def name: String                                = "Cloud APIM Security Suite - Fail2ban"
+  override def name: String                                = "Cloud APIM Threat Protection - Fail2ban"
   override def description: Option[String]                 =
     "Bans a caller that keeps producing failed responses — cluster-wide, and feeding the threat ledger".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimFail2BanConfig.default.some

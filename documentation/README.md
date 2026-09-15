@@ -1,6 +1,6 @@
 # Documentation
 
-The [Docusaurus](https://docusaurus.io/) site for the Cloud APIM Security Suite extension.
+The [Docusaurus](https://docusaurus.io/) site for the Cloud APIM Threat Protection Suite extension.
 
 ```bash
 npm install

@@ -204,7 +204,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
   override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
   override def multiInstance: Boolean                      = false
   override def core: Boolean                               = true
-  override def name: String                                = "Cloud APIM Security Suite - Preset"
+  override def name: String                                = "Cloud APIM Threat Protection - Preset"
   override def description: Option[String]                 =
     "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF and threat response — in the right order".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimSecuritySuitePresetConfig.default.some

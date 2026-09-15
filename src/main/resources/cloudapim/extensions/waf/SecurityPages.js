@@ -1536,7 +1536,7 @@ const SecuritySearchItems = [
       window.location.href = '/bo/dashboard/extensions/cloud-apim/waf/threatpolicies';
     },
     env: React.createElement('span', { className: 'fas fa-sliders-h' }, null),
-    label: 'Cloud APIM Security Suite - Threat policies',
+    label: 'Cloud APIM Threat Protection - Threat policies',
     value: 'threatpolicies',
   },
   {
@@ -1544,7 +1544,7 @@ const SecuritySearchItems = [
       window.location.href = '/bo/dashboard/extensions/cloud-apim/waf/security';
     },
     env: React.createElement('span', { className: 'fas fa-gavel' }, null),
-    label: 'Cloud APIM Security Suite - Bans & incidents',
+    label: 'Cloud APIM Threat Protection - Bans & incidents',
     value: 'bans',
   },
 ];

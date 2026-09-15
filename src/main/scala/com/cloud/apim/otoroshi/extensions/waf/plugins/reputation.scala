@@ -133,7 +133,7 @@ object CloudApimIpReputationConfig {
 
 object CloudApimSecuritySuite {
   /** The single plugin-picker category every module of the suite declares. */
-  val category: NgPluginCategory = NgPluginCategory.Custom("Security Suite")
+  val category: NgPluginCategory = NgPluginCategory.Custom("Threat Protection")
 }
 
 private[plugins] object ReputationSupport {
@@ -219,7 +219,7 @@ class CloudApimIpReputation extends NgAccessValidator {
   override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
   override def multiInstance: Boolean                      = true
   override def core: Boolean                               = true
-  override def name: String                                = "Cloud APIM Security Suite - IP reputation"
+  override def name: String                                = "Cloud APIM Threat Protection - IP reputation"
   override def description: Option[String]                 =
     "Scores the caller against threat intelligence feeds and CrowdSec decisions before the request is processed".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimIpReputationConfig.default.some
@@ -277,7 +277,7 @@ class IncomingRequestValidatorCloudApimIpReputation extends NgIncomingRequestVal
   override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
   override def multiInstance: Boolean                      = true
   override def core: Boolean                               = true
-  override def name: String                                = "Cloud APIM Security Suite - IP reputation (Incoming Request Validator)"
+  override def name: String                                = "Cloud APIM Threat Protection - IP reputation (Incoming Request Validator)"
   override def description: Option[String]                 =
     "Global IP reputation check, evaluated before routing".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimIpReputationConfig.default.some

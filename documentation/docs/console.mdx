@@ -8,7 +8,7 @@ description: Reading the events back — dashboards, queries, and which routes a
 
 Everything the suite decides is emitted as an event. This is the half that reads them back.
 
-The way in is **Cloud APIM - Security Suite → Security Suite**, the first entry in the menu. It
+The way in is **Threat Protection → Overview**, the first entry in the menu. It
 explains how the pieces fit together and reads the live state of the install — routes protected,
 what is held right now, tuning candidates waiting, whether the shared state actually spans the
 cluster — and leads with the one thing worth doing next. It is a starting point rather than a
@@ -36,7 +36,7 @@ live routing state, which every node already has.
 
 ## Route posture
 
-**Cloud APIM - Security Suite → Route posture.**
+**Threat Protection → Route posture.**
 
 ![The posture summary and table: 302 of 304 routes with nothing attached](/img/screenshots/route-posture.png)
 
@@ -71,7 +71,7 @@ emitted.
 
 ## Bans & incidents
 
-**Cloud APIM - Security Suite → Bans & incidents.** The console during an incident, rather than the
+**Threat Protection → Bans & incidents.** The console during an incident, rather than the
 report afterwards.
 
 Three registers, in the order an incident gets worked:
@@ -108,7 +108,7 @@ exporter you have wired — but there is nothing to query, and the dashboards wi
 
 ### A dashboard, ready on first boot
 
-The suite seeds a **Security suite** dashboard the first time it runs against a configured exporter.
+The suite seeds a **Threat protection** dashboard the first time it runs against a configured exporter.
 It is an ordinary user dashboard: rearrange it, delete widgets, or delete the whole thing. It is
 only recreated if its marker is gone, so your edits survive a restart.
 

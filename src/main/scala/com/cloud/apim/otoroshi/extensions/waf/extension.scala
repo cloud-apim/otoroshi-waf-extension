@@ -179,12 +179,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   val factory = SecLang.factory(presets, config, integration)
 
   override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.Waf")
-  override def name: String = "Cloud APIM - Security Suite"
-  override def description: Option[String] = "A security suite for Otoroshi: a JVM implementation of a WAF with ModSecurity SecLang support and the OWASP CRS, plus ip reputation from threat intelligence feeds and CrowdSec".some
+  override def name: String = "Cloud APIM - Threat Protection Suite"
+  override def description: Option[String] = "A threat protection suite for Otoroshi: a JVM implementation of a WAF with ModSecurity SecLang support and the OWASP CRS, plus ip reputation from threat intelligence feeds and CrowdSec".some
   override def enabled: Boolean = env.isDev || configuration.getOptional[Boolean]("enabled").getOrElse(false)
 
   override def start(): Unit = {
-    logger.info("the 'Cloud APIM - Security Suite' extension is enabled !")
+    logger.info("the 'Cloud APIM - Threat Protection Suite' extension is enabled !")
     reputation.start()
     security.start()
     tuning.start()
@@ -309,11 +309,11 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |    return {
              |      id: extensionId,
              |      categories:[{
-             |        title: 'Security Suite',
+             |        title: 'Threat Protection',
              |        description: 'Web application firewall, ip reputation and threat intelligence for Otoroshi',
              |        features: [
              |          {
-             |            title: 'Security Suite',
+             |            title: 'Overview',
              |            description: 'What this is, and what to do next on this install',
              |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
              |            link: '/extensions/cloud-apim/waf/home',
@@ -366,7 +366,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      }],
              |      features: [
              |        {
-             |          title: 'Security Suite',
+             |          title: 'Threat Protection',
              |          description: 'What this is, and what to do next on this install',
              |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
              |          link: '/extensions/cloud-apim/waf/home',
@@ -418,7 +418,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      ],
              |      sidebarItems: [
              |        {
-             |          title: 'Security Suite',
+             |          title: 'Threat Protection',
              |          text: 'What this is, and what to do next',
              |          path: 'extensions/cloud-apim/waf/home',
              |          icon: 'shield-halved'
@@ -462,7 +462,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/home`
              |          },
              |          env: React.createElement('span', { className: "fas fa-shield-halved" }, null),
-             |          label: 'Cloud APIM Security Suite - Overview',
+             |          label: 'Cloud APIM Threat Protection - Overview',
              |          value: 'securitysuite',
              |        },
              |        {
@@ -470,7 +470,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/wafconfigs`
              |          },
              |          env: React.createElement('span', { className: "fas fa-atom" }, null),
-             |          label: 'Cloud APIM Security Suite - WAF configs',
+             |          label: 'Cloud APIM Threat Protection - WAF configs',
              |          value: 'wafconfigs',
              |        },
              |        {
@@ -478,7 +478,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/posture`
              |          },
              |          env: React.createElement('span', { className: "fas fa-clipboard-check" }, null),
-             |          label: 'Cloud APIM Security Suite - Route posture',
+             |          label: 'Cloud APIM Threat Protection - Route posture',
              |          value: 'posture',
              |        },
              |        {
@@ -486,7 +486,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/tuning`
              |          },
              |          env: React.createElement('span', { className: "fas fa-wand-magic-sparkles" }, null),
-             |          label: 'Cloud APIM Security Suite - WAF tuning',
+             |          label: 'Cloud APIM Threat Protection - WAF tuning',
              |          value: 'tuning',
              |        },
              |        {
@@ -494,7 +494,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/learning`
              |          },
              |          env: React.createElement('span', { className: "fas fa-graduation-cap" }, null),
-             |          label: 'Cloud APIM Security Suite - WAF learning mode',
+             |          label: 'Cloud APIM Threat Protection - WAF learning mode',
              |          value: 'learning',
              |        },
              |        {
@@ -502,7 +502,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/wafrulesets`
              |          },
              |          env: React.createElement('span', { className: "fas fa-layer-group" }, null),
-             |          label: 'Cloud APIM Security Suite - WAF rulesets',
+             |          label: 'Cloud APIM Threat Protection - WAF rulesets',
              |          value: 'wafrulesets',
              |        },
              |        ...ReputationSearchItems,

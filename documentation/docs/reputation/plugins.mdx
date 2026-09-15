@@ -9,7 +9,7 @@ description: Configuring the route plugin and the global validator.
 Two plugins consult the reputation sources. As with the WAF, they differ in where they are
 configured and what they cover.
 
-## Cloud APIM Security Suite - IP reputation
+## Cloud APIM Threat Protection - IP reputation
 
 A route plugin, evaluated during access validation — before the WAF reads any body.
 
@@ -54,7 +54,7 @@ so it is a signal you want everywhere or nowhere. Disable the database itself to
 or set every category to weight `0`.
 :::
 
-## Cloud APIM Security Suite - IP reputation (Incoming Request Validator)
+## Cloud APIM Threat Protection - IP reputation (Incoming Request Validator)
 
 The same logic, evaluated **once per request before routing** — cheaper, and it also covers traffic
 matching no route. It takes the same configuration.

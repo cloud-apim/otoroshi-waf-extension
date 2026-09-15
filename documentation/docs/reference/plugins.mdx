@@ -8,18 +8,18 @@ description: Every plugin the extension registers, and where each one is configu
 
 | Plugin | Kind | Configured on |
 |---|---|---|
-| Cloud APIM Security Suite - Preset | `NgPresetPlugin` | A route |
+| Cloud APIM Threat Protection - Preset | `NgPresetPlugin` | A route |
 | Cloud APIM WAF | `NgRequestTransformer` | A route |
 | Cloud APIM WAF - Incoming Request Validator | `NgIncomingRequestValidator` | The global configuration |
-| Cloud APIM Security Suite - IP reputation | `NgAccessValidator` | A route |
-| Cloud APIM Security Suite - IP reputation (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
-| Cloud APIM Security Suite - Threat gate | `NgAccessValidator` | A route |
-| Cloud APIM Security Suite - Threat response | `NgRequestTransformer` | A route |
-| Cloud APIM Security Suite - Bot guard | `NgAccessValidator` | A route |
-| Cloud APIM Security Suite - Fail2ban | `NgAccessValidator` + `NgRequestTransformer` | A route |
-| Cloud APIM Security Suite - Honeypot (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
+| Cloud APIM Threat Protection - IP reputation | `NgAccessValidator` | A route |
+| Cloud APIM Threat Protection - IP reputation (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
+| Cloud APIM Threat Protection - Threat gate | `NgAccessValidator` | A route |
+| Cloud APIM Threat Protection - Threat response | `NgRequestTransformer` | A route |
+| Cloud APIM Threat Protection - Bot guard | `NgAccessValidator` | A route |
+| Cloud APIM Threat Protection - Fail2ban | `NgAccessValidator` + `NgRequestTransformer` | A route |
+| Cloud APIM Threat Protection - Honeypot (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
 
-All appear under the **Cloud APIM - Security Suite** category.
+All appear under the **Threat Protection** category.
 
 ## Order on a route
 

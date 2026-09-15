@@ -112,7 +112,7 @@ class CloudApimThreatGate extends NgAccessValidator {
   override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
   override def multiInstance: Boolean                      = false
   override def core: Boolean                               = true
-  override def name: String                                = "Cloud APIM Security Suite - Threat gate"
+  override def name: String                                = "Cloud APIM Threat Protection - Threat gate"
   override def description: Option[String]                 =
     "Refuses callers that are already banned, before any inspection happens".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimThreatConfig.default.some
@@ -180,7 +180,7 @@ class CloudApimThreatResponse extends NgRequestTransformer {
   override def visibility: NgPluginVisibility              = NgPluginVisibility.NgUserLand
   override def multiInstance: Boolean                      = false
   override def core: Boolean                               = true
-  override def name: String                                = "Cloud APIM Security Suite - Threat response"
+  override def name: String                                = "Cloud APIM Threat Protection - Threat response"
   override def description: Option[String]                 =
     "Reads the accumulated threat score and applies one graded action: log, tarpit, deny or ban".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimThreatConfig.default.some

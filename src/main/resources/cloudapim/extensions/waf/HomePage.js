@@ -73,7 +73,7 @@ class SecurityHomePage extends Component {
   componentDidMount() {
     ensureSuiteStyles();
     suiteCenterPage(true);
-    this.props.setTitle('Cloud APIM - Security Suite');
+    this.props.setTitle('Cloud APIM - Threat Protection Suite');
     this.load();
   }
 
@@ -268,7 +268,7 @@ class SecurityHomePage extends Component {
       React.createElement(
         'div',
         { key: 'b', className: 'suite-meta', style: { maxWidth: '72ch' } },
-        'One plugin slot — Cloud APIM Security Suite - Preset — expands into the five plugins in the ' +
+        'One plugin slot — Cloud APIM Threat Protection - Preset — expands into the five plugins in the ' +
           'right order, which is the part that is easy to get wrong by hand. Attach it to a route, leave ' +
           'everything in observation, and read what it says before arming anything.'
       ),

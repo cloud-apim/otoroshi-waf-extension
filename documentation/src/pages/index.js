@@ -98,7 +98,7 @@ const layers = [
 const quickstart = `# grab otoroshi and the extension
 curl -L -o otoroshi.jar \\
   'https://github.com/MAIF/otoroshi/releases/download/v18.0.0-preview6/otoroshi.jar'
-# the security suite jar, from github.com/cloud-apim/otoroshi-waf-extension/releases/latest
+# the threat protection suite jar, from github.com/cloud-apim/otoroshi-waf-extension/releases/latest
 curl -L -o waf.jar \\
   '.../releases/download/<version>/otoroshi-waf-extension_3-<version>.jar'
 
@@ -115,7 +115,7 @@ function Hero() {
           <div>
             <div className={styles.heroEyebrow}>Cloud APIM · Otoroshi extension</div>
             <Heading as="h1" className={styles.heroTitle}>
-              A <span className={styles.heroAccent}>security suite</span> for Otoroshi
+              A <span className={styles.heroAccent}>threat protection suite</span> for Otoroshi
             </Heading>
             <p className={styles.heroSubtitle}>
               A web application firewall with the OWASP Core Rule Set, ip reputation, bot and
@@ -223,7 +223,7 @@ function Start() {
 export default function Home() {
   return (
     <Layout
-      title="A security suite for Otoroshi"
+      title="A threat protection suite for Otoroshi"
       description="A web application firewall with the OWASP Core Rule Set, ip reputation from threat intelligence feeds and CrowdSec, bot and AI-crawler control, and a decision fabric that makes them act as one — for the Otoroshi API gateway.">
       <Hero />
       <main>
