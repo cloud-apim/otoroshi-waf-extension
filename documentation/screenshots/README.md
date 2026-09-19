@@ -9,7 +9,7 @@ npm run shoot     # logs in, walks the studio, writes ../static/img/screenshots/
 ```
 
 It signs in at `admin@otoroshi.io` / `password` against `http://otoroshi.oto.tools:9999`, forces the
-**light** theme so the captures sit well on the doc's background, auto-detects the first workspace of
+**dark** theme, auto-detects the first workspace of
 the global preset table, and captures the pages the docs reference.
 
 Overrides, all via environment variables:
@@ -18,7 +18,7 @@ Overrides, all via environment variables:
 |---|---|
 | `OTO_URL` | the gateway (default `http://otoroshi.oto.tools:9999`) |
 | `OTO_USER` · `OTO_PASSWORD` | the backoffice credentials |
-| `TS_THEME` | `light` (default) or `dark` |
+| `TS_THEME` | `dark` (default) or `light` |
 | `TS_WS` | a workspace id, to skip auto-detection |
 
 The captures are only as interesting as the data behind them: run some traffic through a route the

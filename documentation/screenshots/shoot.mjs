@@ -20,7 +20,7 @@ mkdirSync(OUT, { recursive: true });
 const BASE = (process.env.OTO_URL || 'http://otoroshi.oto.tools:9999').replace(/\/$/, '');
 const USER = process.env.OTO_USER || 'admin@otoroshi.io';
 const PASSWORD = process.env.OTO_PASSWORD || 'password';
-const THEME = process.env.TS_THEME === 'dark' ? 'dark' : 'light';
+const THEME = process.env.TS_THEME === 'light' ? 'light' : 'dark';
 const STUDIO = `${BASE}/extensions/cloud-apim/threat-studio`;
 
 // 1568-wide to match the screenshots already in the docs; scale 1 keeps the files small
