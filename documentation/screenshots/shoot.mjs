@@ -50,6 +50,22 @@ async function firstWorkspaceId(page) {
   return ws ? ws.id : null;
 }
 
+async function demoBan(page, ip, on) {
+  const path = on ? '_ban' : '_unban';
+  const body = on ? { ref: `ip:${ip}`, duration_seconds: 3600, reason: 'demo caller, from the docs capture' } : { ref: `ip:${ip}` };
+  await page.evaluate(
+    async ({ base, path, body }) => {
+      await fetch(`${base}/extensions/cloud-apim/extensions/waf/security/${path}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    },
+    { base: BASE, path, body }
+  );
+}
+
 async function shoot(page, name, { fullPage = false, settle = 900, before } = {}) {
   if (before) await before(page);
   // the analytics pages fire a burst of queries; wait for them to land, then a beat for the charts
@@ -122,6 +138,28 @@ const run = async () => {
   // every route of the install, and where its protection comes from
   await shoot(page, 'studio-fleet', { before: (p) => goto(p, '/fleet') });
 
+  // the WAF tuning assistant, opened on the first candidate
+  await shoot(page, 'studio-waf-tuning', {
+    before: async (p) => {
+      await goto(p, w('/waf'));
+      await p.waitForLoadState('networkidle').catch(() => {});
+      // switch to the Tuning tab
+      await p.evaluate(() => {
+        const t = [...document.querySelectorAll('.tabs button')].find((b) => /Tuning/.test(b.textContent));
+        t && t.click();
+      });
+      await p.waitForTimeout(800);
+      // open the first candidate's assistant
+      const tune = p.locator('table tbody tr button', { hasText: 'Tune' }).first();
+      if (await tune.count()) {
+        await tune.click();
+        await p.waitForSelector('.drawer', { state: 'visible', timeout: 5000 }).catch(() => {});
+        await p.waitForTimeout(900);
+      }
+    },
+    settle: 900,
+  });
+
   // the entity editor, opened on the first threat policy — that page's only table is the entities,
   // so the first row is the one that opens the editor (the WAF page has the tuning table above it)
   await shoot(page, 'studio-entity-editor', {
@@ -137,6 +175,22 @@ const run = async () => {
     },
     settle: 900,
   });
+
+  // bans & incidents, on the install-wide tab, with one demo ban so the page is not empty
+  const demoIp = '198.51.100.200';
+  try {
+    await goto(page, w('/incidents'));
+    await demoBan(page, demoIp, true);
+    await goto(page, w('/incidents'));
+    await page.evaluate(() => {
+      const t = [...document.querySelectorAll('.tabs button')].find((b) => /Live state/.test(b.textContent));
+      t && t.click();
+    });
+    await page.waitForTimeout(1000);
+    await shoot(page, 'studio-incidents', {});
+  } finally {
+    await demoBan(page, demoIp, false);
+  }
 
   await browser.close();
   console.log(`\nDone. Wrote to ${OUT}`);

@@ -36,12 +36,7 @@ export function FeedsPage() {
 
   return (
     <div className="content wide">
-      <PageHeader title="Threat feeds" description="Address ranges from threat intelligence, refreshed on a schedule. Consulted for every route whose workspace enables reputation.">
-        <a className="btn" href="/bo/dashboard/extensions/cloud-apim/waf/threatfeedcatalog" target="_blank" rel="noreferrer">
-          <Icon name="book" />
-          Catalog
-        </a>
-      </PageHeader>
+      <PageHeader title="Threat feeds" description="Address ranges from threat intelligence, refreshed on a schedule. Consulted for every route whose workspace enables reputation. Add one from the curated catalog." />
 
       <Card style={{ marginBottom: 18 }} title="Check one address" description="What every enabled source says about it, right now.">
         <div className="row" style={{ gap: 8 }}>

@@ -2,12 +2,8 @@ import { useState } from 'react';
 import { EntityCreator } from './create';
 import { EntityEditor } from './editor';
 import { Icon } from './icons';
-import { OpenInOtoroshi } from './openin';
 import { Badge, Card, Empty, ErrorAlert, Loading, StatusBadge } from './ui';
-import { boUrl } from '../lib/backoffice';
 
-export { OpenInOtoroshi } from './openin';
-export { boUrl, BO_PATHS } from '../lib/backoffice';
 
 /**
  * The entities of the suite, listed.
@@ -43,16 +39,11 @@ export function EntityList({
     return (
       <Empty title={emptyTitle}>
         {emptyBody}
-        {onCreate ? (
+        {onCreate && (
           <button className="btn primary" style={{ marginTop: 14 }} onClick={onCreate}>
             <Icon name="plus" />
             {createLabel}
           </button>
-        ) : (
-          <a className="btn primary" style={{ marginTop: 14 }} href={boUrl(plural)} target="_blank" rel="noreferrer">
-            <Icon name="plus" />
-            Create one in Otoroshi
-          </a>
         )}
       </Empty>
     );
@@ -86,13 +77,18 @@ export function EntityList({
               <td>
                 <StatusBadge enabled={e.enabled !== false} />
               </td>
-              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(ev) => ev.stopPropagation()}>
                 {onSelect && writable && selectedId !== e.id && (
                   <button className="btn sm" style={{ marginRight: 6 }} onClick={() => onSelect(e.id)}>
                     {selectLabel}
                   </button>
                 )}
-                <OpenInOtoroshi plural={plural} id={e.id} />
+                {onOpen && (
+                  <button className="btn sm" onClick={() => onOpen(e)}>
+                    <Icon name="edit" />
+                    {writable ? 'Edit' : 'View'}
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -102,20 +98,12 @@ export function EntityList({
   );
 }
 
-export function SectionCard({ title, description, plural, children, actions, onCreate, createLabel = 'New' }) {
-  const fallback = plural && (
-    <a className="btn sm" href={boUrl(plural)} target="_blank" rel="noreferrer">
-      <Icon name="plus" />
-      New
-    </a>
-  );
-  const create = onCreate ? (
+export function SectionCard({ title, description, children, actions, onCreate, createLabel = 'New' }) {
+  const create = onCreate && (
     <button className="btn sm primary" onClick={onCreate}>
       <Icon name="plus" />
       {createLabel}
     </button>
-  ) : (
-    fallback
   );
   return (
     <Card className="flush" style={{ marginBottom: 18 }} title={title} description={description} actions={actions || create}>
@@ -147,8 +135,15 @@ export function EntitySection({
   workspaceId,
   kind,
   onChanged,
+  // optional controlled edition: when a parent passes `editing`/`onEditingChange`, opening the
+  // editor is driven from there, so a button outside this section (the WAF page's "Edit rules")
+  // opens the very same drawer rather than a second one
+  editing: editingProp,
+  onEditingChange,
 }) {
-  const [editing, setEditing] = useState(null);
+  const [editingLocal, setEditingLocal] = useState(null);
+  const editing = editingProp !== undefined ? editingProp : editingLocal;
+  const setEditing = onEditingChange || setEditingLocal;
   const [creating, setCreating] = useState(false);
 
   const changed = (entity) => {

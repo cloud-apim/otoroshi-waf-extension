@@ -184,7 +184,7 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
         <Link to="/fleet" className={path === '/fleet' ? 'active' : ''}>
           Fleet
         </Link>
-        <a href="/bo/dashboard/extensions/cloud-apim/waf/home" target="_blank" rel="noreferrer">
+        <a href="https://cloud-apim.github.io/otoroshi-waf-extension/" target="_blank" rel="noreferrer">
           Docs
         </a>
       </nav>

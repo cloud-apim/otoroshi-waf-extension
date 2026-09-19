@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FormFields } from './form';
 import { Icon } from './icons';
-import { OpenInOtoroshi } from './openin';
 import { Badge, Drawer, ErrorAlert, Loading, useConfirm, useToast } from './ui';
 import { compileConfig, createEntity } from '../lib/create';
 import { schemaOf } from '../lib/schemas';
@@ -142,7 +141,6 @@ export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted
                 Delete
               </button>
             )}
-            {!creating && <OpenInOtoroshi plural={plural} id={entity.id} label="Full form" />}
           </div>
           <div className="row" style={{ gap: 8 }}>
             <button className="btn" onClick={onClose} disabled={busy}>

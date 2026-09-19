@@ -17,11 +17,14 @@ backoffice session, and is reachable from the Threat Protection menu or by searc
 
 *Each row is a rule of the global preset table. The summary leads with the count that earns the page — the routes no rule claims — and the workspace shows its selector and the sections it lays down.*
 
-:::info It stores nothing
+:::info It stores nothing, and it keeps you in one place
 There is no workspace entity, no studio database, no extra state to back up. A workspace **is** a rule
 of [the global preset table](./fabric/global-preset.mdx), and everything else it shows is either an
 ordinary entity of the extension or a query over the analytics you already export. Deleting the studio
 would delete nothing.
+
+Every entity is created, edited and deleted here; WAF tuning and learning run here; a caller is banned
+here. The studio does not hand you off to the backoffice to finish a job.
 :::
 
 ## A workspace is a rule of the table
@@ -94,6 +97,28 @@ workspace enables reputation — the mode is a per-workspace choice, the sources
 pre-routing validators are further out of reach still: they run before a route is known, so no
 selector could ever reach them.
 :::
+
+During an incident, **Bans & incidents** is worked from the studio: what the fabric is holding right
+now, the incidents it is still watching, and the allowlist — with the one action there was no way to
+start before, banning a caller by hand.
+
+![The Bans & incidents page, install-wide: an active ban with its evidence, the open incidents, the allowlist, and a button to ban an address](/img/screenshots/studio-incidents.png)
+
+*A ban is issued against a caller — an IP, an api key, a user — and enforced on every route of the
+install. Extend it, lift it, or move it to the allowlist from the same row.*
+
+## WAF, tuning and learning, in the studio
+
+The WAF page has three tabs. **Config** picks and edits the rule engine this workspace runs.
+**Tuning** is the assistant — the rules that fired on traffic somebody thinks is legitimate, and for
+each one the exclusions it generated, every one already run so the verdict is measured rather than
+described. **Learning** measures a window of real traffic and reports what arming would cost, with
+the verified exclusions ready to apply.
+
+![The WAF tuning assistant: a false-positive rule, and the exclusions generated for it with their measured verdict](/img/screenshots/studio-waf-tuning.png)
+
+*Each proposal shows the SecLang it would write, whether it stops the rule firing, and what it would
+stop catching — so the narrowest safe one is the obvious pick. None of this leaves the studio.*
 
 ## The analytics
 
@@ -168,14 +193,11 @@ and a **challenge provider** from a vendor preset.
 A WAF config carries a live badge saying whether its rules compile, which rulesets it references that
 do not exist, and whether its CRS dials are being ignored for want of a CRS import.
 
-:::note An edited view, not a generated one
+:::note An edited view of the whole entity
 The fields the studio shows are the ones that decide behaviour, in the order they are reasoned about,
-with help text that says what a number actually does. It is deliberately not every field: the
-backoffice generates the complete form from the entity schema, and **Full form** in the editor's
-footer is one click away for the rest.
-
-The [tuning assistant](./waf/assistant.mdx) and [learning mode](./waf/learning.mdx) are not copied
-either — the studio surfaces their state and links to them.
+with help text that says what a number actually does. Everything is edited here — the studio does not
+send you back to the backoffice for anything, and there is no outward "open in Otoroshi" link on an
+entity.
 :::
 
 ![The Fleet page: every route of the install, its status, and where its protection comes from](/img/screenshots/studio-fleet.png)

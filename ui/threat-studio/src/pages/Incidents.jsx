@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Icon } from '../components/icons';
 import {
@@ -6,6 +6,7 @@ import {
   Card,
   Drawer,
   ErrorAlert,
+  Field,
   Loading,
   Modal,
   PageHeader,
@@ -78,10 +79,93 @@ function BanDrawer({ entry, onClose, onAction }) {
   );
 }
 
+/**
+ * Banning an address by hand.
+ *
+ * The one action there was no way to start from the studio: everything else here reacts to a ban the
+ * fabric already issued. A manual ban is issued against an identity — an IP by default — for a
+ * duration, and enforced on every route of the install.
+ */
+function BanModal({ open, onClose, onBanned }) {
+  const toast = useToast();
+  const [kind, setKind] = useState('ip');
+  const [value, setValue] = useState('');
+  const [hours, setHours] = useState(1);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setKind('ip');
+      setValue('');
+      setHours(1);
+      setReason('');
+    }
+  }, [open]);
+
+  const ban = () => {
+    setBusy(true);
+    Security.ban({
+      ref: `${kind}:${value.trim()}`,
+      duration_seconds: Math.max(1, Math.round(Number(hours) * 3600)),
+      reason: reason.trim() || 'banned from Threat Studio',
+    })
+      .then((r) => {
+        if (r && r.done === false) throw new Error(r.error || 'could not ban');
+        toast.success('Ban issued');
+        onBanned();
+        onClose();
+      })
+      .catch(toast.error)
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <Modal
+      open={open}
+      title="Ban an address"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn danger" onClick={ban} disabled={busy || !value.trim()}>
+            {busy ? 'Banning…' : 'Ban'}
+          </button>
+        </>
+      }
+    >
+      <Field label="Against">
+        <div className="row" style={{ gap: 8 }}>
+          <Select
+            value={kind}
+            onChange={setKind}
+            options={[
+              { value: 'ip', label: 'IP address' },
+              { value: 'apikey', label: 'Api key' },
+              { value: 'user', label: 'User' },
+              { value: 'fingerprint', label: 'Fingerprint' },
+            ]}
+          />
+          <TextInput value={value} onChange={setValue} placeholder={kind === 'ip' ? '203.0.113.10' : 'identifier'} className="grow" autoFocus />
+        </div>
+      </Field>
+      <Field label="For (hours)" hint="How long the ban holds. It is enforced on every route.">
+        <TextInput value={String(hours)} onChange={(v) => setHours(v)} type="number" />
+      </Field>
+      <Field label="Reason" hint="Kept on the ban, for whoever reviews it later.">
+        <TextInput value={reason} onChange={setReason} placeholder="manual ban — abuse from this address" />
+      </Field>
+    </Modal>
+  );
+}
+
 function LiveState() {
   const toast = useToast();
   const confirm = useConfirm();
   const [open, setOpen] = useState(null);
+  const [banning, setBanning] = useState(false);
   const bans = useAsync(() => Security.bans(), []);
   const incidents = useAsync(() => Security.incidents(), []);
   const allowlist = useAsync(() => Security.allowlist(), []);
@@ -94,16 +178,15 @@ function LiveState() {
   };
 
   const action = async (kind, entry) => {
-    const ref = entry.ref || { kind: 'ip', value: entry.key };
+    // the backend identifies a caller by the "kind:value" string, which is exactly the row's key
+    const ref = entry.key;
     if (kind === 'unban') {
       const ok = await confirm({ title: 'Lift this ban?', message: `${entry.key} will be let through again.`, danger: true, confirmLabel: 'Lift' });
       if (!ok) return;
-      await Security.unban({ ref }).catch(toast.error);
-      toast.success('Ban lifted');
+      await Security.unban({ ref }).then(() => toast.success('Ban lifted')).catch(toast.error);
     }
     if (kind === 'extend') {
-      await Security.extend({ ref, duration: 3600 }).catch(toast.error);
-      toast.success('Ban extended');
+      await Security.extend({ ref, duration_seconds: 3600 }).then(() => toast.success('Ban extended')).catch(toast.error);
     }
     if (kind === 'allow') {
       const ok = await confirm({
@@ -112,8 +195,7 @@ function LiveState() {
         confirmLabel: 'Allowlist',
       });
       if (!ok) return;
-      await Security.allow({ ref, reason: 'allowlisted from Threat Studio' }).catch(toast.error);
-      toast.success('Allowlisted');
+      await Security.allow({ ref, reason: 'allowlisted from Threat Studio' }).then(() => toast.success('Allowlisted')).catch(toast.error);
     }
     setOpen(null);
     reload();
@@ -129,7 +211,18 @@ function LiveState() {
         </div>
       )}
 
-      <Card className="flush" style={{ marginTop: 16, marginBottom: 18 }} title="What the fabric is holding now" description="Bans are issued against a caller and enforced on every route of the install.">
+      <Card
+        className="flush"
+        style={{ marginTop: 16, marginBottom: 18 }}
+        title="What the fabric is holding now"
+        description="Bans are issued against a caller and enforced on every route of the install."
+        actions={
+          <button className="btn sm danger" onClick={() => setBanning(true)}>
+            <Icon name="ban" />
+            Ban an address
+          </button>
+        }
+      >
         {bans.loading ? (
           <div style={{ padding: 20 }}><Loading /></div>
         ) : bans.error ? (
@@ -193,7 +286,7 @@ function LiveState() {
                         <Select
                           value={i.state || 'open'}
                           onChange={(v) =>
-                            Security.incidentState({ ref: i.ref, state: v })
+                            Security.incidentState({ key: i.key, state: v })
                               .then(() => {
                                 toast.success('Incident moved');
                                 incidents.reload();
@@ -251,7 +344,7 @@ function LiveState() {
                           className="copy-btn"
                           title="Remove from the allowlist"
                           onClick={() =>
-                            Security.disallow({ ref: e.ref })
+                            Security.disallow({ ref: e.key })
                               .then(() => {
                                 toast.success('Removed');
                                 allowlist.reload();
@@ -272,6 +365,7 @@ function LiveState() {
       </div>
 
       <BanDrawer entry={open} onClose={() => setOpen(null)} onAction={action} />
+      <BanModal open={banning} onClose={() => setBanning(false)} onBanned={reload} />
     </>
   );
 }

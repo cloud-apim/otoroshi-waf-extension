@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useStudio, useWorkspace } from '../App';
-import { EntitySection, OpenInOtoroshi } from '../components/entities';
+import { EntitySection } from '../components/entities';
+import { Icon } from '../components/icons';
 import { Badge, Card, PageHeader, useAsync, useToast } from '../components/ui';
 import { canWrite } from '../lib/bootstrap';
 import { Resources } from '../lib/entities';
@@ -18,6 +20,7 @@ export function PolicyPage() {
   const writable = canWrite();
   const preset = { ...PRESET_DEFAULTS, ...(workspace.preset || {}) };
 
+  const [editing, setEditing] = useState(null);
   const policies = useAsync(() => Resources.threatPolicies.list(), []);
   const current = (policies.data || []).find((p) => p.id === preset.threat_policy);
 
@@ -69,7 +72,10 @@ export function PolicyPage() {
                 </div>
               )}
             </div>
-            <OpenInOtoroshi plural="threat-policies" id={current.id} label="Edit tiers" />
+            <button className="btn sm" onClick={() => setEditing(current)}>
+              <Icon name="edit" />
+              Edit tiers
+            </button>
           </div>
         )}
       </Card>
@@ -95,6 +101,8 @@ export function PolicyPage() {
           },
           { key: 'tiers', label: 'Tiers', render: (e) => (e.tiers || []).length },
         ]}
+        editing={editing}
+        onEditingChange={setEditing}
       />
     </div>
   );
