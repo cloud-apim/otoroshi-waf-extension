@@ -1,4 +1,4 @@
-import { EntityList, SectionCard } from '../components/entities';
+import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
 import { Card, PageHeader, useAsync, useToast } from '../components/ui';
 import { Resources } from '../lib/entities';
@@ -25,25 +25,27 @@ export function CrowdsecPage() {
           list better for everyone else, and it is configured per bouncer.
         </p>
       </Card>
-      <SectionCard title="Bouncers" plural="crowdsec-bouncers">
-        <EntityList
-          state={bouncers}
-          plural="crowdsec-bouncers"
-          emptyTitle="No CrowdSec bouncer"
-          emptyBody={<p className="muted">A bouncer points at a local or hosted CrowdSec API and needs its key.</p>}
-          columns={[
-            {
-              key: 'sync',
-              label: '',
-              render: (e) => (
-                <button className="copy-btn" title="Sync decisions now" onClick={() => sync(e.id)}>
-                  <Icon name="refresh" />
-                </button>
-              ),
-            },
-          ]}
-        />
-      </SectionCard>
+      <EntitySection
+        plural="crowdsec-bouncers"
+        title="Bouncers"
+        state={bouncers}
+        createLabel="New bouncer"
+        emptyTitle="No CrowdSec bouncer"
+        emptyBody={<p className="muted">A bouncer points at a local or hosted CrowdSec API and needs its key.</p>}
+        columns={[
+          { key: 'action', label: 'Action', render: (e) => e.action || 'block' },
+          { key: 'push_enabled', label: 'Reports back', render: (e) => (e.push_enabled ? 'yes' : 'no') },
+          {
+            key: 'sync',
+            label: '',
+            render: (e) => (
+              <button className="copy-btn" title="Sync decisions now" onClick={() => sync(e.id)}>
+                <Icon name="refresh" />
+              </button>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

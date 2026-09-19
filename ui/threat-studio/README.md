@@ -32,12 +32,26 @@ The order of the table is the configuration: it is read top to bottom and the fi
 wins. Everything that reorders goes through `moveWorkspace` and saves the table whole — a partial
 update would let two clients reorder against each other.
 
-## What it does not re-implement
+## Entities
 
-The backoffice already generates a form for every entity of the extension from its schema, and the
-tuning assistant and learning mode are pages of their own. Duplicating them here would mean two
-places to keep in step with the same entities, so the studio shows the *wiring* — which workspace
-uses which, and whether it is armed — and links to the form that already exists.
+Created, edited and deleted from the studio. One form for both, so creation is reviewed in the shape
+it will later be edited in, and nothing is written until it is confirmed.
+
+- `src/lib/schemas.js` is the edited view of each entity: the fields that decide behaviour, in the
+  order they are reasoned about. Keys are the entity's json keys; a dotted key reaches into a nested
+  object (the CRS dials).
+- `src/components/form.jsx` renders them. A `strings` field is a list of textareas rather than one —
+  a SecLang rule may span lines, and the backoffice stores them as an array for that reason.
+- `src/lib/create.js` only ever *seeds*: always from the entity's `_template`, so a field added to an
+  entity is not silently dropped by a studio that built its own object. The two places it overrides
+  the template are commented there, and both go the same way — a thing that can refuse traffic starts
+  by observing.
+- `src/components/entities.jsx` bundles list + editor + creator into `EntitySection`, because every
+  page needs the same three wired the same way.
+
+Deliberately not every field: the backoffice generates the complete form from the entity schema, and
+**Full form** in the editor footer goes straight to it. The tuning assistant and learning mode are
+not copied either — the studio surfaces their state and links to them.
 
 ## Development
 

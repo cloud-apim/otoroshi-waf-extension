@@ -1,4 +1,4 @@
-import { EntityList, SectionCard } from '../components/entities';
+import { EntitySection } from '../components/entities';
 import { Card, PageHeader, useAsync } from '../components/ui';
 import { Resources } from '../lib/entities';
 
@@ -19,14 +19,15 @@ export function RulesetsPage() {
           configuration mistake into an outage.
         </p>
       </Card>
-      <SectionCard title="Rulesets" plural="waf-rulesets">
-        <EntityList
-          state={rulesets}
-          plural="waf-rulesets"
-          emptyTitle="No ruleset"
-          emptyBody={<p className="muted">Rulesets are optional: a config with none behaves exactly as it always did.</p>}
-        />
-      </SectionCard>
+      <EntitySection
+        plural="waf-rulesets"
+        title="Rulesets"
+        state={rulesets}
+        createLabel="New ruleset"
+        emptyTitle="No ruleset"
+        emptyBody={<p className="muted">Rulesets are optional: a config with none behaves exactly as it always did.</p>}
+        columns={[{ key: 'rules', label: 'Rules', render: (e) => (e.rules || []).length }]}
+      />
     </div>
   );
 }

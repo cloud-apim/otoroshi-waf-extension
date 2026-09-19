@@ -1,5 +1,13 @@
+import { useState } from 'react';
+import { EntityCreator } from './create';
+import { EntityEditor } from './editor';
 import { Icon } from './icons';
+import { OpenInOtoroshi } from './openin';
 import { Badge, Card, Empty, ErrorAlert, Loading, StatusBadge } from './ui';
+import { boUrl } from '../lib/backoffice';
+
+export { OpenInOtoroshi } from './openin';
+export { boUrl, BO_PATHS } from '../lib/backoffice';
 
 /**
  * The entities of the suite, listed.
@@ -10,35 +18,6 @@ import { Badge, Card, Empty, ErrorAlert, Loading, StatusBadge } from './ui';
  * form that already exists.
  */
 
-export const BO_PATHS = {
-  'waf-configs': 'wafconfigs',
-  'waf-rulesets': 'wafrulesets',
-  'threat-policies': 'threatpolicies',
-  'bot-policies': 'botpolicies',
-  'challenge-providers': 'challengeproviders',
-  'honeypot-policies': 'honeypots',
-  'threat-feeds': 'threatfeeds',
-  'crowdsec-bouncers': 'crowdsecbouncers',
-  'asn-databases': 'asndatabases',
-};
-
-export function boUrl(plural, id) {
-  const path = BO_PATHS[plural];
-  if (!path) return '/bo/dashboard';
-  return id
-    ? `/bo/dashboard/extensions/cloud-apim/waf/${path}/edit/${encodeURIComponent(id)}`
-    : `/bo/dashboard/extensions/cloud-apim/waf/${path}`;
-}
-
-export function OpenInOtoroshi({ plural, id, label = 'Open' }) {
-  return (
-    <a className="btn sm" href={boUrl(plural, id)} target="_blank" rel="noreferrer" title="Open the full form in the Otoroshi admin console">
-      <Icon name="external" />
-      {label}
-    </a>
-  );
-}
-
 /**
  * `selectedId` marks the entity the workspace points at; `onSelect` is what makes that a choice
  * rather than a report.
@@ -48,6 +27,9 @@ export function EntityList({
   plural,
   selectedId,
   onSelect,
+  onCreate,
+  onOpen,
+  createLabel = 'Create one',
   selectLabel = 'Use here',
   emptyTitle = 'Nothing yet',
   emptyBody,
@@ -61,10 +43,17 @@ export function EntityList({
     return (
       <Empty title={emptyTitle}>
         {emptyBody}
-        <a className="btn primary" style={{ marginTop: 14 }} href={boUrl(plural)} target="_blank" rel="noreferrer">
-          <Icon name="plus" />
-          Create one in Otoroshi
-        </a>
+        {onCreate ? (
+          <button className="btn primary" style={{ marginTop: 14 }} onClick={onCreate}>
+            <Icon name="plus" />
+            {createLabel}
+          </button>
+        ) : (
+          <a className="btn primary" style={{ marginTop: 14 }} href={boUrl(plural)} target="_blank" rel="noreferrer">
+            <Icon name="plus" />
+            Create one in Otoroshi
+          </a>
+        )}
       </Empty>
     );
   }
@@ -83,7 +72,7 @@ export function EntityList({
         </thead>
         <tbody>
           {items.map((e) => (
-            <tr key={e.id}>
+            <tr key={e.id} onClick={onOpen ? () => onOpen(e) : undefined} style={onOpen ? { cursor: 'pointer' } : undefined}>
               <td>
                 <div className="row" style={{ gap: 8 }}>
                   <span style={{ fontWeight: 500 }}>{e.name}</span>
@@ -113,23 +102,102 @@ export function EntityList({
   );
 }
 
-export function SectionCard({ title, description, plural, children, actions }) {
+export function SectionCard({ title, description, plural, children, actions, onCreate, createLabel = 'New' }) {
+  const fallback = plural && (
+    <a className="btn sm" href={boUrl(plural)} target="_blank" rel="noreferrer">
+      <Icon name="plus" />
+      New
+    </a>
+  );
+  const create = onCreate ? (
+    <button className="btn sm primary" onClick={onCreate}>
+      <Icon name="plus" />
+      {createLabel}
+    </button>
+  ) : (
+    fallback
+  );
   return (
-    <Card
-      className="flush"
-      style={{ marginBottom: 18 }}
-      title={title}
-      description={description}
-      actions={
-        actions || (plural && (
-          <a className="btn sm" href={boUrl(plural)} target="_blank" rel="noreferrer">
-            <Icon name="plus" />
-            New
-          </a>
-        ))
-      }
-    >
+    <Card className="flush" style={{ marginBottom: 18 }} title={title} description={description} actions={actions || create}>
       {children}
     </Card>
+  );
+}
+
+
+/**
+ * A kind of entity, whole: the list, the editor and the creator.
+ *
+ * Bundled because every page needs exactly the same three things wired the same way, and having each
+ * page wire them itself is how they drift apart.
+ */
+export function EntitySection({
+  plural,
+  title,
+  description,
+  state,
+  columns,
+  selectedId,
+  onSelect,
+  selectLabel,
+  emptyTitle,
+  emptyBody,
+  createLabel = 'New',
+  writable = true,
+  workspaceId,
+  kind,
+  onChanged,
+}) {
+  const [editing, setEditing] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  const changed = (entity) => {
+    state.reload();
+    if (onChanged) onChanged(entity);
+  };
+
+  return (
+    <>
+      <SectionCard
+        title={title}
+        description={description}
+        plural={plural}
+        onCreate={writable ? () => setCreating(true) : undefined}
+        createLabel={createLabel}
+      >
+        <EntityList
+          state={state}
+          plural={plural}
+          columns={columns}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          selectLabel={selectLabel}
+          onOpen={setEditing}
+          onCreate={writable ? () => setCreating(true) : undefined}
+          createLabel={createLabel}
+          writable={writable}
+          emptyTitle={emptyTitle}
+          emptyBody={emptyBody}
+        />
+      </SectionCard>
+
+      <EntityEditor
+        plural={plural}
+        entity={editing}
+        open={!!editing}
+        writable={writable}
+        onClose={() => setEditing(null)}
+        onSaved={changed}
+        onDeleted={changed}
+      />
+      <EntityCreator
+        plural={plural}
+        open={creating}
+        workspaceId={workspaceId}
+        kind={kind}
+        onClose={() => setCreating(false)}
+        onCreated={changed}
+      />
+    </>
   );
 }

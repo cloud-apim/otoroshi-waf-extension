@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { EntityList, SectionCard } from '../components/entities';
+import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
 import { Badge, Card, ErrorAlert, Loading, Modal, PageHeader, TextInput, useAsync, useToast } from '../components/ui';
 import { fmtDate, fmtInt } from '../lib/format';
@@ -52,41 +52,44 @@ export function FeedsPage() {
         </div>
       </Card>
 
-      <SectionCard title="Feeds" description="A disabled feed is not consulted at all." plural="threat-feeds">
-        <EntityList
-          state={feeds}
-          plural="threat-feeds"
-          emptyTitle="No threat feed"
-          emptyBody={<p className="muted">The catalog has fourteen curated sources ready to add.</p>}
-          columns={[
-            {
-              key: 'ranges',
-              label: 'Ranges',
-              render: (e) => {
-                const s = byId[e.id];
-                return s ? fmtInt(s.ranges ?? s.size) : '—';
-              },
+      <EntitySection
+        plural="threat-feeds"
+        title="Feeds"
+        description="A disabled feed is not consulted at all."
+        state={feeds}
+        createLabel="Add a feed"
+        emptyTitle="No threat feed"
+        emptyBody={<p className="muted">The catalog carries curated sources with their parser, refresh interval and weight already set.</p>}
+        columns={[
+          { key: 'action', label: 'Action', render: (e) => e.action || 'monitor' },
+          { key: 'weight', label: 'Weight', render: (e) => e.weight },
+          {
+            key: 'ranges',
+            label: 'Ranges',
+            render: (e) => {
+              const st = byId[e.id];
+              return st ? fmtInt(st.ranges ?? st.size) : '—';
             },
-            {
-              key: 'refreshed',
-              label: 'Refreshed',
-              render: (e) => {
-                const s = byId[e.id];
-                return s && s.last_refresh ? fmtDate(s.last_refresh) : '—';
-              },
+          },
+          {
+            key: 'refreshed',
+            label: 'Refreshed',
+            render: (e) => {
+              const st = byId[e.id];
+              return st && st.last_refresh ? fmtDate(st.last_refresh) : '—';
             },
-            {
-              key: 'refresh',
-              label: '',
-              render: (e) => (
-                <button className="copy-btn" title="Refresh now" onClick={() => refresh(e.id)}>
-                  <Icon name="refresh" />
-                </button>
-              ),
-            },
-          ]}
-        />
-      </SectionCard>
+          },
+          {
+            key: 'refresh',
+            label: '',
+            render: (e) => (
+              <button className="copy-btn" title="Refresh now" onClick={() => refresh(e.id)}>
+                <Icon name="refresh" />
+              </button>
+            ),
+          },
+        ]}
+      />
 
       <Modal open={!!result} title={`What the sources say about ${lookup}`} onClose={() => setResult(null)} size="lg">
         <pre className="mono" style={{ maxHeight: 420, overflow: 'auto' }}>{JSON.stringify(result, null, 2)}</pre>

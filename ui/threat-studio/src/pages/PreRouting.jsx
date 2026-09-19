@@ -1,4 +1,4 @@
-import { EntityList, SectionCard } from '../components/entities';
+import { EntitySection } from '../components/entities';
 import { Card, PageHeader, useAsync } from '../components/ui';
 import { Resources } from '../lib/entities';
 
@@ -58,18 +58,19 @@ export function PreRoutingPage() {
         </a>
       </Card>
 
-      <SectionCard
+      <EntitySection
+        plural="honeypot-policies"
         title="Honeypot policies"
         description="Decoy paths and canary tokens, evaluated before routing. A caller that touches one has proved intent rather than tripped a heuristic."
-        plural="honeypot-policies"
-      >
-        <EntityList
-          state={honeypots}
-          plural="honeypot-policies"
-          emptyTitle="No honeypot policy"
-          emptyBody={<p className="muted">A honeypot needs no traffic model and produces no false positive: nothing legitimate requests a path that does not exist.</p>}
-        />
-      </SectionCard>
+        state={honeypots}
+        createLabel="New policy"
+        emptyTitle="No honeypot policy"
+        emptyBody={<p className="muted">A honeypot needs no traffic model and produces no false positive: nothing legitimate requests a path that does not exist.</p>}
+        columns={[
+          { key: 'paths', label: 'Paths', render: (e) => (e.paths || []).length },
+          { key: 'action', label: 'Action', render: (e) => e.action || 'deny' },
+        ]}
+      />
     </div>
   );
 }

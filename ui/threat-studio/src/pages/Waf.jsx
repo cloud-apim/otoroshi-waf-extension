@@ -1,5 +1,5 @@
 import { useStudio, useWorkspace } from '../App';
-import { EntityList, OpenInOtoroshi, SectionCard } from '../components/entities';
+import { EntitySection, OpenInOtoroshi } from '../components/entities';
 import { Icon } from '../components/icons';
 import { Badge, Card, ErrorAlert, Loading, PageHeader, useAsync, useToast } from '../components/ui';
 import { canWrite } from '../lib/bootstrap';
@@ -158,28 +158,27 @@ export function WafPage() {
         </Card>
       </div>
 
-      <SectionCard
+      <EntitySection
+        plural="waf-configs"
         title="WAF configs"
         description="Ordinary entities of the extension. Several workspaces can point at the same one."
-        plural="waf-configs"
-      >
-        <EntityList
-          state={configs}
-          plural="waf-configs"
-          selectedId={preset.waf_config}
-          onSelect={use}
-          writable={writable}
-          emptyTitle="No WAF config"
-          emptyBody={<p className="muted">A config holds the SecLang rules and the rulesets it composes. The WAF section cannot expand without one.</p>}
-          columns={[
-            {
-              key: 'block',
-              label: 'Mode',
-              render: (e) => (e.block ? <Badge kind="positive">blocking</Badge> : <Badge kind="warning">monitoring</Badge>),
-            },
-          ]}
-        />
-      </SectionCard>
+        state={configs}
+        selectedId={preset.waf_config}
+        onSelect={use}
+        writable={writable}
+        workspaceId={workspace.id}
+        kind="waf"
+        createLabel="New config"
+        emptyTitle="No WAF config"
+        emptyBody={<p className="muted">A config holds the SecLang rules and the rulesets it composes. The WAF section cannot expand without one.</p>}
+        columns={[
+          {
+            key: 'block',
+            label: 'Mode',
+            render: (e) => (e.block ? <Badge kind="positive">blocking</Badge> : <Badge kind="warning">monitoring</Badge>),
+          },
+        ]}
+      />
     </div>
   );
 }

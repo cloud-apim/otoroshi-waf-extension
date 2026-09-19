@@ -1,5 +1,5 @@
 import { useStudio, useWorkspace } from '../App';
-import { EntityList, OpenInOtoroshi, SectionCard } from '../components/entities';
+import { EntitySection, OpenInOtoroshi } from '../components/entities';
 import { Badge, Card, PageHeader, useAsync, useToast } from '../components/ui';
 import { canWrite } from '../lib/bootstrap';
 import { Resources } from '../lib/entities';
@@ -74,24 +74,28 @@ export function PolicyPage() {
         )}
       </Card>
 
-      <SectionCard title="Threat policies" description="Shared by the threat gate and the threat response of every workspace that points at them." plural="threat-policies">
-        <EntityList
-          state={policies}
-          plural="threat-policies"
-          selectedId={preset.threat_policy}
-          onSelect={use}
-          writable={writable}
-          emptyTitle="No threat policy"
-          emptyBody={<p className="muted">Without one the built-in dry-run policy applies: everything is recorded, nothing is enforced.</p>}
-          columns={[
-            {
-              key: 'dry_run',
-              label: 'Mode',
-              render: (e) => (e.dry_run ? <Badge kind="warning">dry run</Badge> : <Badge kind="positive">enforcing</Badge>),
-            },
-          ]}
-        />
-      </SectionCard>
+      <EntitySection
+        plural="threat-policies"
+        title="Threat policies"
+        description="Shared by the threat gate and the threat response of every workspace that points at them."
+        state={policies}
+        selectedId={preset.threat_policy}
+        onSelect={use}
+        writable={writable}
+        workspaceId={workspace.id}
+        kind="policy"
+        createLabel="New policy"
+        emptyTitle="No threat policy"
+        emptyBody={<p className="muted">Without one the built-in dry-run policy applies: everything is recorded, nothing is enforced.</p>}
+        columns={[
+          {
+            key: 'dry_run',
+            label: 'Mode',
+            render: (e) => (e.dry_run ? <Badge kind="warning">dry run</Badge> : <Badge kind="positive">enforcing</Badge>),
+          },
+          { key: 'tiers', label: 'Tiers', render: (e) => (e.tiers || []).length },
+        ]}
+      />
     </div>
   );
 }

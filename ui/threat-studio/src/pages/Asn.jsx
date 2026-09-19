@@ -1,4 +1,4 @@
-import { EntityList, SectionCard } from '../components/entities';
+import { EntitySection } from '../components/entities';
 import { Card, PageHeader, useAsync } from '../components/ui';
 import { Resources } from '../lib/entities';
 
@@ -17,14 +17,15 @@ export function AsnPage() {
           reason to refuse a caller, it is a reason to weigh them differently.
         </p>
       </Card>
-      <SectionCard title="Databases" plural="asn-databases">
-        <EntityList
-          state={dbs}
-          plural="asn-databases"
-          emptyTitle="No ASN database"
-          emptyBody={<p className="muted">Without one, reputation still works from feeds and CrowdSec; it simply has no idea what kind of network a caller is on.</p>}
-        />
-      </SectionCard>
+      <EntitySection
+        plural="asn-databases"
+        title="Databases"
+        state={dbs}
+        createLabel="New database"
+        emptyTitle="No ASN database"
+        emptyBody={<p className="muted">Without one, reputation still works from feeds and CrowdSec; it simply has no idea what kind of network a caller is on.</p>}
+        columns={[{ key: 'categories', label: 'Categories', render: (e) => (e.categories || []).length }]}
+      />
     </div>
   );
 }

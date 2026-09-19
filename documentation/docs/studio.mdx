@@ -106,13 +106,42 @@ decisions log and the WAF trail. Opening a row shows the whole event — **inclu
 which is the attribution that answers *why* a caller was judged. A console that cannot drill into
 that can only ever show that something happened.
 
-## What it does not re-implement
+## Creating and editing
 
-The backoffice generates a form for every entity of the extension from its schema, and the
-[tuning assistant](./waf/assistant.mdx) and [learning mode](./waf/learning.mdx) are substantial pages
-of their own. The studio does not copy them: it shows the wiring — which workspace uses which entity,
-and whether it is armed — and links to the form that already exists. Two forms over one entity is one
-too many.
+Every entity of the suite is created, edited and deleted from the studio — WAF configs and rulesets,
+threat policies, bot policies, challenge providers, honeypots, threat feeds, CrowdSec bouncers and
+ASN databases.
+
+**Creation and edition are the same form.** "New" opens the editor on a seed rather than asking for a
+name and leaving the rest to be found later, so what you fill in at creation is what you will see
+when you come back. Nothing is written until you confirm.
+
+That seed always comes from the entity's own `_template`: it is what the extension considers a sane
+empty entity, and it moves when the entity gains a field. The studio overrides it in exactly two
+places, both in the same direction — **a thing that can refuse traffic starts by observing**:
+
+- a **WAF config** is seeded in monitoring mode, whatever rules it carries, because arming a ruleset
+  that has never seen this traffic is the one move worth doing in the other order;
+- a **vendor challenge provider** is seeded disabled, because one without its keys would serve a
+  challenge nobody can pass.
+
+Two of them are seeded from something the extension already knows how to build, so the studio asks
+one question first and then opens the same editor on the result: a **threat feed** from the
+[catalog](./reputation/catalog.mdx) — url, parser, refresh interval, weight and signal tag included —
+and a **challenge provider** from a vendor preset.
+
+A WAF config carries a live badge saying whether its rules compile, which rulesets it references that
+do not exist, and whether its CRS dials are being ignored for want of a CRS import.
+
+:::note An edited view, not a generated one
+The fields the studio shows are the ones that decide behaviour, in the order they are reasoned about,
+with help text that says what a number actually does. It is deliberately not every field: the
+backoffice generates the complete form from the entity schema, and **Full form** in the editor's
+footer is one click away for the rest.
+
+The [tuning assistant](./waf/assistant.mdx) and [learning mode](./waf/learning.mdx) are not copied
+either — the studio surfaces their state and links to them.
+:::
 
 ## Permissions
 

@@ -1054,3 +1054,10 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .ws-row.clickable { cursor: pointer; margin: 0 -22px; padding-left: 22px !important; padding-right: 22px !important; }
 .ws-row.clickable:hover { background: var(--hover); }
 .ws-row.clickable a:hover { text-decoration: underline; }
+
+/* an entity form needs room for a two column row and a list of sub objects */
+.drawer.wide { width: min(880px, 100vw); }
+.drawer .form-section + .form-section { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 18px; }
+.drawer .form-section h3 { font-size: 14px; margin-bottom: 2px; }
+.drawer .form-section > p { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.drawer-foot { display: flex; justify-content: space-between; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }

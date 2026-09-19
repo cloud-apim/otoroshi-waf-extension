@@ -473,7 +473,7 @@ export function useConfirm() {
 
 /* ---------- drawer ---------- */
 
-export function Drawer({ title, open, onClose, children }) {
+export function Drawer({ title, open, onClose, children, footer, className = '' }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -484,7 +484,7 @@ export function Drawer({ title, open, onClose, children }) {
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
-      <div className="drawer">
+      <div className={`drawer ${className}`}>
         <div className="drawer-head">
           <h2>{title}</h2>
           <button className="copy-btn" onClick={onClose} title="Close">
@@ -492,6 +492,7 @@ export function Drawer({ title, open, onClose, children }) {
           </button>
         </div>
         <div className="drawer-body">{children}</div>
+        {footer && <div className="drawer-foot">{footer}</div>}
       </div>
     </>
   );

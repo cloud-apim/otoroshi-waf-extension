@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStudio, useWorkspace } from '../App';
-import { EntityList, SectionCard } from '../components/entities';
+import { EntitySection } from '../components/entities';
 import { Badge, Card, Loading, Modal, PageHeader, useAsync, useToast } from '../components/ui';
 import { canWrite } from '../lib/bootstrap';
 import { Resources } from '../lib/entities';
@@ -59,31 +59,32 @@ export function BotsPage() {
         )}
       </Card>
 
-      <SectionCard title="Bot policies" description="AI crawler rules, enforced, with a generated robots.txt." plural="bot-policies">
-        <EntityList
-          state={policies}
-          plural="bot-policies"
-          selectedId={preset.bot_policy}
-          onSelect={use}
-          writable={writable}
-          emptyTitle="No bot policy"
-          emptyBody={<p className="muted">Without one the guard still identifies crawlers and contributes signals, but applies no rule of its own.</p>}
-        />
-      </SectionCard>
+      <EntitySection
+        plural="bot-policies"
+        title="Bot policies"
+        description="AI crawler rules, enforced, with a generated robots.txt."
+        state={policies}
+        selectedId={preset.bot_policy}
+        onSelect={use}
+        writable={writable}
+        workspaceId={workspace.id}
+        kind="bots"
+        createLabel="New policy"
+        emptyTitle="No bot policy"
+        emptyBody={<p className="muted">Without one the guard still identifies crawlers and contributes signals, but applies no rule of its own.</p>}
+        columns={[{ key: 'rules', label: 'Rules', render: (e) => (e.rules || []).length }]}
+      />
 
-      <SectionCard
+      <EntitySection
+        plural="challenge-providers"
         title="Challenge providers"
         description="What a challenge tier serves. Proof of work needs nothing external; the vendor backends do."
-        plural="challenge-providers"
-      >
-        <EntityList
-          state={challenges}
-          plural="challenge-providers"
-          emptyTitle="No challenge provider"
-          emptyBody={<p className="muted">A threat policy tier set to <code>challenge</code> needs one of these to have anything to serve.</p>}
-          columns={[{ key: 'kind', label: 'Kind', render: (e) => e.kind || e.provider || '—' }]}
-        />
-      </SectionCard>
+        state={challenges}
+        createLabel="New provider"
+        emptyTitle="No challenge provider"
+        emptyBody={<p className="muted">A threat policy tier set to <code>challenge</code> needs one of these to have anything to serve.</p>}
+        columns={[{ key: 'kind', label: 'Kind', render: (e) => e.kind || 'pow' }]}
+      />
 
       <Modal open={!!robots} title="Generated robots.txt" onClose={() => setRobots(null)} size="lg">
         <pre className="mono" style={{ maxHeight: 400, overflow: 'auto' }}>{robots && robots.robots_txt}</pre>
