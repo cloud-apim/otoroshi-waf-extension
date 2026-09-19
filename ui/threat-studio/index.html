@@ -7,7 +7,10 @@
     <script>
       (function () {
         try {
-          var t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          var t = window.localStorage.getItem('threat_studio_theme');
+          if (t !== 'dark' && t !== 'light') {
+            t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
           document.documentElement.setAttribute('data-theme', t);
         } catch (e) {}
       })();

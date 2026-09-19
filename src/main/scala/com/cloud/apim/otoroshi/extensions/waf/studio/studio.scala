@@ -65,6 +65,13 @@ class ThreatStudio(env: Env) {
   private val resourcesRoot = "cloudapim/extensions/waf/studio"
   private val assetsCache   = new UnboundedTrieMap[String, Option[ByteString]]()
 
+  /**
+   * Where the theme choice is kept, on the otoroshi user.
+   *
+   * The browser keeps its own copy under the same key in `localStorage`, and that is the one the page
+   * reads before the bundle loads, so a reload never flashes the wrong theme. This copy is what makes
+   * the choice follow the user to another browser.
+   */
   val themePreference = "threat_studio_theme"
 
   private def readResource(path: String): Option[ByteString] = {
@@ -146,7 +153,7 @@ class ThreatStudio(env: Env) {
                |  <meta name="viewport" content="width=device-width, initial-scale=1" />
                |  <title>Threat Studio - Otoroshi</title>
                |  <link rel="icon" type="image/svg+xml" href="/extensions/assets/cloud-apim/extensions/waf/icon.svg" />
-               |  <script>window.__THREAT_STUDIO__ = $bootstrap;(function(){try{var t=window.__THREAT_STUDIO__.theme;if(t!=='dark'&&t!=='light'){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
+               |  <script>window.__THREAT_STUDIO__ = $bootstrap;(function(){try{var t=null;try{t=window.localStorage.getItem('threat_studio_theme')}catch(e){}if(t!=='dark'&&t!=='light'){t=window.__THREAT_STUDIO__.theme}if(t!=='dark'&&t!=='light'){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
                |  ${styles.map(s => s"""<link rel="stylesheet" href="$s" />""").mkString("\n  ")}
                |  ${scripts.map(s => s"""<script type="module" src="$s"></script>""").mkString("\n  ")}
                |</head>
