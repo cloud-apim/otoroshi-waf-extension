@@ -1,0 +1,195 @@
+---
+sidebar_position: 3
+title: The global preset plugin
+description: The same fabric, decided once for a fleet of routes instead of slot by slot.
+---
+
+# The global preset plugin
+
+[The preset](./preset.mdx) answers *what runs on this route, and in which order*. It still has to be
+added to every route that wants it — which for a hundred routes means a hundred identical slots, a
+hundred chances to forget one, and a route created next month protected by nobody until someone
+remembers.
+
+**Cloud APIM Threat Protection - Global Preset** answers the other half: *which routes*. It goes in
+the global plugins, where Otoroshi runs it against every route it has just matched, and its
+configuration is not a protection but a **table** — rules pairing a selector with a protection, read
+top to bottom, first match wins.
+
+A route no rule claims expands into nothing at all. Installing the plugin therefore changes nothing
+until the table says otherwise, which is the only sane default for something that applies fleet-wide.
+
+## Where it goes
+
+Global plugins live on the global configuration, under `plugins.config.ng`. There is no dedicated
+form for them, so this is edited as JSON in the danger zone:
+
+```json
+{
+  "plugins": {
+    "config": {
+      "ng": [
+        {
+          "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimSecuritySuiteGlobalPreset",
+          "enabled": true,
+          "config": {
+            "skip_protected_routes": true,
+            "rules": [
+              {
+                "name": "internal tooling is left alone",
+                "skip": true,
+                "targets": [{ "path": "$.tags", "value": "Contains(no-threat-protection)" }]
+              },
+              {
+                "name": "public APIs, armed",
+                "targets": [{ "path": "$.groups", "value": "Contains(grp_public)" }],
+                "preset": {
+                  "threat_policy": "threat-policy_9f2c...",
+                  "waf_config": "waf-config_1f3a...",
+                  "fail2ban": true
+                }
+              },
+              {
+                "name": "everything else, watching only",
+                "targets": [],
+                "preset": { "reputation_mode": "monitor", "waf": false }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The `preset` block of a rule **is** the [route-level preset's configuration](./preset.mdx#configuration),
+field for field. The expansion is delegated to that same preset, so both plugins produce the exact
+same chain with the exact same ordering indices.
+
+## The table
+
+| Field | Default | Meaning |
+|---|---|---|
+| `name` | *(empty)* | Free text, for whoever reads the table next. Never used for matching. |
+| `enabled` | `true` | A disabled rule is skipped entirely and the search carries on below it. |
+| `skip` | `false` | Match, lay down **nothing** and stop. The opt-out. |
+| `targets` | `[]` | All of them must match. An empty list claims **every** route. |
+| `preset` | *(the defaults)* | What to lay down. |
+
+Rules are read top to bottom and **the first one whose targets all match decides**; the ones below it
+are never considered. That is what makes the order meaningful, and it is deliberate: two rules both
+contributing a WAF would put two rule engines with two configurations on one route, with nothing to
+say which is authoritative.
+
+So: narrow rules above, broad ones below, and the catch-all last.
+
+:::warning An omitted `preset` is the default protection, not an opt-out
+`"preset": {}` parses to the preset's defaults — gate, bot guard, reputation and response all armed.
+To have a rule match and lay down nothing, set `"skip": true`. A rule with an empty `targets` list
+and no `skip` claims the whole fleet and shadows everything below it.
+:::
+
+## Selectors
+
+A target compares one thing about the route against one expected value. The vocabulary of expected
+values is Otoroshi's own predicate language, the one used by JSON path validators everywhere else:
+
+| Expected value | Matches when |
+|---|---|
+| `some-value` | equal |
+| `Not(v)` · `ContainsNot(v)` | different · does not contain |
+| `Contains(v)` | the string contains it — or, on an array, one element equals it |
+| `ContainedIn(a, b, c)` · `NotContainedIn(…)` | the value is one of the listed ones |
+| `Regex(…)` · `RegexNot(…)` | matches a regex |
+| `Wildcard(…)` · `WildcardNot(…)` | matches a `*` pattern |
+| `StartsWith(v)` · `DontStartsWith(v)` | on an array, every element does (or does not) |
+| `IsDefined()` · `NotDefined()` | the field is there, or is not |
+| `Size(n)` · `SizeGt(n)` · `SizeLt(n)` · `SizeGte(n)` · `SizeLte(n)` · `SizeNot(n)` | array length |
+
+The thing being compared is named in one of two ways.
+
+### `path` — a JSONPath on the route entity
+
+```json
+{ "path": "$.tags",         "value": "Contains(public-api)" }
+{ "path": "$.groups",       "value": "Contains(grp_xyz)" }
+{ "path": "$.id",           "value": "ContainedIn(route_a, route_b, route_c)" }
+{ "path": "$.metadata.env", "value": "Regex(prod|staging)" }
+{ "path": "$.metadata.tier","value": "NotDefined()" }
+{ "path": "$.name",         "value": "StartsWith(legacy-)" }
+```
+
+Read straight off the route as the admin API returns it, so `$.tags` and `$.groups` come back as real
+arrays and `Contains(…)` means what it says. **Prefer this form** — it is also the one that keeps the
+decision cacheable.
+
+### `expression` — the Otoroshi expression language
+
+```json
+{ "expression": "${route.metadata.env}", "value": "Regex(prod|staging)" }
+{ "expression": "${route.id}",           "value": "ContainedIn(route_a, route_b)" }
+{ "expression": "${req.host}",           "value": "Wildcard(*.partner.example.com)" }
+```
+
+Used when no `path` is set. The expression is resolved to a string and then compared, which is what
+makes the request reachable — but also what flattens everything, so an array becomes text.
+
+:::note What the expression language can and cannot see here
+Presets are expanded right after routing and **before** any plugin has run, so `${apikey.…}` and
+`${user.…}` are never resolved at this point: a selector on them can only be false.
+
+The expression language also has no accessor for a route's tags or groups, and an unknown expression
+resolves to the literal `bad-expr` rather than failing. Testing for an absent metadata key is
+awkward too — `${route.metadata.env}` yields `no-meta-env`. Use `path` for all four cases.
+:::
+
+### Targets that select on nothing
+
+A target with neither `path` nor `expression`, or with no `value`, **never matches** — so its rule is
+skipped and the search carries on. The other way round, a malformed target quietly claiming the whole
+fleet, would arm a WAF everywhere, which is the dangerous direction for a typo to fall in.
+
+## Routes that protect themselves
+
+`skip_protected_routes` is `true` by default: a route already carrying the route-level preset, or any
+plugin of the fabric — WAF, threat gate, bot guard, IP reputation, fail2ban, threat response — is
+left to the chain it was given, whatever the table says.
+
+Otoroshi expands the global slots and the route's own slots into a single chain. Without that stand
+down, a route protected on purpose would end up with two rule engines and two threat responses, the
+second one reading a score the first has already acted on.
+
+A slot that is present but **disabled** protects nothing, so it does not hold the table back.
+
+Set `skip_protected_routes` to `false` to let the table win instead — and then make sure the routes
+concerned carry no fabric plugin of their own.
+
+## Cost, and how fresh the table is
+
+Otoroshi expands presets on **every request** and caches nothing of it, so this table would otherwise
+be re-read and re-evaluated for every call on every route. Two caches sit in front of it, both with
+the five-second lifetime Otoroshi uses for plugin configurations — so an edit in the danger zone
+takes effect within five seconds, like any other plugin config:
+
+- the parsed table, keyed by its content;
+- **the decision for a route**, but only when every selector in the table reads the route alone.
+
+A single `${req.…}` anywhere in the table disqualifies the second cache for the whole table, because
+two requests on the same route can then legitimately disagree. If the table is large and the fleet
+is busy, that is a reason to prefer `path` selectors and route metadata over request-bound ones.
+
+## What it does not cover
+
+The same blind spot as the route-level preset: the three incoming request validators —
+[honeypot](../bots/honeypots.mdx), WAF and IP reputation — run *before* routing, when no route is
+known yet. They are configured directly on the global configuration; see
+[global plugins are not route plugins](../reference/plugins.mdx#global-plugins-are-not-route-plugins).
+
+## When to use which
+
+| | |
+|---|---|
+| **[Route preset](./preset.mdx)** | A handful of routes, each with its own protection, decided by whoever designs the route. |
+| **Global preset** | A fleet governed centrally, where a new route must be protected by default and the exceptions are a short list. |
+| **Both** | The common case: the table sets the floor, and a route that needs something specific carries its own preset — the stand-down above keeps them from colliding. |

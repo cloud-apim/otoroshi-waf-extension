@@ -18,6 +18,12 @@ That is the worst class of misconfiguration: silent, and invisible in a test.
 order, and covers what to read before arming it. This page is the reference for the plugin itself.
 :::
 
+:::tip Protecting a fleet rather than a route
+This plugin has to be added to every route that wants it. [The global preset](./global-preset.mdx)
+is the same expansion driven from the global configuration, which decides what each route gets from
+a table of selectors — so a route created next month is protected without anyone remembering.
+:::
+
 **Cloud APIM Threat Protection - Preset** removes the requirement. It is a single plugin that expands,
 at request time, into the whole chain with explicit ordering indices.
 
@@ -120,3 +126,6 @@ The preset covers the common shape. Build the chain slot by slot when you need:
 
 Both routes are supported and produce the same runtime chain. The preset is the one that cannot be
 ordered wrongly.
+
+A route carrying any of these hand-composed slots is left alone by the [global
+preset](./global-preset.mdx), so a route tuned by hand does not end up with a second chain over it.

@@ -9,6 +9,7 @@ description: Every plugin the extension registers, and where each one is configu
 | Plugin | Kind | Configured on |
 |---|---|---|
 | Cloud APIM Threat Protection - Preset | `NgPresetPlugin` | A route |
+| Cloud APIM Threat Protection - Global Preset | `NgPresetPlugin` | The global configuration |
 | Cloud APIM WAF | `NgRequestTransformer` | A route |
 | Cloud APIM WAF - Incoming Request Validator | `NgIncomingRequestValidator` | The global configuration |
 | Cloud APIM Threat Protection - IP reputation | `NgAccessValidator` | A route |
@@ -38,7 +39,9 @@ The response plugin must come **after** the WAF, or it reads a score the WAF has
 yet — silently, with every request still flowing. See [the fabric](../fabric/overview.mdx).
 
 The [preset plugin](../fabric/preset.mdx) expands into that exact chain with explicit
-`plugin_index` values, which is the reason to prefer it over composing the five slots by hand.
+`plugin_index` values, which is the reason to prefer it over composing the five slots by hand. The
+[global preset](../fabric/global-preset.mdx) produces the same chain from the global configuration,
+picking what each route gets from a table of selectors rather than from a slot on the route.
 
 ## Global plugins are not route plugins
 
