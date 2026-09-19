@@ -13,6 +13,10 @@ fleet protected, and by what*.
 **Threat Studio** is the other half. It lives at `/extensions/cloud-apim/threat-studio`, needs a
 backoffice session, and is reachable from the Threat Protection menu or by searching for it.
 
+![The Threat Studio workspaces page: the fleet summary, the routes no rule claims, and the ordered table of workspaces](/img/screenshots/studio-workspaces.png)
+
+*Each row is a rule of the global preset table. The summary leads with the count that earns the page — the routes no rule claims — and the workspace shows its selector and the sections it lays down.*
+
 :::info It stores nothing
 There is no workspace entity, no studio database, no extra state to back up. A workspace **is** a rule
 of [the global preset table](./fabric/global-preset.mdx), and everything else it shows is either an
@@ -48,6 +52,10 @@ asks the extension rather than guessing. What comes back is richer than a list:
   [stands down](./fabric/global-preset.mdx#routes-that-protect-themselves);
 - rules that sit under a catch-all and can therefore never be reached at all.
 
+![The Routes page: the routes a workspace governs, each with the posture it actually ends up with, and below them the routes it matched but a rule above took](/img/screenshots/studio-routes.png)
+
+*The second table is the one that explains a workspace that looks empty — a route it matches, governed by a rule sitting higher in the table.*
+
 ## What each workspace has
 
 | Page | Answers |
@@ -61,6 +69,21 @@ asks the extension rather than guessing. What comes back is richer than a list:
 | **WAF** · **Bots** · **IP reputation** · **Threat policy** | The entities it points at, and the state they are in |
 | **Bans & incidents** | Its traffic's incidents, and what the fabric is holding right now |
 | **Settings** | Name, position in the table, and whether it applies at all |
+
+![A workspace overview: coverage read with no analytics, then the past week of decisions](/img/screenshots/studio-overview.png)
+
+*The overview leads with coverage — which works before a single event exists — then the traffic. The routes below are governed by this workspace's selectors, resolved against the router.*
+
+The two pages where you *write* the configuration rather than read it are **Scope** — the selectors
+that decide which routes the workspace claims — and **Protection** — the arming console.
+
+![The Scope page: a target on the route tags, and the opt-out toggle above it](/img/screenshots/studio-scope.png)
+
+*A target reads a route field (`$.tags`, `$.groups`, `$.metadata.*`) or an expression, and compares it with the platform's own predicate language. Every target must match; a workspace with none claims every route.*
+
+![The Protection page: the section switches, whether any of them can stop a request, and the entities each reads](/img/screenshots/studio-protection.png)
+
+*It leads with the one question that matters — can any of this actually refuse a request — because a section switched off expands into nothing, and a workspace can arm everything and still only observe.*
 
 Under those, a second section covers what belongs to the install rather than to any workspace: the
 fleet, threat feeds, ASN databases, CrowdSec, pre-routing, shared WAF rulesets, and the cluster state.
@@ -99,12 +122,20 @@ actually read for:
 All of them are declared through the same `analyticsQueries()` point as the platform's own, so they
 also appear in the widget wizard and compose into your own dashboards.
 
+![The Activity page: decisions, enforced versus observed, actions over time, the action and outcome donuts, the score distribution and the hour-by-weekday heatmap](/img/screenshots/studio-activity.png)
+
+*Every number is asked of the routes this workspace governs. Here the whole fabric is in dry run, so the enforcement rate is zero and every decision is observed — covered, but stopping nothing.*
+
 ### The rows themselves
 
 Two more queries return the events rather than an aggregate, paged on the timestamp: the security
 decisions log and the WAF trail. Opening a row shows the whole event — **including its signals**,
 which is the attribution that answers *why* a caller was judged. A console that cannot drill into
 that can only ever show that something happened.
+
+![The Events page: security decisions one per row, filterable by detector, action, outcome and source](/img/screenshots/studio-events.png)
+
+*The aggregates say what is happening; this says what happened to one caller. Opening a row shows the signals behind the verdict.*
 
 ## Creating and editing
 
@@ -115,6 +146,10 @@ ASN databases.
 **Creation and edition are the same form.** "New" opens the editor on a seed rather than asking for a
 name and leaving the rest to be found later, so what you fill in at creation is what you will see
 when you come back. Nothing is written until you confirm.
+
+![The entity editor: a threat policy open in the drawer, with Delete and Full form beside Save](/img/screenshots/studio-entity-editor.png)
+
+*The same drawer creates and edits. The fields are the ones that decide behaviour, in the order they are reasoned about; **Full form** in the footer goes to the complete backoffice form, and **Delete** removes the entity.*
 
 That seed always comes from the entity's own `_template`: it is what the extension considers a sane
 empty entity, and it moves when the entity gains a field. The studio overrides it in exactly two
@@ -142,6 +177,10 @@ footer is one click away for the rest.
 The [tuning assistant](./waf/assistant.mdx) and [learning mode](./waf/learning.mdx) are not copied
 either — the studio surfaces their state and links to them.
 :::
+
+![The Fleet page: every route of the install, its status, and where its protection comes from](/img/screenshots/studio-fleet.png)
+
+*Under the workspaces, a section for what belongs to the install. The Fleet page walks every route the router knows and says whether it is protected by its own slots, by a workspace of the table, or by nothing at all.*
 
 ## Permissions
 

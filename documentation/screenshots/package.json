@@ -1,0 +1,13 @@
+{
+  "name": "threat-studio-screenshots",
+  "private": true,
+  "type": "module",
+  "description": "Playwright script that logs into a local Otoroshi and captures the Threat Studio pages for the docs",
+  "scripts": {
+    "shoot": "node shoot.mjs",
+    "setup": "npm install && npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "1.56.0"
+  }
+}
