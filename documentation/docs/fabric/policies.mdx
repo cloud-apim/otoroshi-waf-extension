@@ -36,7 +36,9 @@ enforced — which is where a policy should start.*
   ],
   "exemptions": ["10.0.0.0/8"],
   "ban_identity": "auto",
-  "waf_block_weight": 50
+  "waf_match_weight": 45,
+  "waf_block_weight": 90,
+  "waf_block_decisive": false
 }
 ```
 
@@ -57,6 +59,32 @@ It appears in the roadmap and has no module behind it yet. It is deliberately ab
 list rather than accepted and ignored, which would let you configure a tier that silently does
 nothing.
 :::
+
+## What a WAF verdict is worth
+
+The score is additive and capped at 100. Most detectors publish their own weight, but the WAF is
+special: it publishes **two** verdicts, and the policy decides what each one is worth to the score.
+
+- a **match** (`waf:match`) — rules fired, but the engine stayed below its own anomaly threshold.
+  The weaker, false-positive-prone verdict. `waf_match_weight` defaults to **45**: a lone match is
+  recorded, not punished, and reaches a tier only when another detector corroborates it.
+- a **block** (`waf:blocked`) — the engine reached a deny. `waf_block_weight` defaults to **90**, so
+  a block reaches a default ban tier on its own.
+
+:::info Why a block is not simply "always blocked"
+Putting a WAF config in monitoring is a deliberate *"observe, do not act on it alone"* — its verdict
+becomes evidence for the score rather than a decision. That is why a block feeds a weight instead of
+refusing outright. When you *do* want a block to stop the request whatever else the score says, set
+**`waf_block_decisive: true`**: a block is then taken at the ceiling and reaches the top tier
+regardless of the arithmetic. It is off by default so it does not override the monitoring you asked
+for. (A WAF config that is itself **armed** refuses at the WAF, before any of this — see
+[the WAF](../waf/configs.mdx).)
+:::
+
+The studio's **Threat policy** page reads this same arithmetic back and shows, before any traffic,
+what a lone match and a lone block actually reach under the current weights and tiers — and warns
+when a block cannot refuse a request at all (for instance a block weight below your ban tier, with
+`waf_block_decisive` off).
 
 ## Who gets banned
 

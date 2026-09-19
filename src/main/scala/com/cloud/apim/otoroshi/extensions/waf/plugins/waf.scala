@@ -98,7 +98,7 @@ object CloudApimWafFabric {
           source = "waf.seclang",
           kind = "payload",
           weight = if (blocked) config.blockWeight else config.matchWeight,
-          tag = if (blocked) "waf:blocked" else "waf:match",
+          tag = if (blocked) ThreatSignal.WafBlocked else ThreatSignal.WafMatch,
           detail = Some(
             (if (blocked) "the ruleset reached a block decision" else "rules matched without blocking") +
             (if (rules.isEmpty) "" else s" (rules ${rules.mkString(", ")})")

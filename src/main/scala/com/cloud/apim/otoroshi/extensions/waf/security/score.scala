@@ -107,6 +107,14 @@ final case class ThreatSignal(
   )
 }
 
+object ThreatSignal {
+  // the two verdicts the rule engine publishes. Named here rather than as literals at the emission
+  // and scoring sites because the threat policy weighs them by tag: one drifted string and a WAF
+  // block would silently fall back to its own weight instead of the policy's.
+  val WafBlocked: String = "waf:blocked"
+  val WafMatch: String   = "waf:match"
+}
+
 /**
  * The shared judgement every detector writes to and one component reads.
  *

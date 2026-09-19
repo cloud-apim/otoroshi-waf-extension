@@ -180,10 +180,22 @@ export const SCHEMAS = {
             help: 'What a ban is issued against. Auto takes whatever identified the caller.',
           },
           {
+            key: 'waf_match_weight',
+            label: 'WAF match weight',
+            type: 'number',
+            help: 'What a WAF rule match that did NOT reach a block contributes. The weaker, below-threshold verdict — kept moderate so a lone sub-threshold match is recorded, not punished, and escalates only with corroboration.',
+          },
+          {
             key: 'waf_block_weight',
             label: 'WAF block weight',
             type: 'number',
-            help: 'What a WAF block contributes to the score. The WAF stays the sole authority on its own blocking; this is what the rest of the fabric makes of it.',
+            help: 'What a WAF block contributes to the score. The WAF stays the sole authority on its own blocking; this is what the rest of the fabric makes of it. Set it at or above your deny/ban tier for a block to refuse on its own.',
+          },
+          {
+            key: 'waf_block_decisive',
+            label: 'WAF block is decisive',
+            type: 'bool',
+            help: 'On, a WAF block reaches the top tier whatever the arithmetic — the fabric honours the engine’s own block instead of diluting it into a sum. Off by default, because putting the WAF in monitoring is a deliberate "do not act on it alone" that this overrides.',
           },
           {
             key: 'challenge_provider',

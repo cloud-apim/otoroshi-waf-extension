@@ -226,23 +226,29 @@ class CloudApimThreatResponse extends NgRequestTransformer {
         ctx.otoroshiRequest.rightf
       } else {
         val score = ThreatBus.start(ctx.attrs, identity)
-        policy.tierFor(score.score) match {
+        // the policy weighs the WAF verdicts and may take a block as decisive, so the number that
+        // drives the tier is the policy's, not the raw sum of emitted weights
+        val effective = policy.effectiveScore(score)
+        val decisive  = policy.isDecisiveBlock(score)
+        policy.tierFor(effective) match {
           case None if score.isEmpty => ctx.otoroshiRequest.rightf
           case None                  =>
             // below every tier: still worth recording, that is what tuning reads
             record(
               mod, ctx, identity, score,
-              ThreatDecision(ThreatAction.Allow, score.score, None, policy.dryRun, "below every tier"),
+              ThreatDecision(ThreatAction.Allow, effective, None, policy.dryRun, "below every tier"),
               policy
             )
             ctx.otoroshiRequest.rightf
           case Some((index, tier))   =>
             val decision = ThreatDecision(
               action = tier.resolvedAction,
-              score = score.score,
+              score = effective,
               tier = Some(index),
               dryRun = policy.dryRun,
-              reason = s"score ${score.score} reached tier ${tier.minScore} (${tier.action})"
+              reason =
+                if (decisive) s"WAF block decisive → tier ${tier.minScore} (${tier.action})"
+                else s"score $effective reached tier ${tier.minScore} (${tier.action})"
             )
             ctx.attrs.put(ThreatKeys.DecisionKey -> decision)
             apply(mod, ctx, identity, score, decision, tier, policy)
@@ -350,8 +356,9 @@ class CloudApimThreatResponse extends NgRequestTransformer {
       routeName = ctx.route.name.some,
       message = decision.reason,
       // only enforced denials feed the cross-request memory: a dry run must not accumulate towards
-      // a ban it was explicitly told not to issue
-      ledgerWeight = if (decision.enforced) score.score else 0
+      // a ban it was explicitly told not to issue. The ledger charges what the policy judged, not the
+      // raw sum, so a re-weighted or decisive WAF block accrues at its decided value
+      ledgerWeight = if (decision.enforced) decision.score else 0
     )
   }
 
@@ -373,7 +380,7 @@ class CloudApimThreatResponse extends NgRequestTransformer {
         case Some(_) if policy.dryRun                          => ctx.otoroshiRequest.rightf
         case Some(provider) if hasClearance(mod, ctx, provider, identity) => ctx.otoroshiRequest.rightf
         case Some(provider)                                    =>
-          mod.challenges.issue(provider, score.score).map { issued =>
+          mod.challenges.issue(provider, decision.score).map { issued =>
             Left(
               Results
                 .Ok(Interstitial.render(provider, issued))
@@ -398,7 +405,7 @@ class CloudApimThreatResponse extends NgRequestTransformer {
               duration = tier.banFor,
               reason = decision.reason,
               tags = score.tags,
-              score = score.score,
+              score = decision.score,
               signals = JsArray(score.signals.map(_.json)),
               // the signals say why this request scored; the timeline says what the caller has been
               // doing up to now, and outlives the incident that holds it

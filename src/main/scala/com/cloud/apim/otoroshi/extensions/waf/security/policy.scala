@@ -69,7 +69,15 @@ final case class ThreatPolicy(
     tiers: Seq[ThreatTier] = ThreatTier.default,
     exemptions: Seq[String] = Seq.empty,
     banIdentity: String = "auto",
-    wafBlockWeight: Int = 50,
+    // the two weights a WAF verdict is worth *to this policy's score*. A block is the engine's own
+    // "deny" and defaults high; a match is the weaker, below-threshold verdict and stays moderate,
+    // so it lands on its own only with corroboration rather than punishing a lone sub-threshold rule.
+    wafMatchWeight: Int = 45,
+    wafBlockWeight: Int = 90,
+    // when on, a WAF block is decisive: it reaches the top configured tier whatever the sum, so the
+    // fabric honours the engine's block instead of diluting it. Off by default, because monitoring
+    // the WAF is a deliberate "do not act on it alone" that this would override.
+    wafBlockDecisive: Boolean = false,
     challengeProvider: Option[String] = None
 ) extends EntityLocationSupport {
 
@@ -85,6 +93,42 @@ final case class ThreatPolicy(
   /** Highest matching rung wins, so tiers can be listed in any order. */
   def tierFor(score: Int): Option[(Int, ThreatTier)] =
     tiers.zipWithIndex.filter(_._1.minScore <= score).sortBy(-_._1.minScore).headOption.map { case (t, i) => (i, t) }
+
+  /**
+   * The score this policy acts on.
+   *
+   * The two WAF verdicts are weighed by what *this policy* says they are worth, not by the weight
+   * the rule engine happened to emit — that is the whole point of the two knobs. Everything else
+   * keeps the weight it was published with. When [[wafBlockDecisive]] is on, a WAF block alone is
+   * taken at the ceiling, so it reaches the top configured tier whatever the arithmetic: the fabric
+   * honours the engine's own block decision instead of diluting it into a sum.
+   */
+  def effectiveScore(threat: ThreatScore): Int =
+    if (isDecisiveBlock(threat)) 100
+    else math.min(100, threat.signals.map(weightOf).sum)
+
+  /** True when a decisive WAF block short-circuits the arithmetic on this score. */
+  def isDecisiveBlock(threat: ThreatScore): Boolean =
+    wafBlockDecisive && threat.signals.exists(_.tag == ThreatSignal.WafBlocked)
+
+  private def weightOf(signal: ThreatSignal): Int = signal.tag match {
+    case ThreatSignal.WafBlocked => scaled(wafBlockWeight, signal.confidence)
+    case ThreatSignal.WafMatch   => scaled(wafMatchWeight, signal.confidence)
+    case _                       => signal.effectiveWeight
+  }
+
+  private def scaled(weight: Int, confidence: Double): Int =
+    math.round(weight * math.max(0.0, math.min(1.0, confidence))).toInt
+
+  /** The tier a single WAF *match* reaches on its own, under this policy — the advisory reads this. */
+  def loneMatchTier: Option[ThreatTier] = tierFor(math.min(100, wafMatchWeight)).map(_._2)
+
+  /** The tier a single WAF *block* reaches on its own; decisive ⇒ the top tier. */
+  def loneBlockTier: Option[ThreatTier] =
+    tierFor(if (wafBlockDecisive) 100 else math.min(100, wafBlockWeight)).map(_._2)
+
+  /** Whether any configured tier actually refuses a request (deny or ban). */
+  def hasDenyingTier: Boolean = tiers.exists(_.resolvedAction.denies)
 
   def isExempt(ip: String): Boolean = exemptionSet.nonEmpty && exemptionSet.contains(ip)
 
@@ -108,7 +152,9 @@ object ThreatPolicy {
       "tiers"            -> JsArray(o.tiers.map(_.json)),
       "exemptions"       -> o.exemptions,
       "ban_identity"     -> o.banIdentity,
+      "waf_match_weight"   -> o.wafMatchWeight,
       "waf_block_weight"   -> o.wafBlockWeight,
+      "waf_block_decisive" -> o.wafBlockDecisive,
       "challenge_provider" -> o.challengeProvider
     )
 
@@ -125,7 +171,11 @@ object ThreatPolicy {
         tiers = json.select("tiers").asOpt[JsArray].map(_.value.toSeq.map(ThreatTier.read)).getOrElse(ThreatTier.default),
         exemptions = json.select("exemptions").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         banIdentity = json.select("ban_identity").asOpt[String].getOrElse("auto"),
-        wafBlockWeight = json.select("waf_block_weight").asOpt[Int].getOrElse(50),
+        // a policy written before the match knob existed keeps its stored block weight untouched;
+        // one written before either existed reads the new defaults (block 90, match 45)
+        wafMatchWeight = json.select("waf_match_weight").asOpt[Int].getOrElse(45),
+        wafBlockWeight = json.select("waf_block_weight").asOpt[Int].getOrElse(90),
+        wafBlockDecisive = json.select("waf_block_decisive").asOpt[Boolean].getOrElse(false),
         challengeProvider = json.select("challenge_provider").asOpt[String].filter(_.trim.nonEmpty)
       )
     } match {

@@ -158,6 +158,102 @@ class ThreatPolicySuite extends munit.FunSuite {
   }
 }
 
+/**
+ * The policy — not the rule engine — decides what a WAF verdict is worth to the score.
+ *
+ * These pin the fix for a real gap: a WAF that reached a *block* used to contribute a flat 50, which
+ * a default deny tier of 90 never reached, so a payload the engine itself judged block-worthy only
+ * ever got logged. The policy now owns two weights and an optional decisive flag.
+ */
+class ThreatPolicyWafWeightingSuite extends munit.FunSuite {
+
+  private val id = ClientIdentity(ip = "1.2.3.4")
+  private def score(signals: ThreatSignal*) = ThreatScore(id, signals.toList)
+  // the engine always emits at 50/20; the point is that the policy re-weighs it, so the emitted
+  // weight here is deliberately not the number the assertions expect
+  private def waf(tag: String, confidence: Double = 1.0) =
+    ThreatSignal(source = "waf.seclang", kind = "payload", weight = 50, tag = tag, confidence = confidence)
+  private def other(weight: Int, tag: String = "reputation:x") =
+    ThreatSignal(source = "ip.reputation", kind = "reputation", weight = weight, tag = tag)
+
+  private val policy = ThreatPolicy(id = "p", name = "p", dryRun = false)
+
+  test("a new policy weighs a WAF block at 90 and a WAF match at 45") {
+    assertEquals(policy.wafBlockWeight, 90)
+    assertEquals(policy.wafMatchWeight, 45)
+    assert(!policy.wafBlockDecisive)
+  }
+
+  test("the policy re-weights the WAF verdicts by tag, not by the emitted weight") {
+    assertEquals(policy.effectiveScore(score(waf(ThreatSignal.WafBlocked))), 90)
+    assertEquals(policy.effectiveScore(score(waf(ThreatSignal.WafMatch))), 45)
+  }
+
+  test("a lone WAF block reaches ban, a lone WAF match only logs") {
+    assertEquals(policy.tierFor(policy.effectiveScore(score(waf(ThreatSignal.WafBlocked)))).map(_._2.action), Some("ban"))
+    assertEquals(policy.tierFor(policy.effectiveScore(score(waf(ThreatSignal.WafMatch)))).map(_._2.action), Some("log"))
+  }
+
+  test("a WAF match plus a corroborating detector escalates — the point of a moderate match") {
+    // 45 + 50 = 95 -> ban ; 45 + 30 = 75 -> tarpit
+    assertEquals(policy.tierFor(policy.effectiveScore(score(waf(ThreatSignal.WafMatch), other(50)))).map(_._2.action), Some("ban"))
+    assertEquals(policy.tierFor(policy.effectiveScore(score(waf(ThreatSignal.WafMatch), other(30)))).map(_._2.action), Some("tarpit"))
+  }
+
+  test("non-WAF signals keep the weight they were published with") {
+    assertEquals(policy.effectiveScore(score(other(30), other(25, "asn:hosting"))), 55)
+  }
+
+  test("the WAF weight is scaled by the signal's confidence, like any other") {
+    assertEquals(policy.effectiveScore(score(waf(ThreatSignal.WafBlocked, confidence = 0.5))), 45)
+  }
+
+  test("a decisive WAF block reaches the top tier whatever the arithmetic") {
+    val decisive = policy.copy(wafBlockWeight = 10, wafBlockDecisive = true)
+    assertEquals(decisive.effectiveScore(score(waf(ThreatSignal.WafBlocked))), 100, "even weighed at 10, a block is taken at the ceiling")
+    assertEquals(decisive.tierFor(decisive.effectiveScore(score(waf(ThreatSignal.WafBlocked)))).map(_._2.action), Some("ban"))
+    assert(decisive.isDecisiveBlock(score(waf(ThreatSignal.WafBlocked))))
+  }
+
+  test("decisive only fires on a block, a lone match is still weighed normally") {
+    val decisive = policy.copy(wafBlockDecisive = true)
+    assert(!decisive.isDecisiveBlock(score(waf(ThreatSignal.WafMatch))))
+    assertEquals(decisive.effectiveScore(score(waf(ThreatSignal.WafMatch))), 45)
+  }
+
+  test("without decisive, a block under the ban tier does not ban on its own") {
+    val soft = policy.copy(wafBlockWeight = 50) // the pre-fabric default, still respected when stored
+    assertEquals(soft.effectiveScore(score(waf(ThreatSignal.WafBlocked))), 50)
+    assertEquals(soft.tierFor(50).map(_._2.action), Some("log"))
+  }
+
+  test("the two weights and the decisive flag round-trip through json") {
+    val original = policy.copy(wafMatchWeight = 33, wafBlockWeight = 88, wafBlockDecisive = true)
+    val back     = ThreatPolicy.format.reads(ThreatPolicy.format.writes(original)).get
+    assertEquals(back.wafMatchWeight, 33)
+    assertEquals(back.wafBlockWeight, 88)
+    assert(back.wafBlockDecisive)
+  }
+
+  test("a policy stored before the match knob keeps its block weight and defaults the rest") {
+    val stored = Json.obj("id" -> "old", "name" -> "old", "waf_block_weight" -> 50)
+    val back   = ThreatPolicy.format.reads(stored).get
+    assertEquals(back.wafBlockWeight, 50, "a stored weight is never silently changed")
+    assertEquals(back.wafMatchWeight, 45, "the new knob reads its default")
+    assert(!back.wafBlockDecisive)
+  }
+
+  test("the advisory helpers say what a lone verdict reaches, and whether anything denies") {
+    assertEquals(policy.loneBlockTier.map(_.action), Some("ban"))
+    assertEquals(policy.loneMatchTier.map(_.action), Some("log"))
+    assert(policy.hasDenyingTier)
+    // a policy whose only tier logs cannot refuse, and even a decisive block still only logs
+    val toothless = policy.copy(tiers = Seq(ThreatTier(10, "log")), wafBlockDecisive = true)
+    assert(!toothless.hasDenyingTier)
+    assertEquals(toothless.loneBlockTier.map(_.action), Some("log"))
+  }
+}
+
 class ThreatDecisionSuite extends munit.FunSuite {
 
   test("only a denying action outside dry-run is enforced") {
