@@ -41,11 +41,13 @@ export function Kpi({ label, value, previous, format = fmtInt, invert = false, h
  * Preferred to a bar chart for top-N: the labels here are ip addresses, rule ids and tags, which are
  * long, and a horizontal list keeps them readable at any width.
  */
-export function Ranked({ items, format = fmtInt, empty = 'Nothing in this period', onPick, max = 10, labelOf, valueOf }) {
+export function Ranked({ items, format = fmtInt, empty = 'Nothing in this period', onPick, max = 10, labelFn, valueFn }) {
+  // never name these `labelOf`/`valueOf`: `valueOf` is inherited from Object.prototype, so
+  // destructuring it from props yields that method rather than undefined, and calling it throws
   const rows = (items || []).slice(0, max).map((i) => ({
     key: i.key,
-    label: (labelOf ? labelOf(i) : i.label || i.key) || '(unknown)',
-    value: Number(valueOf ? valueOf(i) : i.value) || 0,
+    label: (labelFn ? labelFn(i) : i.label || i.key) || '(unknown)',
+    value: Number(valueFn ? valueFn(i) : i.value) || 0,
   }));
   const top = Math.max(1, ...rows.map((r) => r.value));
   if (rows.length === 0) return <div className="chart-empty" style={{ height: 120 }}>{empty}</div>;
