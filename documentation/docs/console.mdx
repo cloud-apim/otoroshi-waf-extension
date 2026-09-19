@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 title: Security console
 description: Reading the events back — dashboards, queries, and which routes are actually protected.
 ---
@@ -7,6 +7,12 @@ description: Reading the events back — dashboards, queries, and which routes a
 # Security console
 
 Everything the suite decides is emitted as an event. This is the half that reads them back.
+
+:::tip Looking for one console instead of a page per surface?
+[Threat Studio](./studio.mdx) puts all of this behind one view organised by workspace, with the
+analytics scoped to the routes each workspace governs. This page stays the reference for what the
+backoffice itself offers, and for the queries — which both consoles share.
+:::
 
 The way in is **Threat Protection → Overview**, the first entry in the menu. It
 explains how the pieces fit together and reads the live state of the install — routes protected,
@@ -134,8 +140,17 @@ All of them appear in the widget wizard, compose into your own dashboards, and c
 | `cloudapim_waf_top_rules` | bar | Top triggered SecLang rules |
 | `cloudapim_waf_would_have_blocked` | area | Requests a monitoring WAF reached a deny on |
 
-The last two are the tuning pair: **top rules** tells you what to look at, **would have blocked**
-tells you what arming will cost. Once you know which rule to look at, the
+Eighteen more were added for [Threat Studio](./studio.mdx) and are listed there: enforcement over
+time, score distribution, an hour-by-weekday heatmap, sources by spread and by score, per-signal
+enforcement share, per-route enforcement, incidents, api keys and users, the WAF rules behind the
+blocks, body-limit pressure, decisions by node, and two log queries returning the events themselves.
+
+**Every query takes a `route_ids` parameter.** The shared filters carry a single `route_id`, which
+cannot express "these twelve routes"; passing a list narrows any of these queries to a set, and an
+empty list means the whole fleet.
+
+The last two of the table above are the tuning pair: **top rules** tells you what to look at, **would
+have blocked** tells you what arming will cost. Once you know which rule to look at, the
 [tuning assistant](./waf/assistant.mdx) is where you act on it — it works from its own in-memory
 sample of recent matches, so it needs none of this.
 

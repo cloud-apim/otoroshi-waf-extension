@@ -1,0 +1,20 @@
+{
+  "name": "threat-studio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Threat Studio: one console on top of the Otoroshi Threat Protection extension, organised by workspace",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@fontsource-variable/plus-jakarta-sans": "5.3.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.1",
+    "vite": "8.3.0"
+  }
+}

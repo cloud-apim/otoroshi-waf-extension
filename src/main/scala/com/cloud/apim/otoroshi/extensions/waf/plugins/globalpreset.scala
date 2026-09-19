@@ -3,7 +3,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 import com.github.blemale.scaffeine.{Cache, Scaffeine}
 import otoroshi.api.OtoroshiEnvHolder
 import otoroshi.env.Env
-import otoroshi.next.models.{NgPluginInstance, NgRoute}
+import otoroshi.next.models.{NgPluginInstance, NgPlugins, NgRoute}
 import otoroshi.next.plugins.api.*
 import otoroshi.utils.JsonPathValidator
 import otoroshi.utils.syntax.implicits.*
@@ -90,6 +90,7 @@ object CloudApimSecuritySuiteTarget {
  * bottom since the search stops at the first match.
  */
 final case class CloudApimSecuritySuiteGlobalRule(
+    id: String = "",
     name: String = "",
     enabled: Boolean = true,
     skip: Boolean = false,
@@ -106,6 +107,7 @@ object CloudApimSecuritySuiteGlobalRule {
 
   val format: Format[CloudApimSecuritySuiteGlobalRule] = new Format[CloudApimSecuritySuiteGlobalRule] {
     override def writes(o: CloudApimSecuritySuiteGlobalRule): JsValue = Json.obj(
+      "id"      -> o.id,
       "name"    -> o.name,
       "enabled" -> o.enabled,
       "skip"    -> o.skip,
@@ -114,6 +116,7 @@ object CloudApimSecuritySuiteGlobalRule {
     )
     override def reads(json: JsValue): JsResult[CloudApimSecuritySuiteGlobalRule] = Try {
       CloudApimSecuritySuiteGlobalRule(
+        id = json.select("id").asOpt[String].map(_.trim).getOrElse(""),
         name = json.select("name").asOpt[String].getOrElse(""),
         enabled = json.select("enabled").asOpt[Boolean].getOrElse(true),
         skip = json.select("skip").asOpt[Boolean].getOrElse(false),
@@ -147,17 +150,31 @@ final case class CloudApimSecuritySuiteGlobalPresetConfig(
   private lazy val liveRules: Seq[CloudApimSecuritySuiteGlobalRule] = rules.filter(_.enabled)
   private lazy val readsRouteJson: Boolean = liveRules.exists(_.readsRouteJson)
 
+  /**
+   * Every live rule whose targets match this route, in table order.
+   *
+   * The expansion only ever needs the first one. A console needs them all: "this route is governed
+   * by A, and would also have matched B" is the difference between a table someone can reason about
+   * and one they have to simulate in their head.
+   */
+  def matching(route: NgRoute, resolve: String => String)(using env: Env): Seq[CloudApimSecuritySuiteGlobalRule] = {
+    // NgRoute.json rebuilds the whole entity, frontend and backend included, so it is paid once per
+    // call and only when some selector actually reads it
+    val routeJson = if (readsRouteJson) route.json else JsNull
+    liveRules.filter(_.matches(routeJson, resolve))
+  }
+
+  /** Whether the table stands down on this route because it already carries the fabric. */
+  def standsDownOn(route: NgRoute): Boolean =
+    skipProtectedRoutes && CloudApimSecuritySuiteGlobalPresetConfig.carriesOwnProtection(route)
+
   /** The first rule that claims this route, or none — in which case the route is left untouched. */
-  def select(route: NgRoute, resolve: String => String)(using env: Env): Option[CloudApimSecuritySuiteGlobalRule] = {
-    if (skipProtectedRoutes && CloudApimSecuritySuiteGlobalPresetConfig.carriesOwnProtection(route)) {
-      None
-    } else {
-      // NgRoute.json rebuilds the whole entity, frontend and backend included, so it is paid once per
-      // expansion and only when some selector actually reads it
+  def select(route: NgRoute, resolve: String => String)(using env: Env): Option[CloudApimSecuritySuiteGlobalRule] =
+    if (standsDownOn(route)) None
+    else {
       val routeJson = if (readsRouteJson) route.json else JsNull
       liveRules.find(_.matches(routeJson, resolve))
     }
-  }
 }
 
 object CloudApimSecuritySuiteGlobalPresetConfig {
@@ -193,12 +210,17 @@ object CloudApimSecuritySuiteGlobalPresetConfig {
       )
       override def reads(json: JsValue): JsResult[CloudApimSecuritySuiteGlobalPresetConfig] = Try {
         CloudApimSecuritySuiteGlobalPresetConfig(
+          // a table written by hand carries no id. one derived from the position is enough for
+          // everything but attributing entities to a rule, and that only happens from the studio,
+          // which always writes ids — the first save materialises them
           rules = json
             .select("rules")
             .asOpt[Seq[JsValue]]
             .map(_.flatMap(CloudApimSecuritySuiteGlobalRule.format.reads(_).asOpt))
             .getOrElse(Seq.empty)
-            .toSeq,
+            .toSeq
+            .zipWithIndex
+            .map { case (rule, idx) => if (rule.id.isEmpty) rule.copy(id = s"rule_$idx") else rule },
           skipProtectedRoutes = json.select("skip_protected_routes").asOpt[Boolean].getOrElse(true)
         )
       } match {
@@ -394,6 +416,27 @@ object CloudApimSecuritySuiteGlobalPreset {
     .expireAfterWrite(ttl)
     .maximumSize(10000)
     .build[String, Seq[NgPluginInstance]]()
+
+  /** The plugin id of the global preset, as it appears in the global plugins. */
+  val pluginId: String = NgPluginHelper.pluginId[CloudApimSecuritySuiteGlobalPreset]
+
+  /**
+   * The global preset slot as it sits in the global plugins, if it is there at all.
+   *
+   * Read from the live global config rather than kept anywhere: the table is edited in the danger
+   * zone, by the studio, or by whatever wrote the config, and none of them go through here.
+   */
+  def installedSlot(using env: Env): Option[NgPluginInstance] = {
+    val gc = env.datastores.globalConfigDataStore.latest()(using env.otoroshiExecutionContext, env)
+    NgPlugins.readFrom(gc.plugins.config.select("ng")).slots.find(_.plugin == pluginId)
+  }
+
+  /** The table as configured, whether or not its slot is enabled. */
+  def installedConfig(using env: Env): CloudApimSecuritySuiteGlobalPresetConfig =
+    installedSlot
+      .map(slot => CloudApimSecuritySuiteGlobalPresetConfig.format.reads(slot.config.raw))
+      .flatMap(_.asOpt)
+      .getOrElse(CloudApimSecuritySuiteGlobalPresetConfig.default)
 
   /**
    * What identifies a route for the decision cache.

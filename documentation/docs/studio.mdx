@@ -1,0 +1,121 @@
+---
+sidebar_position: 5
+title: Threat Studio
+description: One console for the whole suite, organised by who is protected rather than by which entity configures it.
+---
+
+# Threat Studio
+
+The backoffice pages are organised the way the extension is built: a page per entity, a page per
+surface. That is the right shape for configuring one thing and the wrong one for answering *is this
+fleet protected, and by what*.
+
+**Threat Studio** is the other half. It lives at `/extensions/cloud-apim/threat-studio`, needs a
+backoffice session, and is reachable from the Threat Protection menu or by searching for it.
+
+:::info It stores nothing
+There is no workspace entity, no studio database, no extra state to back up. A workspace **is** a rule
+of [the global preset table](./fabric/global-preset.mdx), and everything else it shows is either an
+ordinary entity of the extension or a query over the analytics you already export. Deleting the studio
+would delete nothing.
+:::
+
+## A workspace is a rule of the table
+
+The global preset pairs a selector with a protection, and the studio is that table with a console
+around it.
+
+| In the studio | In the configuration |
+|---|---|
+| Workspace | one rule of the global preset table |
+| Its scope | that rule's `targets`, resolved against the router |
+| Its protection | that rule's `preset` — the same fields as the route-level preset |
+| Its position | where the rule sits in the table, which decides who wins |
+
+So the ordering on the workspaces page is not a display preference. The table is read top to bottom
+and the **first matching rule wins**; moving a workspace up is a configuration change, and the studio
+says so.
+
+### What only the gateway can answer
+
+Which routes a rule claims goes through the expression language and the live router, so the studio
+asks the extension rather than guessing. What comes back is richer than a list:
+
+- the routes each workspace **claims**, and the ones it merely **matches** — the second list is what
+  explains a workspace that looks empty, because a rule above it took them;
+- the routes **no rule claims**, which is the finding the page exists for;
+- the routes that carry their own fabric, on which the table
+  [stands down](./fabric/global-preset.mdx#routes-that-protect-themselves);
+- rules that sit under a catch-all and can therefore never be reached at all.
+
+## What each workspace has
+
+| Page | Answers |
+|---|---|
+| **Overview** | What it covers, what it is armed to do, and what the traffic did |
+| **Activity** | The analytics, scoped to its routes — decisions, sources, detectors, routes, WAF, consumers |
+| **Events** | The decisions one by one, with the signals behind each one |
+| **Routes** | Which routes it governs, and the posture each of them ends up with |
+| **Scope** | Its selectors |
+| **Protection** | The arming console: which sections run, and whether any of it can stop a request |
+| **WAF** · **Bots** · **IP reputation** · **Threat policy** | The entities it points at, and the state they are in |
+| **Bans & incidents** | Its traffic's incidents, and what the fabric is holding right now |
+| **Settings** | Name, position in the table, and whether it applies at all |
+
+Under those, a second section covers what belongs to the install rather than to any workspace: the
+fleet, threat feeds, ASN databases, CrowdSec, pre-routing, shared WAF rulesets, and the cluster state.
+
+:::note Some things cannot be scoped to a workspace, and the studio says so
+Every enabled threat feed, ASN database and CrowdSec bouncer is consulted for every route whose
+workspace enables reputation — the mode is a per-workspace choice, the sources are not. The three
+pre-routing validators are further out of reach still: they run before a route is known, so no
+selector could ever reach them.
+:::
+
+## The analytics
+
+This is the half the studio is really for, and it needs the user-analytics exporter — see
+[the security console](./console.mdx#dashboards-and-queries).
+
+The platform's own analytics filters carry a single `route_id`, which is the right shape for a
+dashboard about one route and the wrong one for a question asked of a *set* of them. Every query of
+the extension therefore takes a **`route_ids`** parameter, and an empty list means the whole fleet —
+so the same widgets serve a workspace and the install.
+
+Beside the twelve queries the console already had, the studio adds the ones a security console is
+actually read for:
+
+| | |
+|---|---|
+| **Enforcement** | enforced versus observed over time (the dry-run gap as a trend), actions over time, threat score distribution, decisions by hour and weekday |
+| **Sources** | distinct sources over time, sources by *spread* — how many routes they touched — and sources by threat score rather than by volume |
+| **Detectors** | every signal with the share of decisions it was acted on: the question actually asked of a feed |
+| **Routes** | per route, decided against enforced: configuration says what a route should do, this says what it did |
+| **Incidents** | incidents over time, and the largest ones with the caller they were opened on |
+| **Consumers** | api keys and users decided against — an attack from a valid key is the one a perimeter view never shows |
+| **WAF** | inspected / blocked / would have blocked on one axis, the rules behind the blocks, block statuses, body-limit pressure |
+| **Cluster** | decisions by node, which is how an unshared shared state shows up |
+
+All of them are declared through the same `analyticsQueries()` point as the platform's own, so they
+also appear in the widget wizard and compose into your own dashboards.
+
+### The rows themselves
+
+Two more queries return the events rather than an aggregate, paged on the timestamp: the security
+decisions log and the WAF trail. Opening a row shows the whole event — **including its signals**,
+which is the attribution that answers *why* a caller was judged. A console that cannot drill into
+that can only ever show that something happened.
+
+## What it does not re-implement
+
+The backoffice generates a form for every entity of the extension from its schema, and the
+[tuning assistant](./waf/assistant.mdx) and [learning mode](./waf/learning.mdx) are substantial pages
+of their own. The studio does not copy them: it shows the wiring — which workspace uses which entity,
+and whether it is armed — and links to the form that already exists. Two forms over one entity is one
+too many.
+
+## Permissions
+
+Reading needs a backoffice session. **Editing the table needs a super admin**, because the table
+lives on the global configuration: that is the danger zone by another name. Everything else — the
+entities, the bans, the allowlist — follows the usual tenant and team rights of the admin API.

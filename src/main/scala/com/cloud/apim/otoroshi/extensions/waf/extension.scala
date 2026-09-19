@@ -119,6 +119,11 @@ class CloudApimWafIntegration(env: Env, configuration: Configuration) extends Se
   }
 }
 
+object CloudApimWafExtension {
+  /** The extension id, reachable without an instance — the studio keys its global config on it. */
+  val extensionId: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.Waf")
+}
+
 class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
   private lazy val datastores = new WafExtensionDatastores(env, id)
@@ -127,6 +132,9 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val reputation = new ReputationModule(env, id, configuration)
   // the decision fabric every detector contributes to, and the one thing that acts on it
   lazy val security = new SecurityModule(env, id, configuration)
+  // one console for the whole suite, organised by who is protected rather than by which entity
+  // configures it. it stores nothing: a workspace is a rule of the global preset table
+  lazy val studio = new com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudio(env)
   // OPS-2: turns one observed match into an exclusion, having run it first
   lazy val tuning = new com.cloud.apim.otoroshi.extensions.waf.tuning.TuningModule(
     env,
@@ -178,7 +186,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
   val factory = SecLang.factory(presets, config, integration)
 
-  override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.Waf")
+  override def id: AdminExtensionId = CloudApimWafExtension.extensionId
   override def name: String = "Cloud APIM - Threat Protection Suite"
   override def description: Option[String] = "A threat protection suite for Otoroshi: a JVM implementation of a WAF with ModSecurity SecLang support and the OWASP CRS, plus ip reputation from threat intelligence feeds and CrowdSec".some
   override def enabled: Boolean = env.isDev || configuration.getOptional[Boolean]("enabled").getOrElse(false)
@@ -258,7 +266,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   lazy val learningPageCode = getResourceCode("cloudapim/extensions/waf/LearningPage.js")
   lazy val homePageCode = getResourceCode("cloudapim/extensions/waf/HomePage.js")
 
-  override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
+  override def assets(): Seq[AdminExtensionAssetRoute] = studio.assetRoutes ++ Seq(
     AdminExtensionAssetRoute(
       path = "/extensions/assets/cloud-apim/extensions/waf/icon.svg",
       handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
@@ -313,6 +321,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |        description: 'Web application firewall, ip reputation and threat intelligence for Otoroshi',
              |        features: [
              |          {
+             |            title: 'Threat Studio',
+             |            description: 'One console for the whole suite, by workspace: coverage, analytics and arming',
+             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |            link: '/extensions/cloud-apim/threat-studio',
+             |            display: () => true,
+             |            icon: () => 'fa-wand-magic-sparkles',
+             |          },
+             |          {
              |            title: 'Overview',
              |            description: 'What this is, and what to do next on this install',
              |            absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
@@ -366,6 +382,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      }],
              |      features: [
              |        {
+             |          title: 'Threat Studio',
+             |          description: 'One console for the whole suite, by workspace: coverage, analytics and arming',
+             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
+             |          link: '/extensions/cloud-apim/threat-studio',
+             |          display: () => true,
+             |          icon: () => 'fa-wand-magic-sparkles',
+             |        },
+             |        {
              |          title: 'Threat Protection',
              |          description: 'What this is, and what to do next on this install',
              |          absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/icon.svg',
@@ -418,6 +442,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |      ],
              |      sidebarItems: [
              |        {
+             |          title: 'Threat Studio',
+             |          text: 'One console for the whole suite, by workspace',
+             |          path: 'extensions/cloud-apim/threat-studio',
+             |          icon: 'wand-magic-sparkles'
+             |        },
+             |        {
              |          title: 'Threat Protection',
              |          text: 'What this is, and what to do next',
              |          path: 'extensions/cloud-apim/waf/home',
@@ -457,6 +487,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |        ...SecuritySidebarItems
              |      ],
              |      searchItems: [
+             |        {
+             |          action: () => {
+             |            window.location.href = `/extensions/cloud-apim/threat-studio`
+             |          },
+             |          env: React.createElement('span', { className: "fas fa-wand-magic-sparkles" }, null),
+             |          label: 'Threat Studio',
+             |          value: 'threatstudio',
+             |        },
              |        {
              |          action: () => {
              |            window.location.href = `/bo/dashboard/extensions/cloud-apim/waf/home`
@@ -509,6 +547,13 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
              |        ...SecuritySearchItems
              |      ],
              |      routes: [
+             |        {
+             |          path: '/extensions/cloud-apim/threat-studio',
+             |          component: (props) => {
+             |            window.location.href = '/extensions/cloud-apim/threat-studio';
+             |            return null;
+             |          },
+             |        },
              |        {
              |          path: '/extensions/cloud-apim/waf/home',
              |          component: (props) => {
@@ -593,7 +638,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleTest(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes()
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ studio.backofficeRoutes
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext

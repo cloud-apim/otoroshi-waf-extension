@@ -48,7 +48,7 @@ class GlobalPresetSuite extends munit.FunSuite {
       enabled: Boolean = true,
       skip: Boolean = false
   ): CloudApimSecuritySuiteGlobalRule =
-    CloudApimSecuritySuiteGlobalRule(name = name, targets = targets, preset = preset, enabled = enabled, skip = skip)
+    CloudApimSecuritySuiteGlobalRule(id = name, name = name, targets = targets, preset = preset, enabled = enabled, skip = skip)
 
   private def onPath(path: String, value: String): CloudApimSecuritySuiteTarget =
     CloudApimSecuritySuiteTarget(path = Some(path), value = JsString(value))
@@ -262,6 +262,20 @@ class GlobalPresetSuite extends munit.FunSuite {
       skipProtectedRoutes = false
     )
     assertEquals(CloudApimSecuritySuiteGlobalPresetConfig.format.reads(config.json).get, config)
+  }
+
+  test("a rule written without an id is given one, derived from its position") {
+    // a hand written table carries no id. one is enough for everything but attributing entities to a
+    // rule, and that only happens from the studio, which always writes them
+    val parsed = CloudApimSecuritySuiteGlobalPresetConfig.format
+      .reads(Json.obj("rules" -> Json.arr(Json.obj("name" -> "first"), Json.obj("name" -> "second"))))
+      .get
+    assertEquals(parsed.rules.map(_.id), Seq("rule_0", "rule_1"))
+    assertEquals(
+      CloudApimSecuritySuiteGlobalPresetConfig.format.reads(parsed.json).get,
+      parsed,
+      "and once materialised it round-trips unchanged"
+    )
   }
 
   test("an empty config yields an empty table rather than an error") {

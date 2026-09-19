@@ -115,7 +115,14 @@ object Gateway {
   }
 
   /** A route on `<id>.oto.tools`, pointed at a local backend, carrying the given plugins. */
-  def createRoute(id: String, backendPort: Int, plugins: Seq[NgPluginInstance]): NgRoute = {
+  def createRoute(
+      id: String,
+      backendPort: Int,
+      plugins: Seq[NgPluginInstance],
+      tags: Seq[String] = Seq.empty,
+      metadata: Map[String, String] = Map.empty,
+      groups: Seq[String] = Seq("default")
+  ): NgRoute = {
     val domain = s"$id.oto.tools"
     val route  = NgRoute(
       location = EntityLocation.default,
@@ -143,8 +150,9 @@ object Gateway {
         client = NgClientConfig.default
       ),
       plugins = NgPlugins(plugins),
-      tags = Seq.empty,
-      metadata = Map.empty
+      groups = groups,
+      tags = tags,
+      metadata = metadata
     )
     val res = post("/api/routes", route.json)
     if (res.status > 299) throw new RuntimeException(s"could not create the route: ${res.status} ${res.body}")
