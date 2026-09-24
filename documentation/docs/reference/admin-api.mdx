@@ -203,6 +203,7 @@ All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authent
 | `POST` | `/_refresh` | `{"feed":"<id>"}`, `{}`, or `{"asn":true}` | Refresh one feed, all of them, or the ASN table |
 | `POST` | `/_rollback` | `{"feed":"<id>"}` | Restore the previous snapshot |
 | `POST` | `/_lookup` | `{"ip":"1.2.3.4"}` | Evaluate an address against every enabled source |
+| `POST` | `/_geo` | `{"ips":["1.2.3.4", …]}` | Network, AS number and registration country of up to 500 addresses, from the enabled ASN databases — what Threat Studio shows next to a caller |
 | `POST` | `/_crowdsec_sync` | `{"bouncer":"<id>"}` or `{}` | Sync one bouncer, or all of them |
 
 `/_status` is the one worth wiring into monitoring:

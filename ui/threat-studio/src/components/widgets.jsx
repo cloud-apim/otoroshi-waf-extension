@@ -41,7 +41,7 @@ export function Kpi({ label, value, previous, format = fmtInt, invert = false, h
  * Preferred to a bar chart for top-N: the labels here are ip addresses, rule ids and tags, which are
  * long, and a horizontal list keeps them readable at any width.
  */
-export function Ranked({ items, format = fmtInt, empty = 'Nothing in this period', onPick, max = 10, labelFn, valueFn }) {
+export function Ranked({ items, format = fmtInt, empty = 'Nothing in this period', onPick, max = 10, labelFn, valueFn, renderLabel }) {
   // never name these `labelOf`/`valueOf`: `valueOf` is inherited from Object.prototype, so
   // destructuring it from props yields that method rather than undefined, and calling it throws
   const rows = (items || []).slice(0, max).map((i) => ({
@@ -57,12 +57,12 @@ export function Ranked({ items, format = fmtInt, empty = 'Nothing in this period
         <div key={`${r.key}-${idx}`}>
           <div className="row">
             {onPick ? (
-              <button className="name" title={r.label} onClick={() => onPick(r)}>
-                {r.label}
+              <button className="name" title={renderLabel ? undefined : r.label} onClick={() => onPick(r)}>
+                {renderLabel ? renderLabel(r) : r.label}
               </button>
             ) : (
-              <span className="name" title={r.label}>
-                {r.label}
+              <span className="name" title={renderLabel ? undefined : r.label}>
+                {renderLabel ? renderLabel(r) : r.label}
               </span>
             )}
             <span className="value">{format(r.value)}</span>

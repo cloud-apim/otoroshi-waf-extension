@@ -34,6 +34,7 @@ export const Reputation = {
   refresh: (body) => api.post(`${REPUTATION}/_refresh`, body),
   rollback: (body) => api.post(`${REPUTATION}/_rollback`, body),
   lookup: (body) => api.post(`${REPUTATION}/_lookup`, body),
+  geo: (body) => api.post(`${REPUTATION}/_geo`, body),
   crowdsecSync: (body) => api.post(`${REPUTATION}/_crowdsec_sync`, body),
   template: (body) => api.post(`${REPUTATION}/_template`, body),
 };

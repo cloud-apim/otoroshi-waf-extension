@@ -1061,3 +1061,8 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .drawer .form-section h3 { font-size: 14px; margin-bottom: 2px; }
 .drawer .form-section > p { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
 .drawer-foot { display: flex; justify-content: space-between; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }
+
+/* ---------- addresses ---------- */
+.ip-address { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; max-width: 100%; }
+.ip-address .flag { font-size: 14px; line-height: 1; flex-shrink: 0; }
+.ip-address .mono { overflow: hidden; text-overflow: ellipsis; }

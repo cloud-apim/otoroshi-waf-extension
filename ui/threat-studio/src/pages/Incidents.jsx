@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Icon } from '../components/icons';
+import { GeoRows, IpAddress } from '../components/ip';
 import {
   Badge,
   Card,
@@ -37,7 +38,10 @@ function BanDrawer({ entry, onClose, onAction }) {
     <Drawer open title="Ban" onClose={onClose}>
       <dl className="kv">
         <dt>Caller</dt>
-        <dd className="mono">{entry.key}</dd>
+        <dd>
+          <IpAddress value={entry.key} />
+        </dd>
+        <GeoRows value={entry.key} />
         <dt>Reason</dt>
         <dd>{entry.reason || '—'}</dd>
         <dt>Score</dt>
@@ -244,7 +248,9 @@ function LiveState() {
               <tbody>
                 {(bans.data.bans || []).map((b) => (
                   <tr key={b.key} style={{ cursor: 'pointer' }} onClick={() => setOpen(b)}>
-                    <td className="mono">{b.key}</td>
+                    <td>
+                      <IpAddress value={b.key} />
+                    </td>
                     <td className="truncate">{b.reason || '—'}</td>
                     <td style={{ textAlign: 'right' }}>{b.score ?? '—'}</td>
                     <td className="faint small">{b.until ? fmtRelative(b.until) : 'permanent'}</td>
@@ -281,7 +287,9 @@ function LiveState() {
                 <tbody>
                   {(incidents.data.incidents || []).map((i) => (
                     <tr key={i.key}>
-                      <td className="mono">{i.key}</td>
+                      <td>
+                        <IpAddress value={i.key} />
+                      </td>
                       <td>
                         <Select
                           value={i.state || 'open'}
@@ -336,7 +344,9 @@ function LiveState() {
                 <tbody>
                   {(allowlist.data.entries || []).map((e) => (
                     <tr key={e.key}>
-                      <td className="mono">{e.key}</td>
+                      <td>
+                        <IpAddress value={e.key} />
+                      </td>
                       <td className="truncate">{e.reason || '—'}</td>
                       <td className="faint small">{e.permanent ? 'permanent' : fmtRelative(e.until)}</td>
                       <td style={{ textAlign: 'right' }}>
@@ -385,7 +395,7 @@ function WorkspaceIncidents({ scope }) {
       <DataTable
         res={state.data}
         columns={[
-          { key: 'source', label: 'Caller' },
+          { key: 'source', label: 'Caller', render: (row) => <IpAddress value={row.source} /> },
           { key: 'events', label: 'Evidence', align: 'right', format: fmtInt },
           { key: 'decisions', label: 'Decisions', align: 'right', format: fmtInt },
           { key: 'enforced', label: 'Enforced', align: 'right', format: fmtInt },

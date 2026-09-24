@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { AreaChart, StackedBars } from '../components/charts';
+import { IpAddress } from '../components/ip';
 import { Card, ErrorAlert, Loading, PageHeader, Tabs, useAsync } from '../components/ui';
 import { DataTable, Donut, HourGrid, Kpi, NoExporter, PeriodPicker, Ranked, ShareBar } from '../components/widgets';
 import { fmtInt, fmtPercent } from '../lib/format';
@@ -196,14 +197,14 @@ function Sources({ d }) {
         {(r) => <AreaChart series={seriesOf(r)} bucket={bucketOf(r)} format={fmtInt} height={220} />}
       </Block>
       <Block d={d} name="top" title="Most decided against" description="Ranked by how often the fabric acted on them.">
-        {(r) => <Ranked items={itemsOf(r)} max={12} />}
+        {(r) => <Ranked items={itemsOf(r)} max={12} renderLabel={(row) => <IpAddress value={row.label} />} />}
       </Block>
       <Block d={d} name="spread" title="Walking the surface" description="Sources ranked by how many different routes they touched. A scanner and a caller hammering one endpoint produce similar counts and mean different things." className="flush">
         {(r) => (
           <DataTable
             res={r}
             columns={[
-              { key: 'key', label: 'Source' },
+              { key: 'key', label: 'Source', render: (row) => <IpAddress value={row.key} /> },
               { key: 'routes', label: 'Routes', align: 'right', format: fmtInt },
               { key: 'decisions', label: 'Decisions', align: 'right', format: fmtInt },
               { key: 'max_score', label: 'Max score', align: 'right', format: fmtInt },
@@ -216,7 +217,7 @@ function Sources({ d }) {
           <DataTable
             res={r}
             columns={[
-              { key: 'key', label: 'Source' },
+              { key: 'key', label: 'Source', render: (row) => <IpAddress value={row.key} /> },
               { key: 'max_score', label: 'Max', align: 'right', format: fmtInt },
               { key: 'avg_score', label: 'Average', align: 'right', format: fmtInt },
               { key: 'decisions', label: 'Decisions', align: 'right', format: fmtInt },
@@ -272,7 +273,7 @@ function Detectors({ d }) {
           <DataTable
             res={r}
             columns={[
-              { key: 'source', label: 'Source' },
+              { key: 'source', label: 'Source', render: (row) => <IpAddress value={row.source} /> },
               { key: 'events', label: 'Evidence', align: 'right', format: fmtInt },
               { key: 'decisions', label: 'Decisions', align: 'right', format: fmtInt },
               { key: 'enforced', label: 'Enforced', align: 'right', format: fmtInt },

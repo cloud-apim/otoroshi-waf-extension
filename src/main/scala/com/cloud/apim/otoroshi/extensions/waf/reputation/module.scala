@@ -203,6 +203,16 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
   }
 
   /**
+   * The network an address belongs to, from the first enabled asn database that knows it.
+   *
+   * This is display, not scoring: the consoles show where a caller comes from next to its address.
+   * The country is the one the network is registered in, which is close enough to tell a french
+   * isp from a us cloud, but is not a geolocation of the address itself.
+   */
+  def network(ip: String): Option[AsnRecord] =
+    states.allAsnDatabases().iterator.filter(_.enabled).flatMap(db => states.registry.asnSnapshot(db.id)).flatMap(_.ranges.get(ip)).nextOption()
+
+  /**
    * Called for every waf trail event.
    *
    * Only bouncers that opted in receive anything, and by default only enforced blocks are
@@ -270,6 +280,12 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
       path = s"$basePath/_lookup",
       wantsBody = true,
       handle = (_, _, _, body) => withJsonBody(body)(handleLookup)
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_geo",
+      wantsBody = true,
+      handle = (_, _, _, body) => withJsonBody(body)(handleGeo)
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -373,6 +389,14 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
         val bouncerIds = body.select("crowdsec").asOpt[Seq[String]].getOrElse(Seq.empty)
         Results.Ok(Json.obj("done" -> true, "verdict" -> lookup(ip, feedIds, bouncerIds).json)).vfuture
     }
+  }
+
+  /** Batched, because a table of callers asks for a page worth of addresses at once. */
+  private def handleGeo(body: JsValue): Future[Result] = {
+    val ips     = body.select("ips").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty).distinct.take(500)
+    val results = ips.map(ip => ip -> network(ip).map(_.json).getOrElse(JsNull))
+    val sources = states.allAsnDatabases().count(db => db.enabled && states.registry.asnSnapshot(db.id).exists(_.entries > 0))
+    Results.Ok(Json.obj("done" -> true, "sources" -> sources, "results" -> JsObject(results))).vfuture
   }
 
   private def handleCrowdSecSync(body: JsValue): Future[Result] = {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Icon } from '../components/icons';
+import { GeoRows, IpAddress } from '../components/ip';
 import {
   Badge,
   Card,
@@ -84,7 +85,10 @@ function DecisionDrawer({ id, onClose, period, scope }) {
             <dt>Route</dt>
             <dd>{(raw.otoroshi && raw.otoroshi.route_name) || '—'}</dd>
             <dt>Source</dt>
-            <dd className="mono">{(raw.source && raw.source.ip) || '—'}</dd>
+            <dd>
+              <IpAddress value={raw.source && raw.source.ip} />
+            </dd>
+            <GeoRows value={raw.source && raw.source.ip} />
             <dt>Detector</dt>
             <dd>{(raw.event && raw.event.category) || '—'}</dd>
             <dt>Action</dt>
@@ -322,7 +326,9 @@ function DecisionsLog({ period, scope }) {
                   <tr key={row.id} style={{ cursor: 'pointer' }} onClick={() => setOpen(row.id)}>
                     <td className="faint" style={{ whiteSpace: 'nowrap' }}>{fmtDate(row.ts)}</td>
                     <td className="truncate">{row.route_name || row.route_id || '—'}</td>
-                    <td className="mono">{row.from_ip || '—'}</td>
+                    <td>
+                      <IpAddress value={row.from_ip} />
+                    </td>
                     <td>{row.category || '—'}</td>
                     <td>
                       <ActionBadge row={row} />
