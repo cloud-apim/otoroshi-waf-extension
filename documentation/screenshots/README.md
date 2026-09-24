@@ -23,3 +23,6 @@ Overrides, all via environment variables:
 
 The captures are only as interesting as the data behind them: run some traffic through a route the
 workspace governs first, or the analytics pages will be empty by design.
+[`../../scripts/demo-traffic.js`](../../scripts/demo-traffic.js) does exactly that — `bun
+scripts/demo-traffic.js --warm` from the repository root seeds a minute of mixed traffic and then
+keeps a trickle going.
