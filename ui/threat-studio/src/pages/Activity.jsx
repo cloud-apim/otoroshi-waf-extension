@@ -1,11 +1,10 @@
-import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { AreaChart, StackedBars } from '../components/charts';
 import { IpAddress } from '../components/ip';
 import { Card, ErrorAlert, Loading, PageHeader, Tabs, useAsync } from '../components/ui';
-import { DataTable, Donut, HourGrid, Kpi, NoExporter, PeriodPicker, Ranked, ShareBar } from '../components/widgets';
+import { DataTable, Donut, HourGrid, Kpi, NoExporter, PeriodPicker, Ranked, RefreshControl, ShareBar, useTimeView } from '../components/widgets';
 import { fmtInt, fmtPercent } from '../lib/format';
-import { useRouter } from '../lib/router';
+import { useQueryState } from '../lib/router';
 import {
   bucketOf,
   compareOf,
@@ -80,8 +79,8 @@ function withTop(spec) {
 
 export function ActivityPage() {
   const { workspace } = useWorkspace();
-  const { query, navigate } = useRouter();
-  const [period, setPeriod] = useState('7d');
+  const [query, setQuery] = useQueryState();
+  const { period, refresh, setPeriod, setRefresh } = useTimeView('activity', query, setQuery, '7d');
   const tab = TABS.some((t) => t.value === query.tab) ? query.tab : 'decisions';
   const scope = (workspace.claims || []).map((r) => r.id);
 
@@ -90,7 +89,7 @@ export function ActivityPage() {
     [workspace.id, tab, period, scope.join(',')]
   );
 
-  const setTab = (value) => navigate(`/workspaces/${workspace.id}/activity?tab=${value}`, { keepScroll: true });
+  const setTab = (value) => setQuery({ tab: value }, { push: true });
 
   return (
     <div className="content wide">
@@ -103,6 +102,13 @@ export function ActivityPage() {
         }
       >
         <PeriodPicker value={period} onChange={setPeriod} />
+        <RefreshControl
+          {...refresh}
+          onChange={setRefresh}
+          onRefresh={() => state.reload({ silent: true })}
+          busy={state.loading || state.refreshing}
+          loadedAt={state.loadedAt}
+        />
       </PageHeader>
 
       <Tabs tabs={TABS} value={tab} onChange={setTab} />

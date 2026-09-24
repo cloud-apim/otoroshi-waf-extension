@@ -4,20 +4,23 @@ import { Icon } from './icons';
 /* ---------- async data ---------- */
 
 export function useAsync(fn, deps = []) {
-  const [state, setState] = useState({ loading: true, error: null, data: null });
+  const [state, setState] = useState({ loading: true, refreshing: false, error: null, data: null, loadedAt: null });
   const counter = useRef(0);
-  const run = useCallback(() => {
+  // `{ silent: true }` keeps what is on screen while the new data comes in — a refresh, and above all
+  // an automatic one, must not blank the page every time it asks again
+  const run = useCallback((opts) => {
     const current = ++counter.current;
-    setState((s) => ({ ...s, loading: true, error: null }));
+    const silent = !!(opts && opts.silent);
+    setState((s) => (silent ? { ...s, refreshing: true } : { ...s, loading: true, refreshing: false, error: null }));
     return Promise.resolve()
       .then(fn)
       .then(
         (data) => {
-          if (current === counter.current) setState({ loading: false, error: null, data });
+          if (current === counter.current) setState({ loading: false, refreshing: false, error: null, data, loadedAt: Date.now() });
           return data;
         },
         (error) => {
-          if (current === counter.current) setState({ loading: false, error, data: null });
+          if (current === counter.current) setState((s) => ({ ...s, loading: false, refreshing: false, error, data: null }));
         }
       );
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Icon } from '../components/icons';
 import { GeoRows, IpAddress } from '../components/ip';
@@ -15,7 +15,8 @@ import {
   TextInput,
   useAsync,
 } from '../components/ui';
-import { NoExporter, PeriodPicker } from '../components/widgets';
+import { NoExporter, PeriodPicker, RefreshControl, useTimeView } from '../components/widgets';
+import { useQueryState } from '../lib/router';
 import { fmtDate, fmtInt } from '../lib/format';
 import { itemsOf, NoExporterError, PERIODS, Q, runQuery } from '../lib/analytics';
 
@@ -214,10 +215,11 @@ function WafTrailDrawer({ id, onClose, period, scope }) {
  * millisecond, and paging on the instant would drop every row sharing the one a page ended on —
  * silently, and exactly on the traffic this log exists to show.
  */
-function useLog(query, params, { period, scope }) {
+function useLog(query, params, { period, scope, tick, onBusy, onLoaded }) {
   const [rows, setRows] = useState([]);
   const [next, setNext] = useState(null);
-  const [state, setState] = useState({ loading: true, error: null });
+  const [state, setState] = useState({ loading: true, refreshing: false, error: null });
+  const loaded = useRef(null);
   const key = JSON.stringify({ query, params, period, scope });
 
   const fetchPage = useCallback(
@@ -242,21 +244,34 @@ function useLog(query, params, { period, scope }) {
     [key]
   );
 
+  // a new `tick` on the same query is a refresh: the rows stay on screen until the first page comes
+  // back and replaces them (and whatever "load more" had appended — the newest rows are the point)
   useEffect(() => {
     let alive = true;
-    setState({ loading: true, error: null });
+    const silent = loaded.current === fetchPage;
+    loaded.current = fetchPage;
+    setState(silent ? (s) => ({ ...s, refreshing: true }) : { loading: true, refreshing: false, error: null });
     fetchPage()
       .then((p) => {
         if (!alive) return;
         setRows(p.items);
         setNext(p.next);
-        setState({ loading: false, error: null });
+        setState({ loading: false, refreshing: false, error: null });
+        if (onLoaded) onLoaded(Date.now());
       })
-      .catch((error) => alive && setState({ loading: false, error }));
+      .catch((error) => alive && setState({ loading: false, refreshing: false, error }));
     return () => {
       alive = false;
     };
-  }, [fetchPage]);
+  }, [fetchPage, tick]);
+
+  const busy = state.loading || state.refreshing;
+  useEffect(() => {
+    if (onBusy) onBusy(busy);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => onBusy && onBusy(false), []);
 
   const more = () => {
     if (!next) return;
@@ -265,19 +280,23 @@ function useLog(query, params, { period, scope }) {
       .then((p) => {
         setRows((r) => r.concat(p.items));
         setNext(p.next);
-        setState({ loading: false, error: null });
+        setState({ loading: false, refreshing: false, error: null });
       })
-      .catch((error) => setState({ loading: false, error }));
+      .catch((error) => setState({ loading: false, refreshing: false, error }));
   };
 
   return { rows, next, more, ...state };
 }
 
-function DecisionsLog({ period, scope }) {
-  const [category, setCategory] = useState('');
-  const [action, setAction] = useState('');
-  const [outcome, setOutcome] = useState('all');
-  const [source, setSource] = useState('');
+function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
+  const category = query.category || '';
+  const action = query.action || '';
+  const outcome = OUTCOMES.some((o) => o.value === query.outcome) ? query.outcome : 'all';
+  const source = query.source || '';
+  const setCategory = (v) => setQuery({ category: v });
+  const setAction = (v) => setQuery({ action: v });
+  const setOutcome = (v) => setQuery({ outcome: v === 'all' ? null : v });
+  const setSource = (v) => setQuery({ source: v });
   const [open, setOpen] = useState(null);
 
   const params = {
@@ -286,7 +305,7 @@ function DecisionsLog({ period, scope }) {
     ...(outcome === 'all' ? {} : { enforced: outcome === 'enforced' }),
     ...(source.trim() ? { source: source.trim() } : {}),
   };
-  const log = useLog(Q.decisionsLog, params, { period, scope });
+  const log = useLog(Q.decisionsLog, params, { period, scope, tick, onBusy, onLoaded });
 
   if (log.error instanceof NoExporterError) return <Card><NoExporter /></Card>;
 
@@ -355,26 +374,25 @@ function DecisionsLog({ period, scope }) {
   );
 }
 
-function TrailLog({ period, scope }) {
-  const [only, setOnly] = useState('');
+const TRAIL_FILTERS = [
+  { value: '', label: 'All' },
+  { value: 'matched', label: 'Matched a rule' },
+  { value: 'blocked', label: 'Blocked' },
+  { value: 'would_block', label: 'Would have blocked' },
+];
+
+function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
+  const only = TRAIL_FILTERS.some((f) => f.value === query.only) ? query.only : '';
+  const setOnly = (v) => setQuery({ only: v });
   const [open, setOpen] = useState(null);
-  const log = useLog(Q.wafTrailLog, only ? { only } : {}, { period, scope });
+  const log = useLog(Q.wafTrailLog, only ? { only } : {}, { period, scope, tick, onBusy, onLoaded });
 
   if (log.error instanceof NoExporterError) return <Card><NoExporter /></Card>;
 
   return (
     <>
       <div className="row" style={{ gap: 10, margin: '16px 0' }}>
-        <Segmented
-          options={[
-            { value: '', label: 'All' },
-            { value: 'matched', label: 'Matched a rule' },
-            { value: 'blocked', label: 'Blocked' },
-            { value: 'would_block', label: 'Would have blocked' },
-          ]}
-          value={only}
-          onChange={setOnly}
-        />
+        <Segmented options={TRAIL_FILTERS} value={only} onChange={setOnly} />
       </div>
       <Card className="flush">
         {log.error ? (
@@ -446,9 +464,16 @@ const TABS = [
 
 export function EventsPage() {
   const { workspace } = useWorkspace();
-  const [period, setPeriod] = useState('24h');
-  const [tab, setTab] = useState('decisions');
+  const [query, setQuery] = useQueryState();
+  const { period, refresh, setPeriod, setRefresh } = useTimeView('events', query, setQuery, '24h');
+  const tab = TABS.some((t) => t.value === query.tab) ? query.tab : 'decisions';
+  // each log drops the other's filters, so a tab change does not carry a filter the new log ignores
+  const setTab = (value) => setQuery({ tab: value, category: null, action: null, outcome: null, source: null, only: null }, { push: true });
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [loadedAt, setLoadedAt] = useState(null);
   const scope = (workspace.claims || []).map((r) => r.id);
+  const logProps = { period, scope, tick, onBusy: setBusy, onLoaded: setLoadedAt, query, setQuery };
 
   return (
     <div className="content wide">
@@ -457,9 +482,16 @@ export function EventsPage() {
         description="Every decision one by one, newest first. Opening a row shows the signals behind it — the attribution that answers why."
       >
         <PeriodPicker value={period} onChange={setPeriod} />
+        <RefreshControl
+          {...refresh}
+          onChange={setRefresh}
+          onRefresh={() => setTick((t) => t + 1)}
+          busy={busy}
+          loadedAt={loadedAt}
+        />
       </PageHeader>
       <Tabs tabs={TABS} value={tab} onChange={setTab} />
-      {tab === 'decisions' ? <DecisionsLog period={period} scope={scope} /> : <TrailLog period={period} scope={scope} />}
+      {tab === 'decisions' ? <DecisionsLog {...logProps} /> : <TrailLog {...logProps} />}
     </div>
   );
 }
