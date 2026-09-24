@@ -399,12 +399,14 @@ async function recycle() {
     const res = await fetch(`${security}/_bans`, { signal: AbortSignal.timeout(10000) });
     const held = (await res.json()).bans || [];
     for (const ban of held.filter((b) => mine.has(b.key))) {
-      await fetch(`${security}/_unban`, {
+      const unban = await fetch(`${security}/_unban`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ref: ban.key }),
         signal: AbortSignal.timeout(10000),
       });
+      // an unread body keeps the connection checked out of the pool
+      await unban.text();
       lifted.push(ban.key.slice(3));
       tally.recycled += 1;
     }
