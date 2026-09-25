@@ -20,7 +20,7 @@ Overrides, all via environment variables:
 | `OTO_USER` · `OTO_PASSWORD` | the backoffice credentials |
 | `TS_THEME` | `dark` (default) or `light` |
 | `TS_WS` | a workspace id, to skip auto-detection |
-| `TS_ONLY` | a regex on the capture names, to redo only some: `TS_ONLY='activity\|events' npm run shoot` |
+| `TS_ONLY` | a regex on the capture names, to redo only some: `TS_ONLY='activity\|logs' npm run shoot` |
 
 Every Activity tab and the Events page are captured on the **past hour**, picked in the period
 selector like a user would, with auto reload switched off: that is where freshly generated demo

@@ -65,7 +65,7 @@ asks the extension rather than guessing. What comes back is richer than a list:
 |---|---|
 | **Overview** | What it covers, what it is armed to do, and what the traffic did |
 | **Activity** | The analytics, scoped to its routes — decisions, sources, detectors, routes, WAF, consumers |
-| **Events** | The decisions one by one, with the signals behind each one |
+| **Logs** | The decisions one by one, with the signals behind each one |
 | **Routes** | Which routes it governs, and the posture each of them ends up with |
 | **Scope** | Its selectors |
 | **Protection** | The arming console: which sections run, and whether any of it can stop a request |
@@ -202,18 +202,18 @@ decisions log and the WAF trail. Opening a row shows the whole event — **inclu
 which is the attribution that answers *why* a caller was judged. A console that cannot drill into
 that can only ever show that something happened.
 
-![The Events page: security decisions one per row, filterable by detector, action, outcome and source](/img/screenshots/studio-events.png)
+![The Logs page: security decisions one per row, filterable by detector, action, outcome and source](/img/screenshots/studio-logs.png)
 
 *The aggregates say what is happening; this says what happened to one caller. Opening a row shows the signals behind the verdict.*
 
 The filters narrow the log to a detector, an action, a source address, or to what actually acted:
 
-![The Events page filtered on enforced decisions: bans, and the signals behind each](/img/screenshots/studio-events-enforced.png)
+![The Logs page filtered on enforced decisions: bans, and the signals behind each](/img/screenshots/studio-logs-enforced.png)
 
 Opening a row shows where the caller comes from — its country and network — what the decision did,
 the signals and their weight, and the whole event:
 
-![A security decision opened: source, country, network, detector, action, score, incident, the signals behind it and the raw event](/img/screenshots/studio-events-decision.png)
+![A security decision opened: source, country, network, detector, action, score, incident, the signals behind it and the raw event](/img/screenshots/studio-logs-decision.png)
 
 The **WAF trail** is the same for the WAF: every inspected request, its mode, its verdict and the
 rules that matched.
@@ -225,15 +225,15 @@ scoring rules run on every request and would drown the detections, so they are f
 everywhere — in the trail, in its detail, and in the rule rankings of the Activity page — and shown
 on demand.
 
-![The WAF trail: every inspected request with its mode, verdict, the rules that matched and whether the body was inspected whole](/img/screenshots/studio-events-waf.png)
+![The WAF trail: every inspected request with its mode, verdict, the rules that matched and whether the body was inspected whole](/img/screenshots/studio-logs-waf.png)
 
 Filtered on *would have blocked*, it is the list of real requests a monitoring ruleset would have
 refused — the honest measure of what arming it will cost — and each one opens on the rules that got it
 there.
 
-![The WAF trail filtered on the requests a monitoring ruleset would have blocked](/img/screenshots/studio-events-waf-would-block.png)
+![The WAF trail filtered on the requests a monitoring ruleset would have blocked](/img/screenshots/studio-logs-waf-would-block.png)
 
-![A WAF trail opened: a request that would have been blocked, and the rules that matched it](/img/screenshots/studio-events-waf-detail.png)
+![A WAF trail opened: a request that would have been blocked, and the rules that matched it](/img/screenshots/studio-logs-waf-detail.png)
 
 ## Creating and editing
 

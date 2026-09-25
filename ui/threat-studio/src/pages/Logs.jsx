@@ -536,10 +536,10 @@ const TABS = [
   { value: 'waf', label: 'WAF trail' },
 ];
 
-export function EventsPage() {
+export function LogsPage() {
   const { workspace } = useWorkspace();
   const [query, setQuery] = useQueryState();
-  const { period, refresh, setPeriod, setRefresh } = useTimeView('events', query, setQuery, '24h');
+  const { period, refresh, setPeriod, setRefresh } = useTimeView('logs', query, setQuery, '24h');
   const tab = TABS.some((t) => t.value === query.tab) ? query.tab : 'decisions';
   // each log drops the other's filters, so a tab change does not carry a filter the new log ignores
   const setTab = (value) => setQuery({ tab: value, category: null, action: null, outcome: null, source: null, only: null }, { push: true });
@@ -552,7 +552,7 @@ export function EventsPage() {
   return (
     <div className="content wide">
       <PageHeader
-        title="Events"
+        title="Logs"
         description="Every decision one by one, newest first. Opening a row shows the signals behind it — the attribution that answers why."
       >
         <PeriodPicker value={period} onChange={setPeriod} />

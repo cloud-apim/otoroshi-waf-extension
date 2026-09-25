@@ -40,7 +40,7 @@ curl 'https://my-api.example.com/search?q=1%27%20OR%20%271%27%3D%271'
 ## 3. Look at what it caught
 
 The WAF emits a `CloudApimWafTrailEvent` for every request where at least one rule matched. Route
-it through any Otoroshi data exporter, or read it from the events view.
+it through any Otoroshi data exporter, or read it from the **Logs** view of the studio.
 
 Each event carries the rule ids, the messages, and whether the request *would* have been blocked:
 

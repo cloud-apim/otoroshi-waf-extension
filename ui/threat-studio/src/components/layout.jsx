@@ -13,7 +13,7 @@ import { Icon } from './icons';
 export const WORKSPACE_PAGES = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
   { id: 'activity', label: 'Activity', icon: 'chart' },
-  { id: 'events', label: 'Events', icon: 'list' },
+  { id: 'logs', label: 'Logs', icon: 'list' },
   { id: 'routes', label: 'Routes', icon: 'route' },
   { id: 'scope', label: 'Scope', icon: 'target' },
   { id: 'protection', label: 'Protection', icon: 'sliders' },

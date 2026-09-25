@@ -8,7 +8,7 @@ import { loadTable } from './lib/workspaces';
 import { WorkspacesPage } from './pages/Workspaces';
 import { OverviewPage } from './pages/Overview';
 import { ActivityPage } from './pages/Activity';
-import { EventsPage } from './pages/Events';
+import { LogsPage } from './pages/Logs';
 import { RoutesPage } from './pages/Routes';
 import { ScopePage } from './pages/Scope';
 import { ProtectionPage } from './pages/Protection';
@@ -35,7 +35,7 @@ export const useWorkspace = () => useContext(WorkspaceContext);
 const WORKSPACE_PAGES = {
   overview: OverviewPage,
   activity: ActivityPage,
-  events: EventsPage,
+  logs: LogsPage,
   routes: RoutesPage,
   scope: ScopePage,
   protection: ProtectionPage,

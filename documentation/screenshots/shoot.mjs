@@ -4,7 +4,7 @@
 //   npm run shoot   # writes ../static/img/screenshots/studio-*.png
 //
 // Overrides via env: OTO_URL, OTO_USER, OTO_PASSWORD, TS_THEME (light|dark), TS_WS (workspace id),
-// TS_ONLY (a regex on the capture names, e.g. `TS_ONLY=activity|events` to redo only those).
+// TS_ONLY (a regex on the capture names, e.g. `TS_ONLY=activity|logs` to redo only those).
 //
 // The workspace is auto-detected (the first rule of the global preset table) unless TS_WS is set, so
 // the script works against any install that has one workspace — see the README to seed one.
@@ -141,10 +141,10 @@ function activity(ws, tab, then) {
   };
 }
 
-/** The Events page, on the past hour. */
-function events(ws, then) {
+/** The Logs page, on the past hour. */
+function logs(ws, then) {
   return async (page) => {
-    await goto(page, `/workspaces/${ws}/events`);
+    await goto(page, `/workspaces/${ws}/logs`);
     await lastHour(page);
     if (then) await then(page);
   };
@@ -227,21 +227,21 @@ const run = async () => {
   await shoot(page, 'studio-activity-consumers', { before: activity(ws, 'Consumers'), fullPage: true, settle: 1600 });
 
   // the rows themselves, with the signals behind each decision
-  await shoot(page, 'studio-events', { before: events(ws), settle: 1400 });
-  await shoot(page, 'studio-events-enforced', { before: events(ws, (p) => clickSegment(p, 'Enforced')), settle: 1400 });
+  await shoot(page, 'studio-logs', { before: logs(ws), settle: 1400 });
+  await shoot(page, 'studio-logs-enforced', { before: logs(ws, (p) => clickSegment(p, 'Enforced')), settle: 1400 });
   // one decision opened: where it came from, what it did, and why
-  await shoot(page, 'studio-events-decision', { before: events(ws, openFirstRow), settle: 1400 });
+  await shoot(page, 'studio-logs-decision', { before: logs(ws, openFirstRow), settle: 1400 });
   // the waf trail, all of it, then only what a monitoring ruleset would have blocked, then one opened
-  await shoot(page, 'studio-events-waf', { before: events(ws, (p) => clickTab(p, 'WAF trail')), settle: 1400 });
-  await shoot(page, 'studio-events-waf-would-block', {
-    before: events(ws, async (p) => {
+  await shoot(page, 'studio-logs-waf', { before: logs(ws, (p) => clickTab(p, 'WAF trail')), settle: 1400 });
+  await shoot(page, 'studio-logs-waf-would-block', {
+    before: logs(ws, async (p) => {
       await clickTab(p, 'WAF trail');
       await clickSegment(p, 'Would have blocked');
     }),
     settle: 1400,
   });
-  await shoot(page, 'studio-events-waf-detail', {
-    before: events(ws, async (p) => {
+  await shoot(page, 'studio-logs-waf-detail', {
+    before: logs(ws, async (p) => {
       await clickTab(p, 'WAF trail');
       // a request a monitoring ruleset would have refused: the verdict and the rules that got it there
       await clickSegment(p, 'Would have blocked');
