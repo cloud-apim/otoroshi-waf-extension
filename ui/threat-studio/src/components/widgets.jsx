@@ -1,12 +1,101 @@
-import { Fragment, useEffect, useMemo, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { seriesColor } from './charts';
 import { Icon } from './icons';
 import { Empty, Segmented, Select, Toggle } from './ui';
 import { fmtDate, fmtInt, fmtNumber, fmtPercent } from '../lib/format';
-import { itemsOf, PERIODS } from '../lib/analytics';
+import { customRange, isPeriod, itemsOf, PERIODS, rangePeriod } from '../lib/analytics';
 
+// `<input type="datetime-local">` speaks local wall-clock time without a zone: `2026-09-25T14:30`
+const pad = (n) => String(n).padStart(2, '0');
+function toLocalInput(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fromLocalInput(v) {
+  const t = v ? new Date(v).getTime() : NaN;
+  return Number.isNaN(t) ? null : t;
+}
+function fmtRangeEnd(ms) {
+  return new Date(ms).toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * The presets, relative to now, and a fixed range from one date and time to another.
+ *
+ * The range is edited in a popover and only applied on "Apply", so a half typed date never fires a
+ * query. It opens on the range in place, or on the preset in place turned into dates — the usual way
+ * to get to a range is to start from "the past 24 hours" and narrow it down.
+ */
 export function PeriodPicker({ value, onChange }) {
-  return <Segmented options={PERIODS.map((p) => ({ value: p.value, label: p.label.replace('Past ', '') }))} value={value} onChange={onChange} />;
+  const range = customRange(value);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState({ from: '', to: '' });
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onClick = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false);
+    const onKey = (e) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    if (!open) {
+      const now = Date.now();
+      const preset = PERIODS.find((p) => p.value === value);
+      const span = preset ? Number(preset.from.slice(4, -1)) * { h: 3600000, d: 86400000 }[preset.from.slice(-1)] : 86400000;
+      const r = range || { from: now - span, to: now };
+      setDraft({ from: toLocalInput(r.from), to: toLocalInput(r.to) });
+    }
+    setOpen(!open);
+  };
+
+  const from = fromLocalInput(draft.from);
+  const to = fromLocalInput(draft.to);
+  const error = from === null || to === null ? 'Both dates are needed' : from >= to ? 'The end must come after the start' : null;
+  const apply = () => {
+    if (error) return;
+    onChange(rangePeriod(from, to));
+    setOpen(false);
+  };
+
+  return (
+    <div className="period-picker">
+      <Segmented options={PERIODS.map((p) => ({ value: p.value, label: p.label.replace('Past ', '') }))} value={value} onChange={onChange} />
+      <div className="menu" ref={ref}>
+        <button className={`btn sm period-custom ${range ? 'active' : ''}`} onClick={toggle} title="From a date and time to another">
+          <Icon name="calendar" />
+          {range ? `${fmtRangeEnd(range.from)} → ${fmtRangeEnd(range.to)}` : 'Custom'}
+        </button>
+        {open && (
+          <div className="menu-items period-range">
+            <label>
+              <span className="small muted">From</span>
+              <input type="datetime-local" value={draft.from} max={draft.to || undefined} onChange={(e) => setDraft({ ...draft, from: e.target.value })} />
+            </label>
+            <label>
+              <span className="small muted">To</span>
+              <input type="datetime-local" value={draft.to} min={draft.from || undefined} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
+            </label>
+            {error && <div className="small period-range-error">{error}</div>}
+            <div className="period-range-actions">
+              <button className="btn sm ghost" onClick={() => setOpen(false)}>
+                Cancel
+              </button>
+              <button className="btn sm primary" disabled={!!error} onClick={apply}>
+                Apply
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 const REFRESH_INTERVALS = [
@@ -35,7 +124,8 @@ function writeView(view, patch) {
 }
 
 /**
- * The period and the auto reload of a view (`?period=7d&auto=true&every=30`).
+ * The period and the auto reload of a view (`?period=7d&auto=true&every=30`). A fixed range is a
+ * period too (`?period=1758700000000_1758790000000`, see `customRange`).
  *
  * The query string wins, so a link shows what it was copied with. Without one, the view comes back as
  * it was last left in this browser — remembered per view in `localStorage` — and the query string is
@@ -45,7 +135,7 @@ function writeView(view, patch) {
 export function useTimeView(view, query, setQuery, defaultPeriod) {
   const stored = useMemo(() => readView(view), [view]);
   const pick = (key) => (query[key] !== undefined ? query[key] : stored[key]);
-  const period = PERIODS.some((p) => p.value === pick('period')) ? pick('period') : defaultPeriod;
+  const period = isPeriod(pick('period')) ? pick('period') : defaultPeriod;
   const refresh = {
     auto: pick('auto') === 'true',
     every: REFRESH_INTERVALS.some((i) => i.value === pick('every')) ? pick('every') : '30',

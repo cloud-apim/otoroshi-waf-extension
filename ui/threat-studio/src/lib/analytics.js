@@ -17,6 +17,27 @@ export const PERIODS = [
   { value: '90d', label: 'Past 3 months', from: 'now-90d' },
 ];
 
+/**
+ * A period is either one of `PERIODS`, relative to now, or a fixed range written `<from>_<to>` in epoch
+ * milliseconds — a single token, so it travels through the query string, the local storage and every
+ * `runQuery` call exactly like a preset does.
+ */
+export function customRange(period) {
+  const m = /^(\d+)_(\d+)$/.exec(period || '');
+  if (!m) return null;
+  const from = Number(m[1]);
+  const to = Number(m[2]);
+  return from < to ? { from, to } : null;
+}
+
+export function rangePeriod(from, to) {
+  return `${from}_${to}`;
+}
+
+export function isPeriod(value) {
+  return PERIODS.some((p) => p.value === value) || customRange(value) !== null;
+}
+
 export const Q = {
   // volume and enforcement
   events: 'cloudapim_security_events_total',
@@ -70,8 +91,11 @@ export class NoExporterError extends Error {}
  * all for the whole install.
  */
 export async function runQuery(query, { period = '7d', from, scope = [], params = {}, compare = false, bucket, signal } = {}) {
+  const range = customRange(period);
   const p = PERIODS.find((x) => x.value === period) || PERIODS[2];
-  const filters = { from: from || p.from, to: 'now' };
+  const filters = range
+    ? { from: from || new Date(range.from).toISOString(), to: new Date(range.to).toISOString() }
+    : { from: from || p.from, to: 'now' };
   const allParams = { ...params, ...(scope && scope.length > 0 ? { route_ids: scope } : {}) };
   try {
     return await api.post(

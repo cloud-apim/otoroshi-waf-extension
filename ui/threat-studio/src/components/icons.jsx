@@ -62,6 +62,7 @@ const paths = {
   alert: <><path d="M12 2 1.5 20.5h21z" /><path d="M12 9v5" /><path d="M12 17.5h.01" /></>,
   arrowUp: <><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></>,
   arrowDown: <><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></>,
+  calendar: <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4" /><path d="M8 2v4" /><path d="M3 10h18" /></>,
   bolt: <path d="M13 2 4 14h7l-1 8 9-12h-7z" />,
 };
 

@@ -305,10 +305,12 @@ p { margin: 0; }
 .content { flex: 1 1 0%; min-width: 0; max-width: 1240px; margin: 0 auto; padding: 32px 40px 60px; }
 .content.wide { max-width: none; }
 .content.narrow { max-width: 900px; }
-.page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 22px; }
-.page-header > div:first-child { min-width: 0; }
+.page-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 14px 20px; margin-bottom: 22px; }
+/* the title keeps a readable width: when the controls leave it less, they go under it rather than
+   squeezing it into a column of single words */
+.page-header > div:first-child { min-width: 0; flex: 1 1 360px; }
 /* the controls keep their size; a long description wraps instead of pushing them off the page */
-.page-header > .row { flex-shrink: 0; }
+.page-header > .row { flex-shrink: 0; flex-wrap: wrap; max-width: 100%; }
 .page-header p { color: var(--muted); margin-top: 4px; }
 
 /* cards */
@@ -474,6 +476,16 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; }
 .toggle.on, :root[data-theme='dark'] .toggle.on { background: var(--grape); }
 .toggle.on::after { transform: translate(18px); }
 .toggle:disabled { opacity: 0.5; cursor: default; }
+.period-picker { display: flex; align-items: center; gap: 8px; }
+.period-picker .period-custom { white-space: nowrap; }
+.period-picker .period-custom.active { background: var(--accent-subtle); color: var(--accent-text); border-color: var(--border-strong); }
+.period-picker .period-custom svg { width: 14px; height: 14px; }
+.period-range { min-width: 250px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.period-range label { display: flex; flex-direction: column; gap: 4px; }
+.period-range input { width: 100%; }
+.period-range-error { color: var(--negative-text); }
+.period-range-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.period-range-actions button { width: auto; }
 .refresh-control { display: flex; align-items: center; gap: 8px; }
 .refresh-control .refresh-auto { display: flex; align-items: center; gap: 6px; }
 .refresh-control select { width: auto; }
