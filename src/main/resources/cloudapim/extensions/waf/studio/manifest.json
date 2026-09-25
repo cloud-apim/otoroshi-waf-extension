@@ -16,16 +16,31 @@
     "src": "node_modules/@fontsource-variable/plus-jakarta-sans/files/plus-jakarta-sans-vietnamese-wght-normal.woff2"
   },
   "src/App.jsx": {
-    "file": "assets/App-ChihGaYp.js",
+    "file": "assets/App-CwoOMk1F.js",
     "name": "App",
     "src": "src/App.jsx",
     "isDynamicEntry": true,
     "imports": [
       "src/main.jsx"
+    ],
+    "dynamicImports": [
+      "src/components/worldmap.jsx"
+    ]
+  },
+  "src/components/worldmap.jsx": {
+    "file": "assets/worldmap-7JMHWCLm.js",
+    "name": "worldmap",
+    "src": "src/components/worldmap.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "src/main.jsx"
+    ],
+    "css": [
+      "assets/worldmap-B2k4QVOw.css"
     ]
   },
   "src/main.jsx": {
-    "file": "assets/main-CrtorAlj.js",
+    "file": "assets/main-aLknvXK-.js",
     "name": "main",
     "src": "src/main.jsx",
     "isEntry": true,
@@ -33,7 +48,7 @@
       "src/App.jsx"
     ],
     "css": [
-      "assets/main-13Amj7Ri.css"
+      "assets/main-DBDKUZk2.css"
     ],
     "assets": [
       "assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2",

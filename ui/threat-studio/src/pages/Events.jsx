@@ -312,8 +312,8 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
   return (
     <>
       <div className="row" style={{ gap: 10, flexWrap: 'wrap', margin: '16px 0' }}>
-        <Select value={category} onChange={setCategory} options={CATEGORIES} />
-        <Select value={action} onChange={setAction} options={ACTIONS} />
+        <Select value={category} onChange={setCategory} options={CATEGORIES} style={{ width: 'auto' }} />
+        <Select value={action} onChange={setAction} options={ACTIONS} style={{ width: 'auto' }} />
         <Segmented options={OUTCOMES} value={outcome} onChange={setOutcome} />
         <TextInput value={source} onChange={setSource} placeholder="Filter by source address" style={{ maxWidth: 220 }} />
       </div>
@@ -433,7 +433,9 @@ function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
                         <Badge>let through</Badge>
                       )}
                     </td>
-                    <td className="mono faint small truncate">{(row.rule_ids || []).join(', ') || '—'}</td>
+                    <td className="mono faint small truncate" style={{ maxWidth: 420 }} title={(row.rule_ids || []).join(', ')}>
+                      {(row.rule_ids || []).join(', ') || '—'}
+                    </td>
                     <td className="faint small">
                       {row.oversize_rejected ? 'rejected as oversize' : row.truncated ? 'truncated' : 'whole'}
                     </td>

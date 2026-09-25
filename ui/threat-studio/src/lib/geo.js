@@ -11,19 +11,25 @@ const cache = new Map(); // ip -> Promise<geo | null>
 let pending = new Map(); // ip -> resolve
 let timer = null;
 
+// the endpoint answers for at most 500 addresses per call and silently drops the rest
+const MAX_PER_CALL = 500;
+
 function flush() {
-  const batch = pending;
+  const batch = [...pending.entries()];
   pending = new Map();
   timer = null;
-  const ips = [...batch.keys()];
-  Reputation.geo({ ips })
+  for (let i = 0; i < batch.length; i += MAX_PER_CALL) ask(batch.slice(i, i + MAX_PER_CALL));
+}
+
+function ask(chunk) {
+  Reputation.geo({ ips: chunk.map(([ip]) => ip) })
     .then((res) => {
       const results = (res && res.results) || {};
-      batch.forEach((resolve, ip) => resolve(decorate(results[ip])));
+      chunk.forEach(([ip, resolve]) => resolve(decorate(results[ip])));
     })
     .catch(() => {
       // a failed call should not pin every address to "unknown" for the rest of the session
-      batch.forEach((resolve, ip) => {
+      chunk.forEach(([ip, resolve]) => {
         cache.delete(ip);
         resolve(null);
       });
@@ -95,4 +101,49 @@ export function describeGeo(geo) {
   if (!geo) return '';
   const network = geo.org ? `${geo.org}${geo.asn ? ` (AS${geo.asn})` : ''}` : geo.asn ? `AS${geo.asn}` : '';
   return [geo.countryName, network].filter(Boolean).join(' · ');
+}
+
+/**
+ * Rows keyed by address (`key`, plus numeric columns) folded into one row per country.
+ *
+ * The same lookup the address cells use, so the map and the flags next to an address never
+ * disagree. Addresses no database knows land in `unknown` rather than being dropped, so the share
+ * the map cannot place stays visible.
+ */
+export async function foldByCountry(rows) {
+  const geos = await Promise.all(rows.map((row) => lookupGeo(ipOfIdentity(row.key))));
+  const countries = new Map();
+  const unknown = { sources: 0, decisions: 0, enforced: 0 };
+  rows.forEach((row, i) => {
+    const geo = geos[i];
+    const decisions = Number(row.decisions) || 0;
+    const enforced = Number(row.enforced) || 0;
+    if (!geo || !geo.country) {
+      unknown.sources += 1;
+      unknown.decisions += decisions;
+      unknown.enforced += enforced;
+      return;
+    }
+    const cc = geo.country.toUpperCase();
+    const c = countries.get(cc) || {
+      key: cc,
+      country: cc,
+      name: geo.countryName,
+      flag: geo.flag,
+      sources: 0,
+      decisions: 0,
+      enforced: 0,
+      max_score: 0,
+      top: [],
+    };
+    c.sources += 1;
+    c.decisions += decisions;
+    c.enforced += enforced;
+    c.max_score = Math.max(c.max_score, Number(row.max_score) || 0);
+    c.top.push({ ...row, geo });
+    countries.set(cc, c);
+  });
+  const list = [...countries.values()].sort((a, b) => b.decisions - a.decisions);
+  list.forEach((c) => c.top.sort((a, b) => (Number(b.decisions) || 0) - (Number(a.decisions) || 0)));
+  return { countries: list, unknown };
 }

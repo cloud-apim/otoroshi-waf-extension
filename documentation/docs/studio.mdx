@@ -149,7 +149,51 @@ also appear in the widget wizard and compose into your own dashboards.
 
 ![The Activity page: decisions, enforced versus observed, actions over time, the action and outcome donuts, the score distribution and the hour-by-weekday heatmap](/img/screenshots/studio-activity.png)
 
-*Every number is asked of the routes this workspace governs. Here the whole fabric is in dry run, so the enforcement rate is zero and every decision is observed — covered, but stopping nothing.*
+*Every number is asked of the routes this workspace governs, here over the past hour: how many decisions, how many actually acted, and the graded response as it moves.*
+
+### The Activity tabs
+
+**Sources** — breadth over time, who the fabric decided against most, who walks the surface, and
+who is the most dangerous rather than the noisiest.
+
+![The Sources tab: distinct sources over time, the sources most decided against, sources ranked by the routes they touched and by threat score](/img/screenshots/studio-activity-sources.png)
+
+**Geography** — where the decisions come from, on a world map. The country is the one a caller's
+network is registered in, as the [ASN databases](./reputation/asn.mdx) know it: the same lookup
+that puts a flag next to every address in the studio. It is not stored with the events, so the map is
+drawn from the most active sources of the period and says how much of it they account for. Colour
+the countries by decisions, enforced decisions, sources or highest score.
+
+![The Geography tab: countries, top country, the share of decisions placed, a world map coloured by decisions, the ranking by country and the networks behind the sources](/img/screenshots/studio-activity-geography.png)
+
+Clicking a country — on the map or in the table — lists its sources and their networks. The map
+also turns into a globe, which can be left rotating on a wall screen: the view, the metric, the
+selected country and the rotation are all kept in the address, so a link opens on exactly what was
+shared.
+
+![The Geography tab with France selected: its outline on the map, and its sources with their network](/img/screenshots/studio-activity-geography-country.png)
+
+![The Geography tab as a globe](/img/screenshots/studio-activity-geography-globe.png)
+
+**Detectors** — which component decided, the signals that fired, and whether each of them ever
+changes an outcome. A feed that fires constantly and never enforces is noise being paid for.
+
+![The Detectors tab: decisions by component, top signals, each signal with the share it was acted on, incidents over time and the largest incidents](/img/screenshots/studio-activity-detectors.png)
+
+**Routes** — where decisions are taken, and what each route actually enforced next to what the
+workspace is configured to do.
+
+![The Routes tab: decisions per route, what each route enforced, and the coverage of the workspace](/img/screenshots/studio-activity-routes.png)
+
+**WAF** — inspected, blocked and would-have-blocked on one axis, the rules that fire and the ones
+behind the blocks, what a blocked caller was answered, and how often a body was inspected whole.
+
+![The WAF tab: inspected, blocked and would have blocked over time, top triggered rules, the rules behind the blocks, block statuses and body inspection limits](/img/screenshots/studio-activity-waf.png)
+
+**Consumers** — api keys and users decided against, and the spread of decisions across the nodes of
+a cluster.
+
+![The Consumers tab: api keys and users decided against, and decisions by node](/img/screenshots/studio-activity-consumers.png)
 
 ### The rows themselves
 
@@ -161,6 +205,28 @@ that can only ever show that something happened.
 ![The Events page: security decisions one per row, filterable by detector, action, outcome and source](/img/screenshots/studio-events.png)
 
 *The aggregates say what is happening; this says what happened to one caller. Opening a row shows the signals behind the verdict.*
+
+The filters narrow the log to a detector, an action, a source address, or to what actually acted:
+
+![The Events page filtered on enforced decisions: bans, and the signals behind each](/img/screenshots/studio-events-enforced.png)
+
+Opening a row shows where the caller comes from — its country and network — what the decision did,
+the signals and their weight, and the whole event:
+
+![A security decision opened: source, country, network, detector, action, score, incident, the signals behind it and the raw event](/img/screenshots/studio-events-decision.png)
+
+The **WAF trail** is the same for the WAF: every inspected request, its mode, its verdict and the
+rules that matched.
+
+![The WAF trail: every inspected request with its mode, verdict, the rules that matched and whether the body was inspected whole](/img/screenshots/studio-events-waf.png)
+
+Filtered on *would have blocked*, it is the list of real requests a monitoring ruleset would have
+refused — the honest measure of what arming it will cost — and each one opens on the rules that got it
+there.
+
+![The WAF trail filtered on the requests a monitoring ruleset would have blocked](/img/screenshots/studio-events-waf-would-block.png)
+
+![A WAF trail opened: a request that would have been blocked, and the rules that matched it](/img/screenshots/studio-events-waf-detail.png)
 
 ## Creating and editing
 

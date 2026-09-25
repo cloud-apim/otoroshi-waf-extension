@@ -20,6 +20,13 @@ Overrides, all via environment variables:
 | `OTO_USER` · `OTO_PASSWORD` | the backoffice credentials |
 | `TS_THEME` | `dark` (default) or `light` |
 | `TS_WS` | a workspace id, to skip auto-detection |
+| `TS_ONLY` | a regex on the capture names, to redo only some: `TS_ONLY='activity\|events' npm run shoot` |
+
+Every Activity tab and the Events page are captured on the **past hour**, picked in the period
+selector like a user would, with auto reload switched off: that is where freshly generated demo
+traffic is, where a week would average it into the quiet before it. The Geography tab is captured
+flat, as a globe, and with its top country selected; the Events page with a decision and a WAF trail
+opened.
 
 The captures are only as interesting as the data behind them: run some traffic through a route the
 workspace governs first, or the analytics pages will be empty by design.

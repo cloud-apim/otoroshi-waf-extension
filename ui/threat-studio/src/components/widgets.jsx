@@ -278,7 +278,7 @@ export function HourGrid({ data, format = fmtInt }) {
 }
 
 /** A `Table` shaped result, rendered with its own columns. */
-export function DataTable({ res, columns, empty = 'Nothing in this period', onPick, max = 50 }) {
+export function DataTable({ res, columns, empty = 'Nothing in this period', onPick, max = 50, isSelected }) {
   const items = (Array.isArray(res) ? res : itemsOf(res)).slice(0, max);
   if (items.length === 0) return <div className="chart-empty" style={{ height: 120 }}>{empty}</div>;
   return (
@@ -297,6 +297,7 @@ export function DataTable({ res, columns, empty = 'Nothing in this period', onPi
           {items.map((row, idx) => (
             <tr
               key={row.key || idx}
+              className={isSelected && isSelected(row) ? 'selected' : undefined}
               onClick={onPick ? () => onPick(row) : undefined}
               style={onPick ? { cursor: 'pointer' } : undefined}
             >
