@@ -3,6 +3,7 @@ import { useWorkspace } from '../App';
 import { AreaChart, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
 import { IpAddress } from '../components/ip';
+import { RuleId, useRules } from '../components/rule';
 import { Card, Empty, ErrorAlert, Loading, PageHeader, Segmented, Tabs, useAsync } from '../components/ui';
 import { DataTable, Donut, HourGrid, Kpi, NoExporter, PeriodPicker, Ranked, RefreshControl, ShareBar, useTimeView } from '../components/widgets';
 import { fmtInt, fmtPercent } from '../lib/format';
@@ -75,8 +76,10 @@ const QUERIES = {
   waf: {
     traffic: Q.wafRequestsOverTime,
     wouldBlock: Q.wafWouldHaveBlocked,
-    rules: Q.wafTopRules,
-    costly: Q.wafTopRulesWouldBlock,
+    // far deeper than the others: the ruleset's own machinery (setup, gates, scoring) fires dozens of
+    // rules on every request and takes the whole top of both rankings — it is filtered out below
+    rules: { query: Q.wafTopRules, params: { top_n: 200 } },
+    costly: { query: Q.wafTopRulesWouldBlock, params: { top_n: 200 } },
     status: Q.wafBlockStatus,
     body: Q.wafBodyLimits,
   },
@@ -586,10 +589,10 @@ function Waf({ d }) {
         {(r) => <AreaChart series={seriesOf(r)} bucket={bucketOf(r)} format={fmtInt} height={220} />}
       </Block>
       <Block d={d} name="rules" title="Top triggered rules" description="The starting point of every tuning session.">
-        {(r) => <Ranked items={itemsOf(r)} max={12} />}
+        {(r) => <RuleRanking items={itemsOf(r)} />}
       </Block>
       <Block d={d} name="costly" title="Rules behind the blocks" description="Ranked over the requests a monitoring ruleset reached a deny on — the rules arming would actually cost you.">
-        {(r) => <Ranked items={itemsOf(r)} max={12} />}
+        {(r) => <RuleRanking items={itemsOf(r)} />}
       </Block>
       <Block d={d} name="status" title="Block statuses" description="What a blocked caller was answered.">
         {(r) => <Donut items={itemsOf(r)} />}
@@ -598,6 +601,31 @@ function Waf({ d }) {
         {(r) => <Donut items={itemsOf(r)} />}
       </Block>
     </div>
+  );
+}
+
+/**
+ * Rules ranked, with what each one is. The setup and scoring rules of a ruleset run on every request
+ * and would take every place of the ranking, so they are folded away unless asked for.
+ */
+function RuleRanking({ items, max = 12 }) {
+  const rules = useRules(items.map((i) => i.key));
+  const [all, setAll] = useState(false);
+  const isPlumbing = (i) => {
+    const rule = rules.get(Number(i.key));
+    return !!(rule && rule.plumbing);
+  };
+  const hidden = items.filter(isPlumbing).length;
+  const shown = all ? items : items.filter((i) => !isPlumbing(i));
+  return (
+    <>
+      <Ranked items={shown} max={max} renderLabel={(row) => <RuleId id={row.key} inline />} />
+      {hidden > 0 && (
+        <button className="btn sm ghost" style={{ marginTop: 10 }} onClick={() => setAll((v) => !v)}>
+          {all ? 'Hide' : 'Show'} {fmtInt(hidden)} setup and scoring rule{hidden === 1 ? '' : 's'}
+        </button>
+      )}
+    </>
   );
 }
 

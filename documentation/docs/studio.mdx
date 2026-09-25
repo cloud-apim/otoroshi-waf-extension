@@ -218,6 +218,13 @@ the signals and their weight, and the whole event:
 The **WAF trail** is the same for the WAF: every inspected request, its mode, its verdict and the
 rules that matched.
 
+A rule id is always shown with what it means — its message, or, for the many rules that have none,
+what the rule is: a CRS setup rule, a paranoia level gate, the anomaly scoring. The meaning comes from
+the rulesets the install actually runs (the bundled CRS and your own), parsed once. The setup and
+scoring rules run on every request and would drown the detections, so they are folded into a count
+everywhere — in the trail, in its detail, and in the rule rankings of the Activity page — and shown
+on demand.
+
 ![The WAF trail: every inspected request with its mode, verdict, the rules that matched and whether the body was inspected whole](/img/screenshots/studio-events-waf.png)
 
 Filtered on *would have blocked*, it is the list of real requests a monitoring ruleset would have

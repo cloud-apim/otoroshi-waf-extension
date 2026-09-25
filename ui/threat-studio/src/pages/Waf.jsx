@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStudio, useWorkspace } from '../App';
 import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
+import { RuleText } from '../components/rule';
 import {
   Badge,
   Card,
@@ -232,7 +233,9 @@ function CandidateDrawer({ candidate, configRef, onClose, onApplied }) {
         <div className="drawer-body">
           <dl className="kv">
             <dt>Rule</dt>
-            <dd>{candidate.rule_id} — {candidate.msg || '—'}</dd>
+            <dd>
+              {candidate.rule_id} — <RuleText id={candidate.rule_id} msg={candidate.msg} />
+            </dd>
             <dt>On</dt>
             <dd className="mono">{candidate.method} {candidate.path}</dd>
             <dt>Seen</dt>
@@ -307,7 +310,9 @@ function TuningTab({ configRef }) {
                   <tr key={m.key} style={{ cursor: writable ? 'pointer' : 'default' }} onClick={writable ? () => setOpen(m) : undefined}>
                     <td>
                       <div className="mono">{m.rule_id}</div>
-                      <div className="faint small truncate">{m.msg}</div>
+                      <div className="faint small truncate">
+                        <RuleText id={m.rule_id} msg={m.msg} fallback="" />
+                      </div>
                     </td>
                     <td className="truncate small">{m.method} {m.path}</td>
                     <td style={{ textAlign: 'right' }}>{fmtInt(m.count)}</td>
@@ -460,7 +465,9 @@ function LearningReport({ configRef, onApplied }) {
                     </td>
                     <td>
                       <div className="mono">{e.entry.rule_id}</div>
-                      <div className="faint small truncate">{e.entry.msg}</div>
+                      <div className="faint small truncate">
+                        <RuleText id={e.entry.rule_id} msg={e.entry.msg} fallback="" />
+                      </div>
                     </td>
                     <td className="truncate small">{e.entry.method} {e.entry.path}</td>
                     <td style={{ textAlign: 'right' }}>{fmtInt(e.entry.count)}</td>

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Icon } from '../components/icons';
 import { GeoRows, IpAddress } from '../components/ip';
+import { RuleId, useRules } from '../components/rule';
+import { labelOf } from '../lib/rules';
 import {
   Badge,
   Card,
@@ -144,7 +146,15 @@ function WafTrailDrawer({ id, onClose, period, scope }) {
     [id, period]
   );
   const raw = detail.data && detail.data.raw;
-  const matches = (raw && raw.events) || [];
+  const matches = distinctMatches((raw && raw.events) || []);
+  const rules = useRules(matches.map((m) => m.rule_id));
+  const [plumbing, setPlumbing] = useState(false);
+  const isPlumbing = (m) => {
+    const rule = rules.get(Number(m.rule_id));
+    return !!(rule && rule.plumbing);
+  };
+  const hidden = matches.filter(isPlumbing).length;
+  const shown = plumbing ? matches : matches.filter((m) => !isPlumbing(m));
   return (
     <Drawer open={!!id} title="WAF trail" onClose={onClose}>
       {detail.loading ? (
@@ -175,23 +185,35 @@ function WafTrailDrawer({ id, onClose, period, scope }) {
               )}
             </dd>
           </dl>
-          <h3 style={{ margin: '22px 0 8px', fontSize: 15 }}>Rules that matched</h3>
+          <div className="row between" style={{ margin: '22px 0 8px' }}>
+            <h3 style={{ fontSize: 15 }}>Rules that matched</h3>
+            {hidden > 0 && (
+              <button className="btn sm ghost" onClick={() => setPlumbing((v) => !v)}>
+                {plumbing ? 'Hide' : 'Show'} {fmtInt(hidden)} setup and scoring rule{hidden === 1 ? '' : 's'}
+              </button>
+            )}
+          </div>
           {matches.length === 0 ? (
             <p className="muted small">No rule matched this request.</p>
+          ) : shown.length === 0 ? (
+            <p className="muted small">
+              Only the ruleset's own machinery ran here — setup, paranoia level gates, scoring — no detection
+              matched.
+            </p>
           ) : (
             <table className="table">
               <thead>
                 <tr>
                   <th>Rule</th>
-                  <th>Message</th>
                   <th style={{ textAlign: 'right' }}>Phase</th>
                 </tr>
               </thead>
               <tbody>
-                {matches.map((m, i) => (
-                  <tr key={i}>
-                    <td className="mono">{m.rule_id}</td>
-                    <td>{m.msg || '—'}</td>
+                {shown.map((m) => (
+                  <tr key={m.rule_id}>
+                    <td style={{ maxWidth: 0, width: '100%' }}>
+                      <RuleId id={m.rule_id} msg={m.msg} inline />
+                    </td>
                     <td style={{ textAlign: 'right' }}>{m.phase ?? '—'}</td>
                   </tr>
                 ))}
@@ -205,6 +227,55 @@ function WafTrailDrawer({ id, onClose, period, scope }) {
         </>
       )}
     </Drawer>
+  );
+}
+
+/**
+ * One row per rule. A chain reports one match per link, all under the id of the chain, and only the
+ * first carries the message: keep the id once, with the message if any link had it.
+ */
+function distinctMatches(events) {
+  const byId = new Map();
+  events.forEach((m) => {
+    if (m.rule_id === undefined || m.rule_id === null) return;
+    const seen = byId.get(m.rule_id);
+    if (!seen) byId.set(m.rule_id, m);
+    else if (!labelOf(null, seen.msg) && labelOf(null, m.msg)) byId.set(m.rule_id, { ...seen, msg: m.msg });
+  });
+  return [...byId.values()];
+}
+
+/**
+ * The rules column of the trail: the detections, each with its meaning on hover, and the machinery
+ * that ran on every request folded into a count.
+ */
+function TrailRules({ ids, rules }) {
+  const distinct = [...new Set(ids || [])];
+  if (distinct.length === 0) return '—';
+  const plumbing = distinct.filter((id) => {
+    const rule = rules.get(Number(id));
+    return rule && rule.plumbing;
+  });
+  const detections = distinct.filter((id) => !plumbing.includes(id));
+  return (
+    <>
+      {detections.length === 1 ? (
+        // one detection leaves room to say what it is
+        <RuleId id={detections[0]} inline />
+      ) : (
+        detections.map((id, i) => (
+          <span key={id}>
+            {i > 0 && ', '}
+            <RuleId id={id} />
+          </span>
+        ))
+      )}
+      {plumbing.length > 0 && (
+        <span className="faint" title={`Setup and scoring rules: ${plumbing.join(', ')}`}>
+          {detections.length > 0 ? ` +${plumbing.length} setup` : `${plumbing.length} setup rule${plumbing.length === 1 ? '' : 's'} only`}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -386,6 +457,7 @@ function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
   const setOnly = (v) => setQuery({ only: v });
   const [open, setOpen] = useState(null);
   const log = useLog(Q.wafTrailLog, only ? { only } : {}, { period, scope, tick, onBusy, onLoaded });
+  const rules = useRules(log.rows.flatMap((row) => row.rule_ids || []));
 
   if (log.error instanceof NoExporterError) return <Card><NoExporter /></Card>;
 
@@ -433,8 +505,8 @@ function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
                         <Badge>let through</Badge>
                       )}
                     </td>
-                    <td className="mono faint small truncate" style={{ maxWidth: 420 }} title={(row.rule_ids || []).join(', ')}>
-                      {(row.rule_ids || []).join(', ') || '—'}
+                    <td className="small truncate" style={{ maxWidth: 420 }}>
+                      <TrailRules ids={row.rule_ids} rules={rules} />
                     </td>
                     <td className="faint small">
                       {row.oversize_rejected ? 'rejected as oversize' : row.truncated ? 'truncated' : 'whole'}

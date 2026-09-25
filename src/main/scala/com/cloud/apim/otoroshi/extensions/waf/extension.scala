@@ -19,7 +19,7 @@ import otoroshi.next.extensions.*
 import otoroshi.security.IdGenerator
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits.*
-import play.api.libs.json.{JsNull, JsObject, JsString, JsValue, Json}
+import play.api.libs.json.{JsNull, JsNumber, JsObject, JsString, JsValue, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.api.{Configuration, Logger}
 
@@ -638,6 +638,12 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleTest(body)
     ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = "/extensions/cloud-apim/extensions/waf/utils/_rules",
+      wantsBody = true,
+      handle = (_, _, _, body) => handleDescribeRules(body)
+    ),
   ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ studio.backofficeRoutes
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
@@ -687,6 +693,30 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
         e.printStackTrace()
         Results.Ok(Json.obj("done" -> false, "error" -> e.getMessage))
       }
+    }
+  }
+
+  /**
+   * What a list of rule ids means: `{ "ids": [942100, 901100] }` → `{ "results": { "942100": {...} } }`.
+   *
+   * Batched, because a trail shows dozens of ids at once. An id no ruleset of the install defines is
+   * simply absent from the answer.
+   */
+  def handleDescribeRules(body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ExecutionContext = env.otoroshiExecutionContext
+    given Materializer     = env.otoroshiMaterializer
+    body match {
+      case None             => Results.BadRequest(Json.obj("done" -> false, "error" -> "no body")).vfuture
+      case Some(bodySource) =>
+        bodySource.runFold(ByteString.empty)(_ ++ _).map { bodyRaw =>
+          val ids     = bodyRaw.utf8String.parseJson.select("ids").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
+            case JsNumber(n) => Some(n.toInt)
+            case JsString(s) => s.trim.toIntOption
+            case _           => None
+          }.distinct.take(1000)
+          val results = com.cloud.apim.otoroshi.extensions.waf.rules.RuleCatalog.describe(ids, states.allRulesets(), states.allConfigs())
+          Results.Ok(Json.obj("done" -> true, "results" -> JsObject(results.map { case (id, info) => id.toString -> info.json })))
+        }
     }
   }
 
