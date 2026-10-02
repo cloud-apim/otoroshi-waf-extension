@@ -3,6 +3,7 @@ import { bootstrap } from '../lib/bootstrap';
 import { initials } from '../lib/format';
 import { Link, useRouter } from '../lib/router';
 import { Icon } from './icons';
+import cloudApimLogo from '../assets/cloud-apim-logo.svg';
 
 /**
  * What a workspace is made of, in the order it is worked.
@@ -166,8 +167,8 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
   const user = bootstrap.user;
   return (
     <header className="topbar">
-      <Link to="/" className="brand">
-        <span className="brand-mark">TS</span>
+      <Link to="/" className="brand" title="Threat Studio, by Cloud APIM">
+        <img className="brand-mark" src={cloudApimLogo} alt="Cloud APIM" />
         Threat Studio
       </Link>
       <span

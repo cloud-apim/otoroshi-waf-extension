@@ -16,7 +16,7 @@
     "src": "node_modules/@fontsource-variable/plus-jakarta-sans/files/plus-jakarta-sans-vietnamese-wght-normal.woff2"
   },
   "src/App.jsx": {
-    "file": "assets/App-DNuRWJOS.js",
+    "file": "assets/App-By7aOziV.js",
     "name": "App",
     "src": "src/App.jsx",
     "isDynamicEntry": true,
@@ -25,10 +25,17 @@
     ],
     "dynamicImports": [
       "src/components/worldmap.jsx"
+    ],
+    "assets": [
+      "assets/cloud-apim-logo-BFtom4ps.svg"
     ]
   },
+  "src/assets/cloud-apim-logo.svg": {
+    "file": "assets/cloud-apim-logo-BFtom4ps.svg",
+    "src": "src/assets/cloud-apim-logo.svg"
+  },
   "src/components/worldmap.jsx": {
-    "file": "assets/worldmap-1-MD0qr1.js",
+    "file": "assets/worldmap-6-wcOxFv.js",
     "name": "worldmap",
     "src": "src/components/worldmap.jsx",
     "isDynamicEntry": true,
@@ -40,7 +47,7 @@
     ]
   },
   "src/main.jsx": {
-    "file": "assets/main-CkmZy6YZ.js",
+    "file": "assets/main-DwGPOa8h.js",
     "name": "main",
     "src": "src/main.jsx",
     "isEntry": true,
@@ -48,7 +55,7 @@
       "src/App.jsx"
     ],
     "css": [
-      "assets/main-FjUxw3qI.css"
+      "assets/main-B3WUbo87.css"
     ],
     "assets": [
       "assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2",
