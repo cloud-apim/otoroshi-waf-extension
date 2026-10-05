@@ -221,6 +221,15 @@ The extension id is `cloud-apim.extensions.Waf` and has been stable since the fi
 datastore keys, the API group and route paths are unchanged across upgrades. Entities added by
 later versions read their new fields with defaults, so an older `WafConfig` stays valid.
 
+:::caution Upgrading to 1.0.0: more Core Rule Set rules fire
+Before 1.0.0, the embedded Core Rule Set never found its data files, so none of the rules that read
+one could match: scanner user agents (913100), LFI paths (930120), shell commands (932xxx), PHP
+functions (933xxx), and the SQL and PHP error leaks of the response rules. They all run now, which
+means real detections that were missed and, on some APIs, new false positives. Upgrade a blocking
+config through a period in monitoring (`block: false`) and read the [trail](./waf/tuning.mdx) before
+arming it again. `@ipMatch` with a CIDR (`10.0.0.0/8`) never matched either, and does now.
+:::
+
 ## Building from source
 
 Only needed if you want an unreleased change.

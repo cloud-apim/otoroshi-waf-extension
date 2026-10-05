@@ -2,7 +2,6 @@ package com.cloud.apim.otoroshi.extensions.waf.tuning
 
 import com.cloud.apim.seclang.model.*
 import com.cloud.apim.seclang.scaladsl.SecLang
-import com.cloud.apim.seclang.scaladsl.coreruleset.EmbeddedCRSPreset
 
 /**
  * The engine guarantees the tuning assistant is built on.
@@ -16,7 +15,7 @@ import com.cloud.apim.seclang.scaladsl.coreruleset.EmbeddedCRSPreset
 class EngineSanitySuite extends munit.FunSuite {
 
   private val factory = SecLang.factory(
-    Map("crs" -> EmbeddedCRSPreset.embedded),
+    Map("crs" -> com.cloud.apim.otoroshi.extensions.waf.rules.CrsPreset.embedded),
     SecLangEngineConfig.default,
     DefaultNoCacheSecLangIntegration.default
   )
@@ -43,6 +42,20 @@ class EngineSanitySuite extends munit.FunSuite {
 
   private def fires(extra: List[String], arg: String = "comment"): Boolean =
     run(extra, arg).events.flatMap(_.ruleId).contains(942100)
+
+  // the embedded preset keys its data files by their path in the jar, its rules name them bare: until
+  // that was reconciled, no CRS rule reading a data file ever fired
+  test("a CRS rule reading a data file fires: a scanner's user agent is seen") {
+    val scan = RequestContext(
+      method = "GET",
+      uri = "/",
+      headers = Headers(Map("Host" -> List("example.com"), "Accept" -> List("*/*"), "User-Agent" -> List("sqlmap/1.7.2#stable (https://sqlmap.org)"))),
+      remoteAddr = "1.2.3.4",
+      protocol = "HTTP/1.1"
+    )
+    val res = factory.engine(List("SecRuleEngine DetectionOnly", "@import_preset crs")).evaluate(scan, List(1, 2))
+    assert(res.events.flatMap(_.ruleId).contains(913100), s"913100 did not fire: ${res.events.flatMap(_.ruleId)}")
+  }
 
   test("the rule fires with no exclusion") {
     assert(fires(Nil))
