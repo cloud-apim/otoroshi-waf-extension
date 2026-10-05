@@ -3,7 +3,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 import com.cloud.apim.otoroshi.extensions.waf.body.{BodyPrefix, BodyReader, ResponseBody}
 import com.cloud.apim.otoroshi.extensions.waf.entities.CloudApimWafConfig
 import com.cloud.apim.otoroshi.extensions.waf.security.{ClientIdentity, ThreatBus, ThreatSignal}
-import com.cloud.apim.seclang.impl.engine.SecLangEngine
+import com.cloud.apim.otoroshi.extensions.waf.rules.{SharedWafEngine, WafExchange}
 import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.{Disposition, EngineResult, MatchEvent, RequestContext}
 import org.apache.pekko.stream.Materializer
@@ -21,6 +21,7 @@ import otoroshi.utils.http.RequestImplicits.*
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
 import play.api.libs.json.*
+import play.api.Logger
 import play.api.libs.typedmap.TypedKey
 import play.api.mvc.{RequestHeader, Result, Results}
 
@@ -32,10 +33,86 @@ object CloudApimWafKeys {
   // one exchange is evaluated twice when response inspection is on; the learning window's headline
   // numbers are per request, so the second half must not charge them again
   val LearningCountedKey = TypedKey[Boolean]("cloud-apim.waf.learning.counted")
+  // the WAF this route asks for cannot run, and waf.fail-open says not to let the request through
+  val UnavailableKey = TypedKey[String]("cloud-apim.waf.unavailable")
 }
 
-case class ContextualCloudApimWafConfig(engine: SecLangEngine, config: CloudApimWafConfig) {
+case class ContextualCloudApimWafConfig(engine: WafExchange, config: CloudApimWafConfig) {
   def close(): Unit = ()
+}
+
+/** What a WAF plugin can do with the config its route points at. */
+sealed trait WafResolution
+
+object WafResolution {
+
+  /** Nothing to run: the config is switched off, or `waf.fail-open` lets an unavailable WAF through. */
+  case object Off extends WafResolution
+
+  /** The config, and the engine its rules compile to. */
+  final case class Ready(ext: CloudApimWafExtension, config: CloudApimWafConfig, engine: SharedWafEngine) extends WafResolution
+
+  /** The WAF the route asks for cannot run, and the request is refused rather than let through uninspected. */
+  final case class Unavailable(reason: String) extends WafResolution
+}
+
+object CloudApimWafPlugins {
+
+  private val logger   = Logger("cloud-apim-waf")
+  private val reported = new scala.collection.concurrent.TrieMap[String, Unit]()
+
+  // once per situation rather than per request: a route with traffic would flood the logs
+  private def reportOnce(key: String)(message: => String): Unit =
+    if (reported.putIfAbsent(key, ()).isEmpty) logger.warn(message)
+
+  /**
+   * `waf.fail-open`. Read from the configuration when the extension is not there, since that is one
+   * of the cases it decides.
+   */
+  def failOpen(using env: Env): Boolean =
+    env.adminExtensions.extension[CloudApimWafExtension] match {
+      case Some(ext) => ext.failOpen
+      case None      =>
+        env.configuration
+          .getOptional[Boolean](s"otoroshi.admin-extensions.configurations.${CloudApimWafExtension.extensionId.cleanup}.waf.fail-open")
+          .getOrElse(false)
+    }
+
+  def resolve(ref: String)(using env: Env): WafResolution =
+    resolve(env.adminExtensions.extension[CloudApimWafExtension], failOpen, ref)
+
+  /**
+   * The engine for a route's WAF config, or what to do without one.
+   *
+   * A route can ask for a WAF that cannot run: the extension is not enabled, the config it names
+   * does not exist, or its rules do not compile. The request is then refused, unless `waf.fail-open`
+   * lets it through uninspected. A config in monitoring mode is never refused for it: it would not
+   * have refused anything had it run. A config switched off is not a failure at all.
+   */
+  def resolve(extension: Option[CloudApimWafExtension], failOpen: Boolean, ref: String): WafResolution = {
+    def unavailable(key: String, why: String): WafResolution = {
+      reportOnce(key) {
+        if (failOpen) s"$why: its requests go through uninspected (waf.fail-open is on)"
+        else s"$why: its requests are refused with a 503 (waf.fail-open is off)"
+      }
+      if (failOpen) WafResolution.Off else WafResolution.Unavailable(why)
+    }
+    extension match {
+      case None      => unavailable("extension", "a route uses the Cloud APIM WAF but the extension is not enabled")
+      case Some(ext) =>
+        ext.states.config(ref) match {
+          case None                            => unavailable(s"ref:$ref", s"a route uses the waf config '$ref', which does not exist")
+          case Some(config) if !config.enabled => WafResolution.Off
+          case Some(config)                    =>
+            ext.engineFor(config) match {
+              case Right(engine)                             => WafResolution.Ready(ext, config, engine)
+              // reported by the engine cache already, once per change of the rules
+              case Left(_) if failOpen || !config.block      => WafResolution.Off
+              case Left(reason)                              => WafResolution.Unavailable(s"waf config '${config.name}' does not compile: $reason")
+            }
+        }
+    }
+  }
 }
 
 case class CloudApimWafConfigRef(
@@ -328,16 +405,18 @@ class CloudApimWaf extends NgRequestTransformer {
     ctx: NgBeforeRequestContext
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
     val config = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
-    val ext = env.adminExtensions.extension[CloudApimWafExtension].get
-    ext.states.config(config.ref).filter(_.enabled) match {
-      case None            => ().vfuture
-      case Some(wafConfig) =>
+    // the rules the config composes to, not only the ones written inside it, compiled once per change
+    CloudApimWafPlugins.resolve(config.ref) match {
+      case WafResolution.Off                            => ().vfuture
+      // this callback cannot answer: the request transformer refuses it
+      case WafResolution.Unavailable(reason)            =>
+        ctx.attrs.put(CloudApimWafKeys.UnavailableKey -> reason)
+        ().vfuture
+      case WafResolution.Ready(ext, wafConfig, engine) =>
         // every request the configuration looks at, matched or not: the denominator of every rate a
         // learning report quotes
         ext.learning.observeRequest(wafConfig.id)
-        // the rules the config composes to, not only the ones written inside it
-        val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
-        ctx.attrs.put(CloudApimWafKeys.SecLangEngineKey -> ContextualCloudApimWafConfig(engine, wafConfig))
+        ctx.attrs.put(CloudApimWafKeys.SecLangEngineKey -> ContextualCloudApimWafConfig(engine.exchange(), wafConfig))
         // the engine asks @rbl synchronously: give the blocklists a short head start, never more
         ext.reputation.rbl.warm(ctx.request.theIpAddress, ext.rblZones(wafConfig))
     }
@@ -355,6 +434,8 @@ class CloudApimWaf extends NgRequestTransformer {
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val ref = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     ctx.attrs.get(CloudApimWafKeys.SecLangEngineKey) match {
+      case None if ctx.attrs.get(CloudApimWafKeys.UnavailableKey).isDefined =>
+        craftBlock(503, ctx.request, ctx.attrs, ctx.route, ctx.report.getDurationNow(), ctx.report.getOverheadInNow()).map(Left.apply)
       case None                                              => ctx.otoroshiRequest.rightf
       case Some(ContextualCloudApimWafConfig(engine, config)) => {
         val payload = Json.obj("request" -> ctx.otoroshiRequest.json)
@@ -478,16 +559,16 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
     ctx.config.select("ref").asOpt[String] match {
       case None      => NgAccess.NgAllowed.vfuture
       case Some(ref) => {
-        val ext = env.adminExtensions.extension[CloudApimWafExtension].get
-        ext.states.config(ref).filter(_.enabled) match {
-          case None => NgAccess.NgAllowed.vfuture
-          case Some(wafConfig) => {
+        // the rules the config composes to, compiled once per change of them
+        CloudApimWafPlugins.resolve(ref) match {
+          case WafResolution.Off                            => NgAccess.NgAllowed.vfuture
+          case WafResolution.Unavailable(_)                 => NgAccess.NgDenied(Results.ServiceUnavailable("")).vfuture
+          case WafResolution.Ready(ext, wafConfig, shared) =>
             // the engine asks @rbl synchronously: give the blocklists a short head start, never more,
             // and no async hop at all for the configs that name no blocklist
             val zones = ext.rblZones(wafConfig)
-            if (zones.isEmpty) validate(ctx, ext, wafConfig, ref)
-            else ext.reputation.rbl.warm(ctx.request.theIpAddress, zones).flatMap(_ => validate(ctx, ext, wafConfig, ref))
-          }
+            if (zones.isEmpty) validate(ctx, shared.exchange(), ref)
+            else ext.reputation.rbl.warm(ctx.request.theIpAddress, zones).flatMap(_ => validate(ctx, shared.exchange(), ref))
         }
       }
     }
@@ -495,12 +576,9 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
 
   private def validate(
     ctx: NgIncomingRequestValidatorContext,
-    ext: CloudApimWafExtension,
-    wafConfig: CloudApimWafConfig,
+    engine: WafExchange,
     ref: String
   )(using env: Env): Future[NgAccess] = {
-    // the rules the config composes to, not only the ones written inside it
-    val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
     val req = RequestContextBuilder.request(ctx.request, NgPluginHttpRequest.fromRequest(ctx.request), None)
     val res = engine.evaluate(req, List(1, 2, 5))
     CloudApimWafFabric.contribute(

@@ -119,6 +119,13 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
     log = false
   }
 
+  waf {
+    // what a route does when the WAF it asks for cannot run: the extension is not enabled, the waf
+    // config it names does not exist, or its rules do not compile. off: the request is refused with
+    // a 503. on: it goes through uninspected. either way the logs say so
+    fail-open = false
+  }
+
   // the decision fabric: shared score, policies, bans, incidents
   security {
     enabled = true
@@ -184,6 +191,7 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
 | `enabled` | `CLOUD_APIM_EXTENSIONS_WAF_ENABLED` | `false` (`true` in dev mode) |
 | `integration.max-cache-items` | `CLOUD_APIM_EXTENSIONS_WAF_INTEGRATION_MAX_CACHE_ITEMS` | `1000` |
 | `integration.log` | `CLOUD_APIM_EXTENSIONS_WAF_INTEGRATION_LOG` | `false` |
+| `waf.fail-open` | `CLOUD_APIM_EXTENSIONS_WAF_FAIL_OPEN` | `false` |
 | `reputation.enabled` | — | `true` |
 | `reputation.tick-interval-seconds` | — | `5` |
 | `reputation.geo.work-dir` | — | a temporary directory |

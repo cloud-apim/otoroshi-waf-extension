@@ -70,19 +70,23 @@ class WafExtensionState() {
     _composed.remAll(_composed.keySet.toSeq.diff(_configs.keySet.toSeq))
     _configs.values.foreach { config =>
       val composed = WafRuleComposition.compose(config, ruleset)
-      // a reference to nothing still compiles and still runs, protecting less than it claims to,
-      // so it gets said out loud rather than swallowed
-      if (composed.missing.nonEmpty) {
-        logger.warn(s"waf config '${config.name}' references unknown rulesets: ${composed.missing.mkString(", ")}")
+      // every sync tick lands here. An unchanged composition keeps its instance, because what is
+      // built from it (the engine, the blocklist zones) is cached on that identity
+      if (!_composed.get(config.id).contains(composed)) {
+        // a reference to nothing still compiles and still runs, protecting less than it claims to,
+        // so it gets said out loud rather than swallowed
+        if (composed.missing.nonEmpty) {
+          logger.warn(s"waf config '${config.name}' references unknown rulesets: ${composed.missing.mkString(", ")}")
+        }
+        // same reasoning: a dial nobody reads is a setting that silently does nothing
+        if (composed.crsIgnored) {
+          logger.warn(
+            s"waf config '${config.name}' sets Core Rule Set options but never imports CRS " +
+            s"(no '@import_preset crs' in its rulesets or rules), so they are not applied"
+          )
+        }
+        _composed.put(config.id, composed)
       }
-      // same reasoning: a dial nobody reads is a setting that silently does nothing
-      if (composed.crsIgnored) {
-        logger.warn(
-          s"waf config '${config.name}' sets Core Rule Set options but never imports CRS " +
-          s"(no '@import_preset crs' in its rulesets or rules), so they are not applied"
-        )
-      }
-      _composed.put(config.id, composed)
     }
   }
 }
@@ -219,6 +223,32 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
   def presetExists(name: String): Boolean = presets.contains(name) || integration.getExternalPreset(name).isDefined
 
+  /**
+   * What a route does when the WAF it asks for cannot run — the extension off, the config missing,
+   * its rules not compiling. Off by default: such a request is refused, not let through uninspected.
+   */
+  lazy val failOpen: Boolean = configuration.getOptional[Boolean]("waf.fail-open").getOrElse(false)
+
+  private val engines = new com.cloud.apim.otoroshi.extensions.waf.rules.EngineCache(
+    rules => factory.engine(rules.toList),
+    presetExists,
+    (id, reason) => {
+      // said once per change of the rules, with what it does to the traffic: the requests themselves
+      // only get an empty 503, or nothing at all
+      val config = states.config(id)
+      val name   = config.map(_.name).getOrElse(id)
+      if (failOpen || config.exists(!_.block)) {
+        logger.error(s"waf config '$name' does not compile and is not applied, its routes go through uninspected: $reason")
+      } else {
+        logger.error(s"waf config '$name' does not compile, its routes answer 503 until it does (waf.fail-open is off): $reason")
+      }
+    }
+  )
+
+  /** The engine a config runs, built when its rules change; `Left` says why it does not compile. */
+  def engineFor(config: CloudApimWafConfig): Either[String, com.cloud.apim.otoroshi.extensions.waf.rules.SharedWafEngine] =
+    engines.engineFor(config.id, states.composedFor(config))
+
   override def id: AdminExtensionId = CloudApimWafExtension.extensionId
   override def name: String = "Cloud APIM - Threat Protection Suite"
   override def description: Option[String] = "A threat protection suite for Otoroshi: a JVM implementation of a WAF with ModSecurity SecLang support and the OWASP CRS, plus ip reputation from threat intelligence feeds and CrowdSec".some
@@ -257,6 +287,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       // rulesets first: composing a config against a stale ruleset map would be wrong for one tick
       states.updateRulesets(rulesets)
       states.updateConfigs(configs)
+      engines.retain(configs.map(_.id).toSet)
       com.cloud.apim.otoroshi.extensions.waf.analytics.SecurityDashboard.seedIfMissing()
       ()
     }

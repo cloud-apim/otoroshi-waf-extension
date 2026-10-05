@@ -15,6 +15,10 @@ description: What it costs, how it fails, and what to watch.
 | WAF, with body | Phases 1 and 2, the body materialised and handed to the engine | Proportional to the ruleset **and** the body size |
 | WAF, response | Phases 3 and 4, the response buffered | Proportional to the response size |
 
+A config's rules are compiled when they change — the config, a ruleset it references, its CRS
+options — and the result is shared by every request, so none of the costs above includes parsing or
+compiling.
+
 The WAF is instrumented through Otoroshi's metrics under
 `cloud_apim.plugins.waf.evaluation.request` and `.response`, so its real cost in your deployment is
 measurable rather than guessed.
@@ -37,10 +41,20 @@ than breaking traffic.
 | A CrowdSec key is revoked | Same — the mirror is never emptied by a failure |
 | A geolocation database cannot be downloaded | The last good file keeps serving; the error appears on its page, and the download is retried after five minutes |
 | A DNS blocklist is slow, down, or refuses the resolver | Its answers count as not listed; the zone is reported unhealthy in `/_status` and in the logs |
-| The extension is disabled with routes still referencing it | The plugins become no-ops rather than erroring |
+| The extension is disabled with routes still referencing it | Their requests are refused with a 503, or go through uninspected with `waf.fail-open` — see below |
+| A route's WAF plugin names a config that does not exist | Same |
+| A WAF config's rules do not compile | Same, and `waf config '…' does not compile …: rule 2: …` is logged each time the config changes. The API saves rules without compiling them, so this can happen |
 
 The pattern throughout: **fail open, and make the degradation visible**. A WAF that silently stops
 protecting is worse than one that visibly stops working.
+
+The exception is the WAF itself. When the rules a route asks for cannot run at all, the choice is
+between refusing its traffic and letting it through uninspected, and that is a policy rather than
+a technical default, so it is a setting: `waf.fail-open` (`CLOUD_APIM_EXTENSIONS_WAF_FAIL_OPEN`).
+It is off, so such a request gets an empty 503. Either way the logs say which config and why, once
+per change rather than once per request. Two cases never refuse anything: a config switched off
+(`enabled: false`) is a decision rather than a failure, and a config in monitoring mode
+(`block: false`) would not have refused the request had it run.
 
 ## What to watch
 

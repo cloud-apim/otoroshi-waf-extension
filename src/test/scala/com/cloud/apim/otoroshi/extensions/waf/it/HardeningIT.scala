@@ -1,11 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.waf.it
 
+import otoroshi.next.models.{NgPluginInstance, NgPluginInstanceConfig}
+import otoroshi.next.plugins.api.NgPluginHelper
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.{CloudApimWaf, CloudApimWafPlugins, WafResolution}
 import play.api.libs.json.{JsValue, Json}
 
 /**
- * H6 through a real gateway: `_compile` checks what the gateway runs, composed the way it composes
- * it and read the way the engine reads it.
+ * H4 to H6 through a real gateway: the engine is built once and survives the sync ticks, a WAF that
+ * cannot run is refused or let through as `waf.fail-open` says rather than failing with a 500, and
+ * `_compile` checks what the gateway runs.
  */
 class HardeningIT extends munit.FunSuite {
 
@@ -13,7 +17,117 @@ class HardeningIT extends munit.FunSuite {
 
   private def ext = Gateway.instance.env.adminExtensions.extension[CloudApimWafExtension].get
 
+  private def config(rules: Seq[String], rulesets: Seq[String] = Seq.empty, block: Boolean = true): String = Gateway.createWafConfig(
+    Json.obj(
+      "id"                  -> s"waf-config_${java.util.UUID.randomUUID().toString.take(8)}",
+      "name"                -> "hardening-it",
+      "description"         -> "",
+      "enabled"             -> true,
+      "block"               -> block,
+      "inspect_input_body"  -> false,
+      "inspect_output_body" -> false,
+      "rulesets"            -> rulesets,
+      "rules"               -> rules
+    )
+  )
+
+  private def wafPlugin(ref: String) = NgPluginInstance(
+    plugin = NgPluginHelper.pluginId[CloudApimWaf],
+    config = NgPluginInstanceConfig(Json.obj("ref" -> ref))
+  )
+
   private def compile(body: JsValue) = ext.compileReport(body)
+
+  test("a config's engine is built once, survives the sync ticks, and shares no transaction between requests") {
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    // the second request through one shared transaction would see seen=2 and be denied
+    val ref     = config(
+      Seq(
+        """SecRuleEngine On
+          |SecAction "id:1,phase:1,pass,nolog,setvar:tx.seen=+1"
+          |SecRule TX:seen "@gt 1" "id:2,phase:1,deny,status:403"""".stripMargin
+      )
+    )
+    val route   = Gateway.createRoute("hardening-engine", backend.port, Seq(wafPlugin(ref)))
+    try {
+      assertEquals(Gateway.call(route).status, 200)
+      assertEquals(Gateway.call(route).status, 200)
+      val engine = ext.engineFor(ext.states.config(ref).get).toOption.get
+      // the state sync runs every 5 seconds in this harness, and re-reads every entity each time
+      Thread.sleep(6000L)
+      assert(ext.engineFor(ext.states.config(ref).get).toOption.get eq engine, "an unchanged config must keep its engine")
+      assertEquals(Gateway.call(route).status, 200)
+    } finally {
+      Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
+    }
+  }
+
+  private val broken = Seq("SecRuleEngine On", """SecRule ARGS "@contains x" "id:10,phase:2,deny""")
+
+  test("fail-open is off unless configured") {
+    assertEquals(CloudApimWafPlugins.failOpen(using Gateway.instance.env), false)
+    assertEquals(ext.failOpen, false)
+  }
+
+  test("a blocking config that does not compile refuses its requests rather than letting them through uninspected") {
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    // saved through the api, which does not compile what it stores
+    val ref     = config(broken)
+    val route   = Gateway.createRoute("hardening-broken", backend.port, Seq(wafPlugin(ref)))
+    try {
+      assertEquals(Gateway.call(route, "/?q=y").status, 503)
+      val reason = ext.engineFor(ext.states.config(ref).get).left.toOption.get
+      assert(reason.startsWith("rule 2: does not parse"), reason)
+    } finally {
+      Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
+    }
+  }
+
+  test("a config in monitoring mode that does not compile is not a reason to refuse anything") {
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    val ref     = config(broken, block = false)
+    val route   = Gateway.createRoute("hardening-broken-monitoring", backend.port, Seq(wafPlugin(ref)))
+    try assertEquals(Gateway.call(route, "/?q=y").status, 200)
+    finally {
+      Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
+    }
+  }
+
+  test("a route pointing at a waf config that does not exist refuses its requests") {
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    val route   = Gateway.createRoute("hardening-missing", backend.port, Seq(wafPlugin("waf-config_does-not-exist")))
+    try assertEquals(Gateway.call(route).status, 503)
+    finally {
+      Gateway.deleteRoute(route); backend.stop()
+    }
+  }
+
+  test("with waf.fail-open, a WAF that cannot run lets the request through, and a switched-off config never refuses") {
+    val brokenRef   = config(broken)
+    val disabledRef = Gateway.createWafConfig(
+      Json.obj(
+        "id"          -> s"waf-config_${java.util.UUID.randomUUID().toString.take(8)}",
+        "name"        -> "hardening-it-off",
+        "description" -> "",
+        "enabled"     -> false,
+        "block"       -> true,
+        "rules"       -> broken
+      )
+    )
+    try {
+      val deadline = System.currentTimeMillis() + 10000L
+      while (Seq(brokenRef, disabledRef).exists(ext.states.config(_).isEmpty) && System.currentTimeMillis() < deadline) Thread.sleep(200L)
+      // the gateway reads the flag once, at startup: the decision itself is what is exercised here
+      assertEquals(CloudApimWafPlugins.resolve(Some(ext), failOpen = true, brokenRef), WafResolution.Off)
+      assertEquals(CloudApimWafPlugins.resolve(Some(ext), failOpen = true, "waf-config_does-not-exist"), WafResolution.Off)
+      assertEquals(CloudApimWafPlugins.resolve(None, failOpen = true, brokenRef), WafResolution.Off)
+      assert(CloudApimWafPlugins.resolve(Some(ext), failOpen = false, brokenRef).isInstanceOf[WafResolution.Unavailable])
+      assert(CloudApimWafPlugins.resolve(None, failOpen = false, brokenRef).isInstanceOf[WafResolution.Unavailable])
+      assertEquals(CloudApimWafPlugins.resolve(Some(ext), failOpen = false, disabledRef), WafResolution.Off)
+    } finally {
+      Gateway.deleteWafConfig(brokenRef); Gateway.deleteWafConfig(disabledRef)
+    }
+  }
 
   test("_compile checks the presets, and the rules element by element, the way the gateway reads them") {
     assertEquals((compile(Json.obj("rules" -> Json.arr("@import_preset crs", "SecRuleEngine On"))) \ "done").as[Boolean], true)
