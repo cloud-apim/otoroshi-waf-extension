@@ -494,6 +494,16 @@ class SecurityQueriesIT extends munit.FunSuite {
     assertEquals(only("matched"), 3)
   }
 
+  test("the waf trail log can be searched by route, whatever the case, and by rule id") {
+    def search(q: String) = (exec(SecurityQueries.WafTrailLog, Json.obj("q" -> q)).data \ "items").as[Seq[JsObject]].size
+    assertEquals(search("CHECK"), 1, "the route name, case-insensitively")
+    assertEquals(search("route_2"), 1, "the route id")
+    assertEquals(search("942100"), 2, "a number is a rule id")
+    assertEquals(search("949110"), 1)
+    assertEquals(search("%"), 0, "pattern characters are searched for, not interpreted")
+    assertEquals(search("   "), 3, "a blank search is no search")
+  }
+
   test("a waf trail can be opened for every rule that matched") {
     val first  = (exec(SecurityQueries.WafTrailLog).data \ "items").as[Seq[JsObject]].head
     val detail = (exec(SecurityQueries.WafTrailDetail, Json.obj("id" -> (first \ "id").as[String])).data \ "items")

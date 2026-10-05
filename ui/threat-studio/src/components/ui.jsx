@@ -31,6 +31,110 @@ export function useAsync(fn, deps = []) {
   return { ...state, reload: run };
 }
 
+/** A value that settles: what the user typed, once they stopped typing for `delay` ms. */
+export function useDebounced(value, delay = 300) {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return settled;
+}
+
+/* ---------- paging ---------- */
+
+/**
+ * A long list shown a page at a time: `shown` is the page, `offset` the position of its first item.
+ *
+ * Another `resetKey` (another search, another filter) starts again from the first page, and so does a
+ * list of another length when the list is all there is. With `lazy` — `{ hasMore, loadMore, loading }`
+ * — the list is only the beginning of what the server holds: turning past its last page asks for the
+ * next batch, and the page turns once the batch is in. A refresh that brings back a shorter list keeps
+ * the page where it can, rather than throwing the reader back to the first one.
+ */
+export function usePaged(items, pageSize = 20, resetKey = null, lazy = null) {
+  const [page, setPage] = useState(0);
+  const [wanted, setWanted] = useState(null);
+  const isLazy = !!(lazy && lazy.loadMore);
+  const hasMore = !!(isLazy && lazy.hasMore);
+  const loading = !!(isLazy && lazy.loading);
+  const pages = Math.max(1, Math.ceil(items.length / pageSize));
+
+  useEffect(() => {
+    setPage(0);
+    setWanted(null);
+  }, [resetKey]);
+  useEffect(() => {
+    if (!isLazy) setPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length]);
+  // the batch asked for came in: turn to the page it was asked for, or give up when there was nothing more
+  useEffect(() => {
+    if (wanted === null) return;
+    if (wanted < pages) {
+      setPage(wanted);
+      setWanted(null);
+    } else if (!loading && !hasMore) {
+      setWanted(null);
+    }
+  }, [wanted, pages, loading, hasMore]);
+
+  const current = Math.min(page, pages - 1);
+  const offset = current * pageSize;
+  const goTo = (p) => {
+    if (p < 0) return;
+    if (p < pages) setPage(p);
+    else if (hasMore && !loading) {
+      setWanted(p);
+      lazy.loadMore();
+    }
+  };
+  return {
+    page: current,
+    pages,
+    offset,
+    total: items.length,
+    shown: items.slice(offset, offset + pageSize),
+    setPage: goTo,
+    hasMore,
+    loading: loading || wanted !== null,
+  };
+}
+
+/**
+ * The head or the foot of a paged list (`position` top or bottom): where it is, and the way to the
+ * other pages. Nothing when everything fits in one. A `+` says the server holds more than is loaded.
+ */
+export function Pager({ paged, position = '' }) {
+  const { page, pages, offset, total, shown, setPage, hasMore, loading } = paged;
+  if (pages <= 1 && !hasMore) return null;
+  return (
+    <div className={`pager ${position}`}>
+      <span className="faint small">
+        {total === 0 ? 0 : `${offset + 1}–${offset + shown.length}`} of {total}
+        {hasMore ? '+' : ''}
+      </span>
+      <div className="row">
+        <button className="btn sm ghost icon" title="Previous page" disabled={page === 0} onClick={() => setPage(page - 1)}>
+          <Icon name="chevron" style={{ transform: 'rotate(90deg)' }} />
+        </button>
+        <span className="small">
+          {page + 1} / {pages}
+          {hasMore ? '+' : ''}
+        </span>
+        <button
+          className="btn sm ghost icon"
+          title={loading ? 'Loading the next page…' : 'Next page'}
+          disabled={loading || (page >= pages - 1 && !hasMore)}
+          onClick={() => setPage(page + 1)}
+        >
+          {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Icon name="chevron" style={{ transform: 'rotate(-90deg)' }} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- toasts ---------- */
 
 const ToastContext = createContext(() => {});

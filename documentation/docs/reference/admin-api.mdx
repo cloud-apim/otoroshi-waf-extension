@@ -198,7 +198,7 @@ All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authent
 | Method | Path | Body | Purpose |
 |---|---|---|---|
 | `GET` | `/_catalog` | — | The curated source catalog |
-| `GET` | `/_status` | — | Every feed, bouncer, ASN and geolocation database with its runtime state |
+| `GET` | `/_status` | — | Every feed, bouncer, ASN and geolocation database with its runtime state, and the DNS blocklist resolver with the health of each zone |
 | `POST` | `/_template` | `{"entry":"tor-exit-nodes"}` | Build a `ThreatFeed` from a catalog entry |
 | `POST` | `/_refresh` | `{"feed":"<id>"}`, `{}`, `{"asn":true}` or `{"geo":true}` | Refresh one feed, all of them, the ASN table, or the geolocation databases |
 | `POST` | `/_rollback` | `{"feed":"<id>"}` | Restore the previous snapshot |

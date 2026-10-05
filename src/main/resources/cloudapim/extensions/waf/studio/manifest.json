@@ -16,7 +16,7 @@
     "src": "node_modules/@fontsource-variable/plus-jakarta-sans/files/plus-jakarta-sans-vietnamese-wght-normal.woff2"
   },
   "src/App.jsx": {
-    "file": "assets/App-EweVXtCe.js",
+    "file": "assets/App-CzAu-Hel.js",
     "name": "App",
     "src": "src/App.jsx",
     "isDynamicEntry": true,
@@ -35,7 +35,7 @@
     "src": "src/assets/cloud-apim-logo.svg"
   },
   "src/components/worldmap.jsx": {
-    "file": "assets/worldmap-B5HZVZsk.js",
+    "file": "assets/worldmap-B1ex8Glm.js",
     "name": "worldmap",
     "src": "src/components/worldmap.jsx",
     "isDynamicEntry": true,
@@ -47,7 +47,7 @@
     ]
   },
   "src/main.jsx": {
-    "file": "assets/main-BoEGoMBO.js",
+    "file": "assets/main-Ckh6sgr1.js",
     "name": "main",
     "src": "src/main.jsx",
     "isEntry": true,
@@ -55,7 +55,7 @@
       "src/App.jsx"
     ],
     "css": [
-      "assets/main-B3WUbo87.css"
+      "assets/main-8j8FePDV.css"
     ],
     "assets": [
       "assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2",

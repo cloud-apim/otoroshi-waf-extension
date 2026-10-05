@@ -35,6 +35,8 @@ than breaking traffic.
 | A feed refresh brings bad-but-valid content | One generation is kept — **Roll back** restores it |
 | The CrowdSec API is unreachable | Held decisions keep being enforced; the error appears on the bouncer page |
 | A CrowdSec key is revoked | Same — the mirror is never emptied by a failure |
+| A geolocation database cannot be downloaded | The last good file keeps serving; the error appears on its page, and the download is retried after five minutes |
+| A DNS blocklist is slow, down, or refuses the resolver | Its answers count as not listed; the zone is reported unhealthy in `/_status` and in the logs |
 | The extension is disabled with routes still referencing it | The plugins become no-ops rather than erroring |
 
 The pattern throughout: **fail open, and make the degradation visible**. A WAF that silently stops
@@ -52,6 +54,8 @@ Poll `/extensions/cloud-apim/extensions/waf/reputation/_status` and alert on:
 | `crowdsec[].store.last_error != null` | The Local API is unreachable or the key was rejected |
 | `crowdsec[].store.initialized == false` | The initial sync has never completed |
 | `crowdsec[].pending_push` growing | Alerts are queueing — the push credentials are probably wrong |
+| `geo[].snapshot.error != null` | That geolocation database is stale on this node, or was never loaded |
+| `rbl.zones.<zone>.healthy == false` | That blocklist is not answering usefully: every lookup counts as not listed |
 
 From the analytics side, the useful alert is a **burst**: a sharp rise in `CloudApimWafTrailEvent`
 with a non-null `block`, grouped by source address, over a short window.

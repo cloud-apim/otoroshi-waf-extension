@@ -148,15 +148,27 @@ Without one, `@geoLookup` never matches and `GEO` stays empty. `SecGeoLookupDb` 
 ignored: the database is the one the extension downloads. As for any chain, keep both lines in the
 same element of `rules`: each element is compiled on its own.
 
+## DNS blocklists
+
+`@rbl` asks a DNS blocklist about the address it targets — normally `REMOTE_ADDR`:
+
+```
+SecRule REMOTE_ADDR "@rbl bl.spamcop.net" "id:10002,phase:1,deny,status:403,msg:'listed by SpamCop'"
+```
+
+The engine never waits on DNS: the plugin asks the zones the rules name before evaluating, waits at
+most `reputation.rbl.wait-millis` for an answer nobody has asked yet, and anything not known in time
+counts as not listed. See [DNS blocklists](../reputation/dnsbl.mdx), and read the part about public
+resolvers before relying on Spamhaus.
+
 ## Operators that are parsed but never match
 
-Seven SecLang operators are accepted by the parser and always evaluate to **no match**. They depend
-on a host environment the engine does not provide — DNS resolution, a filesystem, an XML toolchain.
-Each one logs at debug level when it is reached.
+Six SecLang operators are accepted by the parser and always evaluate to **no match**. They depend
+on a host environment the engine does not provide — a filesystem, an XML toolchain. Each one logs at
+debug level when it is reached.
 
 | Operator | What it would do |
 |---|---|
-| `@rbl` | DNSBL lookup of the source address |
 | `@inspectFile` | Hand an uploaded file to an external program |
 | `@validateDTD` | Validate an XML body against a DTD |
 | `@validateSchema` | Validate an XML body against an XSD |

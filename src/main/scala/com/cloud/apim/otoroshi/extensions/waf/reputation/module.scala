@@ -109,6 +109,20 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
 
   val geoRefresher: GeoRefresher = new GeoRefresher(http, states.registry, () => geoWorkDir, retireGeo, logger)
 
+  // REP-5: dns blocklists for @rbl, through an asynchronous resolver started with the module
+  val rblSettings: RblSettings = RblSettings.from(configuration)
+  private val rblLookup        = new AtomicReference[Option[NettyRblLookup]](None)
+  val rbl: RblResolver = new RblResolver(
+    name =>
+      rblLookup.get() match {
+        case Some(lookup) => lookup.resolve(name)
+        case None         => Future.failed(new IllegalStateException("the dns blocklist resolver is not running"))
+      },
+    rblSettings,
+    (delay, value) => org.apache.pekko.pattern.after(delay, env.otoroshiScheduler)(value()),
+    logger
+  )
+
   private val ticker   = new AtomicReference[Option[Cancellable]](None)
   private val relay    = new AtomicReference[Option[org.apache.pekko.actor.ActorRef]](None)
   private val inFlight = new TrieMap[String, Boolean]()
@@ -120,6 +134,12 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
   // -----------------------------------------------------------------------------------------------
 
   def start(): Unit = {
+    if (rblSettings.enabled) {
+      Try(new NettyRblLookup(rblSettings)) match {
+        case scala.util.Success(lookup) => rblLookup.set(Some(lookup))
+        case scala.util.Failure(err)    => logger.error("the dns blocklist resolver could not start, @rbl will never match", err)
+      }
+    }
     if (enabled) {
       // nodes stagger their first tick so a cluster restart does not hit every feed provider at once
       val initialDelay = (5L + Random.nextInt(20)).seconds
@@ -132,6 +152,7 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
   def stop(): Unit = {
     ticker.getAndSet(None).foreach(_.cancel())
     states.registry.allGeoSnapshots.keys.flatMap(states.registry.removeGeoSnapshot).foreach(closeGeo)
+    rblLookup.getAndSet(None).foreach(_.close())
     relay.getAndSet(None).foreach { actor =>
       env.analyticsActorSystem.eventStream.unsubscribe(actor)
       env.analyticsActorSystem.stop(actor)
@@ -388,7 +409,7 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
         "store"         -> states.registry.crowdSecStoreOpt(bouncer.id).map(_.status).getOrElse(JsNull).asValue
       )
     }
-    Json.obj("feeds" -> JsArray(feeds), "crowdsec" -> JsArray(bouncers), "asn" -> JsArray(asn), "geo" -> JsArray(geo))
+    Json.obj("feeds" -> JsArray(feeds), "crowdsec" -> JsArray(bouncers), "asn" -> JsArray(asn), "geo" -> JsArray(geo), "rbl" -> rbl.status)
   }
 
   private def handleTemplate(body: JsValue): Future[Result] = {

@@ -11,11 +11,13 @@ import {
   Loading,
   Modal,
   PageHeader,
+  Pager,
   Select,
   Tabs,
   TextInput,
   useAsync,
   useConfirm,
+  usePaged,
   useToast,
 } from '../components/ui';
 import { DataTable, NoExporter } from '../components/widgets';
@@ -165,15 +167,31 @@ function BanModal({ open, onClose, onBanned }) {
   );
 }
 
+/** Whether a row of the live state is about what was searched for: its caller, or what it says. */
+function matches(needle, ...values) {
+  return !needle || values.some((v) => (Array.isArray(v) ? v.join(' ') : String(v || '')).toLowerCase().includes(needle));
+}
+
 function LiveState() {
   const toast = useToast();
   const confirm = useConfirm();
   const [open, setOpen] = useState(null);
   const [banning, setBanning] = useState(false);
+  const [search, setSearch] = useState('');
   const bans = useAsync(() => Security.bans(), []);
   const incidents = useAsync(() => Security.incidents(), []);
   const allowlist = useAsync(() => Security.allowlist(), []);
   const status = useAsync(() => Security.status(), []);
+
+  // one search for the three lists: during an incident the question is about one caller, everywhere
+  const needle = search.trim().toLowerCase();
+  const banRows = ((bans.data && bans.data.bans) || []).filter((b) => matches(needle, b.key, b.reason, b.tags));
+  const incidentRows = ((incidents.data && incidents.data.incidents) || []).filter((i) => matches(needle, i.key, i.state));
+  const allowRows = ((allowlist.data && allowlist.data.entries) || []).filter((e) => matches(needle, e.key, e.reason));
+  const bansPaged = usePaged(banRows, 20, needle);
+  const incidentsPaged = usePaged(incidentRows, 10, needle);
+  const allowPaged = usePaged(allowRows, 10, needle);
+  const nothingFor = (what) => (needle ? `No ${what} matches “${search.trim()}”` : null);
 
   const reload = () => {
     bans.reload();
@@ -215,6 +233,10 @@ function LiveState() {
         </div>
       )}
 
+      <div className="row" style={{ marginTop: 16 }}>
+        <TextInput value={search} onChange={setSearch} placeholder="Search a caller, a reason or a signal" className="search sm" style={{ maxWidth: 320 }} />
+      </div>
+
       <Card
         className="flush"
         style={{ marginTop: 16, marginBottom: 18 }}
@@ -227,12 +249,13 @@ function LiveState() {
           </button>
         }
       >
+        <Pager paged={bansPaged} position="top" />
         {bans.loading ? (
           <div style={{ padding: 20 }}><Loading /></div>
         ) : bans.error ? (
           <div style={{ padding: 20 }}><ErrorAlert error={bans.error} /></div>
-        ) : (bans.data.bans || []).length === 0 ? (
-          <div className="chart-empty" style={{ height: 120 }}>Nobody is banned right now</div>
+        ) : banRows.length === 0 ? (
+          <div className="chart-empty" style={{ height: 120 }}>{nothingFor('ban') || 'Nobody is banned right now'}</div>
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -246,7 +269,7 @@ function LiveState() {
                 </tr>
               </thead>
               <tbody>
-                {(bans.data.bans || []).map((b) => (
+                {bansPaged.shown.map((b) => (
                   <tr key={b.key} style={{ cursor: 'pointer' }} onClick={() => setOpen(b)}>
                     <td>
                       <IpAddress value={b.key} />
@@ -263,16 +286,18 @@ function LiveState() {
             </table>
           </div>
         )}
+        <Pager paged={bansPaged} position="bottom" />
       </Card>
 
       <div className="grid c2">
         <Card className="flush" title="Incidents" description="What the fabric is still watching, merged across every node.">
+          <Pager paged={incidentsPaged} position="top" />
           {incidents.loading ? (
             <div style={{ padding: 20 }}><Loading /></div>
           ) : incidents.error ? (
             <div style={{ padding: 20 }}><ErrorAlert error={incidents.error} /></div>
-          ) : (incidents.data.incidents || []).length === 0 ? (
-            <div className="chart-empty" style={{ height: 120 }}>No open incident</div>
+          ) : incidentRows.length === 0 ? (
+            <div className="chart-empty" style={{ height: 120 }}>{nothingFor('incident') || 'No open incident'}</div>
           ) : (
             <div className="table-wrap">
               <table className="table">
@@ -285,7 +310,7 @@ function LiveState() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(incidents.data.incidents || []).map((i) => (
+                  {incidentsPaged.shown.map((i) => (
                     <tr key={i.key}>
                       <td>
                         <IpAddress value={i.key} />
@@ -323,13 +348,15 @@ function LiveState() {
               </table>
             </div>
           )}
+          <Pager paged={incidentsPaged} position="bottom" />
         </Card>
 
         <Card className="flush" title="Allowlist" description="What the fabric has been told to leave alone, on every route.">
+          <Pager paged={allowPaged} position="top" />
           {allowlist.loading ? (
             <div style={{ padding: 20 }}><Loading /></div>
-          ) : (allowlist.data.entries || []).length === 0 ? (
-            <div className="chart-empty" style={{ height: 120 }}>Nothing allowlisted</div>
+          ) : allowRows.length === 0 ? (
+            <div className="chart-empty" style={{ height: 120 }}>{nothingFor('allowlisted caller') || 'Nothing allowlisted'}</div>
           ) : (
             <div className="table-wrap">
               <table className="table">
@@ -342,7 +369,7 @@ function LiveState() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(allowlist.data.entries || []).map((e) => (
+                  {allowPaged.shown.map((e) => (
                     <tr key={e.key}>
                       <td>
                         <IpAddress value={e.key} />
@@ -371,6 +398,7 @@ function LiveState() {
               </table>
             </div>
           )}
+          <Pager paged={allowPaged} position="bottom" />
         </Card>
       </div>
 
@@ -381,29 +409,40 @@ function LiveState() {
 }
 
 function WorkspaceIncidents({ scope }) {
-  const state = useAsync(() => runQuery(Q.topIncidents, { period: '7d', scope, params: { top_n: 25 } }), [scope.join(',')]);
+  const [search, setSearch] = useState('');
+  const state = useAsync(() => runQuery(Q.topIncidents, { period: '7d', scope, params: { top_n: 200 } }), [scope.join(',')]);
+  const needle = search.trim().toLowerCase();
+  const rows = (state.data && !state.error ? itemsOf(state.data) : []).filter((row) => !needle || String(row.source || '').toLowerCase().includes(needle));
+  const paged = usePaged(rows, 20, needle);
   if (state.error instanceof NoExporterError) return <Card style={{ marginTop: 16 }}><NoExporter /></Card>;
   if (state.loading) return <Card style={{ marginTop: 16 }}><Loading /></Card>;
   if (state.error) return <ErrorAlert error={state.error} />;
   return (
-    <Card
-      className="flush"
-      style={{ marginTop: 16 }}
-      title="Incidents in this workspace's traffic"
-      description="Correlated over the past week, on the routes this workspace governs."
-    >
-      <DataTable
-        res={state.data}
-        columns={[
-          { key: 'source', label: 'Caller', render: (row) => <IpAddress value={row.source} /> },
-          { key: 'events', label: 'Evidence', align: 'right', format: fmtInt },
-          { key: 'decisions', label: 'Decisions', align: 'right', format: fmtInt },
-          { key: 'enforced', label: 'Enforced', align: 'right', format: fmtInt },
-          { key: 'max_score', label: 'Max score', align: 'right', format: fmtInt },
-        ]}
-        empty="No incident on these routes in the past week"
-      />
-    </Card>
+    <>
+      <div className="row" style={{ marginTop: 16 }}>
+        <TextInput value={search} onChange={setSearch} placeholder="Search a caller" className="search sm" style={{ maxWidth: 280 }} />
+      </div>
+      <Card
+        className="flush"
+        style={{ marginTop: 12 }}
+        title="Incidents in this workspace's traffic"
+        description="Correlated over the past week, on the routes this workspace governs, the 200 heaviest."
+      >
+        <Pager paged={paged} position="top" />
+        <DataTable
+          res={paged.shown}
+          columns={[
+            { key: 'source', label: 'Caller', render: (row) => <IpAddress value={row.source} /> },
+            { key: 'events', label: 'Evidence', align: 'right', format: fmtInt },
+            { key: 'decisions', label: 'Decisions', align: 'right', format: fmtInt },
+            { key: 'enforced', label: 'Enforced', align: 'right', format: fmtInt },
+            { key: 'max_score', label: 'Max score', align: 'right', format: fmtInt },
+          ]}
+          empty={needle ? `No incident matches “${search.trim()}”` : 'No incident on these routes in the past week'}
+        />
+        <Pager paged={paged} position="bottom" />
+      </Card>
+    </>
   );
 }
 

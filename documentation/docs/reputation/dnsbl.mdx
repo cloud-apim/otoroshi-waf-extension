@@ -1,0 +1,91 @@
+---
+sidebar_position: 5.6
+title: DNS blocklists
+description: '@rbl in WAF rules — asked asynchronously, cached, and never allowed to block anyone by failing.'
+---
+
+# DNS blocklists
+
+A DNS blocklist (DNSBL) answers one question over DNS: is this address listed? Ask
+`4.3.2.1.bl.spamcop.net`, and an answer means `1.2.3.4` is listed, no answer means it is not. The
+WAF asks through `@rbl`:
+
+```
+SecRule REMOTE_ADDR "@rbl bl.spamcop.net" "id:10002,phase:1,deny,status:403,msg:'listed by SpamCop'"
+```
+
+Any zone that follows the convention works. ipv4 addresses are reversed octet by octet, ipv6 ones
+nibble by nibble, as [RFC 5782](https://www.rfc-editor.org/rfc/rfc5782) describes.
+
+## The engine never waits on DNS
+
+Rule evaluation is synchronous, and a DNS query is not. So the two are kept apart:
+
+1. Before evaluating, the WAF plugin reads the zones its rules name, and asks about the caller for
+   each one it has no answer for.
+2. It waits for those answers at most `reputation.rbl.wait-millis` (100 ms by default). A blocklist
+   that answers in time decides this request; one that does not decides the next ones, since the
+   query carries on and its answer is cached.
+3. During evaluation, `@rbl` reads that cache and nothing else.
+
+| Answer | Cached for | Counts as |
+|---|---|---|
+| Listed (`127.0.0.0/8`) | `listed-ttl-seconds`, 15 min | listed |
+| Not listed (no such name) | `unlisted-ttl-seconds`, 5 min | not listed |
+| An error code, or an answer outside `127.0.0.0/8` | `unlisted-ttl-seconds` | not listed |
+| No answer within `timeout-millis` | `error-ttl-seconds`, 30 s | not listed |
+
+**A blocklist that cannot be reached never blocks anyone.** Concurrent questions about one address
+share one query, and the resolver runs on a thread of its own, so a blocklist that stops answering
+costs requests at most the wait, never a thread.
+
+A zone written with a macro — `@rbl %{tx.zone}` — is only known during evaluation, so it cannot be
+asked about beforehand: its first request from an address is judged without the answer.
+
+## Public resolvers, and why Spamhaus says no
+
+Most blocklists refuse queries that come through public resolvers (Google, Cloudflare, Quad9…), and
+many cloud nodes use one without anyone choosing it. They do not all refuse the same way:
+
+- **Spamhaus answers `127.255.255.254`.** That is an error code, not a listing, and is counted as
+  such: an address in `127.255.255.0/24` never counts as listed.
+- **Through some resolvers, Spamhaus answers "no such name" to everything.** On any single lookup,
+  that is indistinguishable from "not listed".
+
+The second case is why every zone is checked. RFC 5782 requires every blocklist to list
+`127.0.0.2`, so the resolver asks about it the first time a zone is used, and every ten minutes after
+that. A zone that does not list its own test entry is reported as **unhealthy** in `/_status`
+(`rbl.zones`), with the reason, and once an hour in the logs.
+
+The fix is to ask through a resolver of your own: point `reputation.rbl.nameservers` at it, or at
+the name servers your provider gives you. Some resolvers also answer a miss with the address of a
+search page. Those answers fall outside `127.0.0.0/8`, so they are never counted as listings either.
+
+## Project Honey Pot
+
+http:BL puts an access key in front of the address. Set it in `reputation.rbl.httpbl-key`, and
+`@rbl dnsbl.httpbl.org` uses it. `SecHttpBlKey` in a ruleset is accepted and ignored, because the key
+belongs to the resolver, not to the rules.
+
+## What it does not do
+
+- **Host names are never asked about.** Only address literals become queries. A name in a request
+  turned into a DNS query is a way to make the gateway contact any domain.
+- **The CRS does not use it.** CRS 4 moved its IP reputation rules out of the core ruleset. This is
+  for your own rules.
+- **The answer is not a score.** `@rbl` matches or it does not. For weighted reputation, use
+  [threat feeds](./threat-feeds.mdx) and the [threat score](../fabric/overview.mdx).
+
+## Configuration
+
+Under `reputation.rbl` in the [extension configuration](../install.mdx#configuration-reference).
+
+| Key | Default |
+|---|---|
+| `enabled` | `true` |
+| `timeout-millis` | `2000` |
+| `wait-millis` | `100` — `0` never waits |
+| `listed-ttl-seconds`, `unlisted-ttl-seconds`, `error-ttl-seconds` | `900`, `300`, `30` |
+| `max-entries` | `100000` |
+| `nameservers` | the system's — `["10.0.0.53", "10.0.0.54:5353"]` |
+| `httpbl-key` | — |

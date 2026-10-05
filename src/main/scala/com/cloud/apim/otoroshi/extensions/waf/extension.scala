@@ -87,7 +87,12 @@ class WafExtensionState() {
   }
 }
 
-class CloudApimWafIntegration(env: Env, configuration: Configuration, geolocate: String => Option[Map[String, String]] = _ => None) extends SecLangIntegration {
+class CloudApimWafIntegration(
+    env: Env,
+    configuration: Configuration,
+    geolocate: String => Option[Map[String, String]] = _ => None,
+    rbl: (String, String) => Boolean = (_, _) => false
+) extends SecLangIntegration {
 
   private val logger = Logger("cloud-apim-waf")
   private val maxCacheItems = configuration.getOptional[Int]("integration.max-cache-items").getOrElse(1000)
@@ -120,6 +125,9 @@ class CloudApimWafIntegration(env: Env, configuration: Configuration, geolocate:
 
   // @geoLookup: a memory-mapped database read, so answering inline is fine
   override def geoLookup(address: String): Option[Map[String, String]] = geolocate(address)
+
+  // @rbl: what the resolver already knows, the query started otherwise. never waits on dns
+  override def rblLookup(address: String, zone: String): Boolean = rbl(address, zone)
 }
 
 object CloudApimWafExtension {
@@ -185,7 +193,27 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   private val logger = Logger("cloud-apim-waf-extension")
   private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
-  private val integration = new CloudApimWafIntegration(env, configuration, ip => reputation.geolocate(ip).map(_.seclang))
+  private val integration = new CloudApimWafIntegration(
+    env,
+    configuration,
+    ip => reputation.geolocate(ip).map(_.seclang),
+    (ip, zone) => reputation.rbl.listed(ip, zone)
+  )
+
+  // the blocklist zones a config's rules name, so they can be asked about before the engine runs.
+  // keyed on the composed rules themselves: they are recomposed, as a new list, whenever they change
+  private val _rblZones = new scala.collection.concurrent.TrieMap[String, (Seq[String], Seq[String])]()
+
+  def rblZones(config: CloudApimWafConfig): Seq[String] = {
+    val rules = states.rulesFor(config)
+    _rblZones.get(config.id) match {
+      case Some((cached, zones)) if cached eq rules => zones
+      case _                                        =>
+        val zones = com.cloud.apim.otoroshi.extensions.waf.reputation.RblResolver.zonesIn(rules)
+        _rblZones.put(config.id, (rules, zones))
+        zones
+    }
+  }
 
   val factory = SecLang.factory(presets, config, integration)
 

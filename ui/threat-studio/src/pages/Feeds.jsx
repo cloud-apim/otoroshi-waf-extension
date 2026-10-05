@@ -86,9 +86,54 @@ export function FeedsPage() {
         ]}
       />
 
+      <DnsBlocklists rbl={status.data && status.data.rbl} />
+
       <Modal open={!!result} title={`What the sources say about ${lookup}`} onClose={() => setResult(null)} size="lg">
         <pre className="mono" style={{ maxHeight: 420, overflow: 'auto' }}>{JSON.stringify(result, null, 2)}</pre>
       </Modal>
     </div>
+  );
+}
+
+/**
+ * The zones `@rbl` asks, as this node sees them.
+ *
+ * Shown only once a WAF rule has used one: a blocklist that refuses the resolver answers "not
+ * listed" to everyone, which nothing else on screen would ever reveal.
+ */
+function DnsBlocklists({ rbl }) {
+  const zones = Object.entries((rbl && rbl.zones) || {});
+  if (!zones.length) return null;
+  return (
+    <Card
+      style={{ marginTop: 18 }}
+      title="DNS blocklists"
+      description={`Zones asked by @rbl in WAF rules, through ${rbl.nameservers === 'system' ? "the system's name servers" : rbl.nameservers.join(', ')}. An unhealthy zone answers "not listed" to everyone.`}
+    >
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Zone</th>
+            <th>Health</th>
+            <th>Detail</th>
+            <th>Checked</th>
+          </tr>
+        </thead>
+        <tbody>
+          {zones.map(([zone, h]) => (
+            <tr key={zone}>
+              <td className="mono">{zone}</td>
+              <td>{h.healthy ? <Badge kind="positive">healthy</Badge> : <Badge kind="negative">unhealthy</Badge>}</td>
+              <td className="muted">{h.detail}</td>
+              <td>{fmtDate(h.checked_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="faint" style={{ marginTop: 8 }}>
+        {fmtInt(rbl.lookups)} lookups · {fmtInt(rbl.listed)} listed · {fmtInt(rbl.not_listed)} not listed · {fmtInt(rbl.refused)} refused ·{' '}
+        {fmtInt(rbl.unknown)} unanswered
+      </p>
+    </Card>
   );
 }

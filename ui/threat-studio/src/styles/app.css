@@ -716,6 +716,11 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .filters { display: flex; flex-direction: column; gap: 8px; }
 .filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .filter-row select, .filter-row .input { flex: 1 1 160px; width: auto; min-width: 120px; }
+/* a paged list: where it is, and the way to the other pages, above and below the rows */
+.pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 10px; }
+.card.flush .pager { padding: 10px 22px 14px; }
+.card.flush .pager.top { padding: 8px 22px; border-bottom: 1px solid var(--border); }
+.pager .btn.icon { display: inline-grid; place-items: center; min-width: 30px; min-height: 28px; }
 .tool-picks { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; }
 .tool-picks .check { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .answer-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

@@ -329,15 +329,18 @@ class CloudApimWaf extends NgRequestTransformer {
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
     val config = ctx.cachedConfig(internalName)(CloudApimWafConfigRef.format).getOrElse(CloudApimWafConfigRef("none"))
     val ext = env.adminExtensions.extension[CloudApimWafExtension].get
-    ext.states.config(config.ref).filter(_.enabled).foreach { wafConfig =>
-      // every request the configuration looks at, matched or not: the denominator of every rate a
-      // learning report quotes
-      ext.learning.observeRequest(wafConfig.id)
-      // the rules the config composes to, not only the ones written inside it
-      val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
-      ctx.attrs.put(CloudApimWafKeys.SecLangEngineKey -> ContextualCloudApimWafConfig(engine, wafConfig))
+    ext.states.config(config.ref).filter(_.enabled) match {
+      case None            => ().vfuture
+      case Some(wafConfig) =>
+        // every request the configuration looks at, matched or not: the denominator of every rate a
+        // learning report quotes
+        ext.learning.observeRequest(wafConfig.id)
+        // the rules the config composes to, not only the ones written inside it
+        val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
+        ctx.attrs.put(CloudApimWafKeys.SecLangEngineKey -> ContextualCloudApimWafConfig(engine, wafConfig))
+        // the engine asks @rbl synchronously: give the blocklists a short head start, never more
+        ext.reputation.rbl.warm(ctx.request.theIpAddress, ext.rblZones(wafConfig))
     }
-    ().vfuture
   }
 
   override def afterRequest(
@@ -479,29 +482,42 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
         ext.states.config(ref).filter(_.enabled) match {
           case None => NgAccess.NgAllowed.vfuture
           case Some(wafConfig) => {
-            // the rules the config composes to, not only the ones written inside it
-            val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
-            val req = RequestContextBuilder.request(ctx.request, NgPluginHttpRequest.fromRequest(ctx.request), None)
-            val res = engine.evaluate(req, List(1, 2, 5))
-            CloudApimWafFabric.contribute(
-              ctx.attrs,
-              ctx.request,
-              res,
-              CloudApimWafConfigRef.format.reads(ctx.config).asOpt.getOrElse(CloudApimWafConfigRef(ref))
-            )
-            res.disposition match {
-              case Disposition.Continue if res.events.nonEmpty =>
-                report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)
-                NgAccess.NgAllowed.vfuture
-              case Disposition.Continue =>
-                NgAccess.NgAllowed.vfuture
-              case Disposition.Block(_, _, _) =>
-                report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)
-                NgAccess.NgDenied(Results.Forbidden("")).vfuture
-            }
+            // the engine asks @rbl synchronously: give the blocklists a short head start, never more,
+            // and no async hop at all for the configs that name no blocklist
+            val zones = ext.rblZones(wafConfig)
+            if (zones.isEmpty) validate(ctx, ext, wafConfig, ref)
+            else ext.reputation.rbl.warm(ctx.request.theIpAddress, zones).flatMap(_ => validate(ctx, ext, wafConfig, ref))
           }
         }
       }
+    }
+  }
+
+  private def validate(
+    ctx: NgIncomingRequestValidatorContext,
+    ext: CloudApimWafExtension,
+    wafConfig: CloudApimWafConfig,
+    ref: String
+  )(using env: Env): Future[NgAccess] = {
+    // the rules the config composes to, not only the ones written inside it
+    val engine = ext.factory.engine(ext.states.rulesFor(wafConfig).toList)
+    val req = RequestContextBuilder.request(ctx.request, NgPluginHttpRequest.fromRequest(ctx.request), None)
+    val res = engine.evaluate(req, List(1, 2, 5))
+    CloudApimWafFabric.contribute(
+      ctx.attrs,
+      ctx.request,
+      res,
+      CloudApimWafConfigRef.format.reads(ctx.config).asOpt.getOrElse(CloudApimWafConfigRef(ref))
+    )
+    res.disposition match {
+      case Disposition.Continue if res.events.nonEmpty =>
+        report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)
+        NgAccess.NgAllowed.vfuture
+      case Disposition.Continue =>
+        NgAccess.NgAllowed.vfuture
+      case Disposition.Block(_, _, _) =>
+        report(res, Json.obj("request" -> JsonHelpers.requestToJson(ctx.request, ctx.attrs)), true)
+        NgAccess.NgDenied(Results.Forbidden("")).vfuture
     }
   }
 }

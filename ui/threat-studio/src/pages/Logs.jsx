@@ -11,11 +11,14 @@ import {
   ErrorAlert,
   Loading,
   PageHeader,
+  Pager,
   Segmented,
   Select,
   Tabs,
   TextInput,
   useAsync,
+  useDebounced,
+  usePaged,
 } from '../components/ui';
 import { NoExporter, PeriodPicker, RefreshControl, useTimeView } from '../components/widgets';
 import { useQueryState } from '../lib/router';
@@ -359,6 +362,23 @@ function useLog(query, params, { period, scope, tick, onBusy, onLoaded }) {
   return { rows, next, more, ...state };
 }
 
+/**
+ * A search box written to the query state once the typing stops: the logs are asked on the server,
+ * and a query per keystroke would be a query per keystroke.
+ */
+function useSearchParam(query, setQuery, name) {
+  const [input, setInput] = useState(query[name] || '');
+  const settled = useDebounced(input, 300);
+  useEffect(() => {
+    if (settled.trim() !== (query[name] || '')) setQuery({ [name]: settled.trim() || null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled]);
+  return [input, setInput];
+}
+
+// the server sends a hundred rows at a time, read here 25 at a time
+const PAGE_SIZE = 25;
+
 function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
   const category = query.category || '';
   const action = query.action || '';
@@ -367,7 +387,7 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
   const setCategory = (v) => setQuery({ category: v });
   const setAction = (v) => setQuery({ action: v });
   const setOutcome = (v) => setQuery({ outcome: v === 'all' ? null : v });
-  const setSource = (v) => setQuery({ source: v });
+  const [sourceInput, setSourceInput] = useSearchParam(query, setQuery, 'source');
   const [open, setOpen] = useState(null);
 
   const params = {
@@ -377,6 +397,7 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
     ...(source.trim() ? { source: source.trim() } : {}),
   };
   const log = useLog(Q.decisionsLog, params, { period, scope, tick, onBusy, onLoaded });
+  const paged = usePaged(log.rows, PAGE_SIZE, JSON.stringify(params), { hasMore: !!log.next, loadMore: log.more, loading: log.loading });
 
   if (log.error instanceof NoExporterError) return <Card><NoExporter /></Card>;
 
@@ -386,16 +407,17 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
         <Select value={category} onChange={setCategory} options={CATEGORIES} style={{ width: 'auto' }} />
         <Select value={action} onChange={setAction} options={ACTIONS} style={{ width: 'auto' }} />
         <Segmented options={OUTCOMES} value={outcome} onChange={setOutcome} />
-        <TextInput value={source} onChange={setSource} placeholder="Filter by source address" style={{ maxWidth: 220 }} />
+        <TextInput value={sourceInput} onChange={setSourceInput} placeholder="Search a source address" className="search sm" style={{ maxWidth: 240 }} />
       </div>
       <Card className="flush">
+        <Pager paged={paged} position="top" />
         {log.error ? (
           <div style={{ padding: 20 }}>
             <ErrorAlert error={log.error} />
           </div>
         ) : log.rows.length === 0 && !log.loading ? (
           <div className="chart-empty" style={{ height: 160 }}>
-            No decision in this period
+            {source ? `No decision against ${source} in this period` : 'No decision in this period'}
           </div>
         ) : (
           <div className="table-wrap">
@@ -412,7 +434,7 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
                 </tr>
               </thead>
               <tbody>
-                {log.rows.map((row) => (
+                {paged.shown.map((row) => (
                   <tr key={row.id} style={{ cursor: 'pointer' }} onClick={() => setOpen(row.id)}>
                     <td className="faint" style={{ whiteSpace: 'nowrap' }}>{fmtDate(row.ts)}</td>
                     <td className="truncate">{row.route_name || row.route_id || '—'}</td>
@@ -431,14 +453,8 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
             </table>
           </div>
         )}
-        {log.loading && <div style={{ padding: 16 }}><Loading /></div>}
-        {log.next && !log.loading && (
-          <div style={{ padding: 14, textAlign: 'center' }}>
-            <button className="btn sm" onClick={log.more}>
-              Load more
-            </button>
-          </div>
-        )}
+        {log.loading && log.rows.length === 0 && <div style={{ padding: 16 }}><Loading /></div>}
+        <Pager paged={paged} position="bottom" />
       </Card>
       <DecisionDrawer id={open} onClose={() => setOpen(null)} period={period} scope={scope} />
     </>
@@ -455,25 +471,32 @@ const TRAIL_FILTERS = [
 function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
   const only = TRAIL_FILTERS.some((f) => f.value === query.only) ? query.only : '';
   const setOnly = (v) => setQuery({ only: v });
+  const q = query.q || '';
+  const [searchInput, setSearchInput] = useSearchParam(query, setQuery, 'q');
   const [open, setOpen] = useState(null);
-  const log = useLog(Q.wafTrailLog, only ? { only } : {}, { period, scope, tick, onBusy, onLoaded });
-  const rules = useRules(log.rows.flatMap((row) => row.rule_ids || []));
+  const params = { ...(only ? { only } : {}), ...(q ? { q } : {}) };
+  const log = useLog(Q.wafTrailLog, params, { period, scope, tick, onBusy, onLoaded });
+  const paged = usePaged(log.rows, PAGE_SIZE, JSON.stringify(params), { hasMore: !!log.next, loadMore: log.more, loading: log.loading });
+  // the labels of the rules on the page, not of every rule loaded so far
+  const rules = useRules(paged.shown.flatMap((row) => row.rule_ids || []));
 
   if (log.error instanceof NoExporterError) return <Card><NoExporter /></Card>;
 
   return (
     <>
-      <div className="row" style={{ gap: 10, margin: '16px 0' }}>
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap', margin: '16px 0' }}>
         <Segmented options={TRAIL_FILTERS} value={only} onChange={setOnly} />
+        <TextInput value={searchInput} onChange={setSearchInput} placeholder="Search a route, or a rule id" className="search sm" style={{ maxWidth: 260 }} />
       </div>
       <Card className="flush">
+        <Pager paged={paged} position="top" />
         {log.error ? (
           <div style={{ padding: 20 }}>
             <ErrorAlert error={log.error} />
           </div>
         ) : log.rows.length === 0 && !log.loading ? (
           <div className="chart-empty" style={{ height: 160 }}>
-            Nothing inspected in this period
+            {q ? `Nothing inspected in this period matches “${q}”` : 'Nothing inspected in this period'}
           </div>
         ) : (
           <div className="table-wrap">
@@ -489,7 +512,7 @@ function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
                 </tr>
               </thead>
               <tbody>
-                {log.rows.map((row) => (
+                {paged.shown.map((row) => (
                   <tr key={row.id} style={{ cursor: 'pointer' }} onClick={() => setOpen(row.id)}>
                     <td className="faint" style={{ whiteSpace: 'nowrap' }}>{fmtDate(row.ts)}</td>
                     <td className="truncate">{row.route_name || row.route_id || '—'}</td>
@@ -517,14 +540,8 @@ function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
             </table>
           </div>
         )}
-        {log.loading && <div style={{ padding: 16 }}><Loading /></div>}
-        {log.next && !log.loading && (
-          <div style={{ padding: 14, textAlign: 'center' }}>
-            <button className="btn sm" onClick={log.more}>
-              Load more
-            </button>
-          </div>
-        )}
+        {log.loading && log.rows.length === 0 && <div style={{ padding: 16 }}><Loading /></div>}
+        <Pager paged={paged} position="bottom" />
       </Card>
       <WafTrailDrawer id={open} onClose={() => setOpen(null)} period={period} scope={scope} />
     </>
@@ -542,7 +559,7 @@ export function LogsPage() {
   const { period, refresh, setPeriod, setRefresh } = useTimeView('logs', query, setQuery, '24h');
   const tab = TABS.some((t) => t.value === query.tab) ? query.tab : 'decisions';
   // each log drops the other's filters, so a tab change does not carry a filter the new log ignores
-  const setTab = (value) => setQuery({ tab: value, category: null, action: null, outcome: null, source: null, only: null }, { push: true });
+  const setTab = (value) => setQuery({ tab: value, category: null, action: null, outcome: null, source: null, only: null, q: null }, { push: true });
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState(false);
   const [loadedAt, setLoadedAt] = useState(null);

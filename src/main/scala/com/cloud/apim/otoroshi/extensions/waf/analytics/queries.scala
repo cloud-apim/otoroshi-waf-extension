@@ -948,7 +948,8 @@ object SecurityQueries {
       from: String,
       columns: Seq[String],
       extra: String,
-      bound: Seq[(String => String, AnyRef)] = Seq.empty
+      bound: Seq[(String => String, AnyRef)] = Seq.empty,
+      boundAll: Seq[(Seq[String] => String, Seq[AnyRef])] = Seq.empty
   )(filters: Filters, params: JsObject, pool: Pool)(using ec: ExecutionContext): Future[QueryResult] = {
     val limit    = (params \ "limit").asOpt[Int].getOrElse(100).max(1).min(500)
     val before   = (params \ "before").asOpt[Long]
@@ -962,7 +963,8 @@ object SecurityQueries {
           acc.andBoundAll(ps => s"(ts < ${ps(0)} OR (ts = ${ps(1)} AND id < ${ps(2)}))", Seq(ts, ts, id))
       }
     }
-    val w        = bound.foldLeft(paged) { case (acc, (fragment, value)) => acc.andBound(fragment, value) }
+    val single   = bound.foldLeft(paged) { case (acc, (fragment, value)) => acc.andBound(fragment, value) }
+    val w        = boundAll.foldLeft(single) { case (acc, (fragment, values)) => acc.andBoundAll(fragment, values) }
     val sql      = s"SELECT ${columns.mkString(", ")} FROM $from${w.sql} ORDER BY ts DESC, id DESC LIMIT $limit"
     QueryHelpers.runSelect(pool, sql, w.vals).map { rs =>
       val items = rs.map(r => JsObject(columns.zipWithIndex.map { case (name, i) => name -> cell(r.getValue(i)) }))
@@ -1068,7 +1070,8 @@ object SecurityQueries {
       BeforeParam,
       BeforeIdParam,
       RouteIdsParam,
-      QueryParam("only", "string", JsNull, "blocked, would_block or matched")
+      QueryParam("only", "string", JsNull, "blocked, would_block or matched"),
+      QueryParam("q", "string", JsNull, "A part of a route name or id, or a rule id")
     )
     def execute(f: Filters, p: JsObject, b: Bucket, s: UserAnalyticsExporterSettings, pool: Pool)(using
         ec: ExecutionContext,
@@ -1080,8 +1083,23 @@ object SecurityQueries {
         case Some("matched")     => "cardinality(rule_ids) > 0"
         case _                   => ""
       }
-      log(wafTable(s), trailColumns, extra)(f, p, pool)
+      log(wafTable(s), trailColumns, extra, boundAll = search((p \ "q").asOpt[String]).toSeq)(f, p, pool)
     }
+
+    /**
+     * A part of the route's name or id, case-insensitively; a number is also a rule id. The pattern
+     * characters of `LIKE` are escaped: a search for `100%` looks for those four characters.
+     */
+    private[analytics] def search(raw: Option[String]): Option[(Seq[String] => String, Seq[AnyRef])] =
+      raw.map(_.trim).filter(_.nonEmpty).map { q =>
+        val like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        q.toIntOption.filter(_ => q.forall(_.isDigit)) match {
+          case Some(ruleId) =>
+            ((ps: Seq[String]) => s"(route_name ILIKE ${ps(0)} OR route_id ILIKE ${ps(0)} OR ${ps(1)} = ANY(rule_ids))", Seq(like, Integer.valueOf(ruleId)))
+          case None         =>
+            ((ps: Seq[String]) => s"(route_name ILIKE ${ps(0)} OR route_id ILIKE ${ps(0)})", Seq(like))
+        }
+      }
   }
 
   object WafTrailDetail extends AnalyticsQuery {

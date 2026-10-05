@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useStudio } from '../App';
 import { Icon } from '../components/icons';
 import { CoverageBadge, PostureMarks, SourceBadge } from '../components/posture';
-import { Card, ErrorAlert, Loading, PageHeader, Segmented, TextInput, useAsync } from '../components/ui';
+import { Card, ErrorAlert, Loading, PageHeader, Pager, Segmented, TextInput, useAsync, usePaged } from '../components/ui';
 import { fmtInt } from '../lib/format';
 import { Link } from '../lib/router';
 import { Security } from '../lib/security';
@@ -42,6 +42,9 @@ export function FleetPage() {
       .sort((a, b) => Number(a.covered) - Number(b.covered) || (a.route_name || '').localeCompare(b.route_name || ''));
   }, [state.data, q, filter]);
 
+  // a fleet is hundreds of routes: a page at a time, from the first one whenever the question changes
+  const paged = usePaged(rows, 25, `${q.trim().toLowerCase()}|${filter}`);
+
   const summary = (state.data && state.data.summary) || {};
   const governance = (state.data && state.data.governance) || {};
 
@@ -51,7 +54,7 @@ export function FleetPage() {
         title="Fleet"
         description="Every route the router knows, and what actually protects it — its own slots, a workspace of the table, or nothing."
       >
-        <TextInput value={q} onChange={setQ} placeholder="Filter" style={{ maxWidth: 200 }} />
+        <TextInput value={q} onChange={setQ} placeholder="Search a route, by name or id" className="search sm" style={{ maxWidth: 280 }} />
       </PageHeader>
 
       {state.loading ? (
@@ -111,9 +114,10 @@ export function FleetPage() {
           </div>
 
           <Card className="flush">
+            <Pager paged={paged} position="top" />
             {rows.length === 0 ? (
               <div className="chart-empty" style={{ height: 140 }}>
-                No route matches this filter
+                {q.trim() ? `No route matches “${q.trim()}”` : 'No route matches this filter'}
               </div>
             ) : (
               <div className="table-wrap">
@@ -128,7 +132,7 @@ export function FleetPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => (
+                    {paged.shown.map((r) => (
                       <tr key={r.route_id}>
                         <td>
                           <div className="truncate" style={{ fontWeight: 500 }}>{r.route_name}</div>
@@ -166,6 +170,7 @@ export function FleetPage() {
                 </table>
               </div>
             )}
+            <Pager paged={paged} position="bottom" />
           </Card>
         </>
       )}

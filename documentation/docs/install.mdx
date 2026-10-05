@@ -151,6 +151,30 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
     enabled = true
     // how often due refreshes and crowdsec syncs are checked
     tick-interval-seconds = 5
+
+    geo {
+      // where geolocation databases are unpacked. a temporary directory of the process by default
+      // work-dir = "/var/lib/otoroshi/geo"
+    }
+
+    // dns blocklists, for @rbl in waf rules
+    rbl {
+      enabled = true
+      // how long one dns query may take before it counts as unknown (not listed)
+      timeout-millis = 2000
+      // how long a request waits for an answer nobody has asked yet. 0 never waits:
+      // the first request from an address is then judged without it
+      wait-millis = 100
+      listed-ttl-seconds = 900
+      unlisted-ttl-seconds = 300
+      error-ttl-seconds = 30
+      max-entries = 100000
+      // the name servers to ask. the system's by default, but most blocklists refuse public
+      // resolvers: see the dns blocklists page
+      // nameservers = ["10.0.0.53", "10.0.0.54:5353"]
+      // project honey pot's http:BL access key, for @rbl dnsbl.httpbl.org
+      // httpbl-key = "abcdefghijkl"
+    }
   }
 }
 ```
@@ -162,6 +186,14 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
 | `integration.log` | `CLOUD_APIM_EXTENSIONS_WAF_INTEGRATION_LOG` | `false` |
 | `reputation.enabled` | — | `true` |
 | `reputation.tick-interval-seconds` | — | `5` |
+| `reputation.geo.work-dir` | — | a temporary directory |
+| `reputation.rbl.enabled` | — | `true` |
+| `reputation.rbl.timeout-millis` | — | `2000` |
+| `reputation.rbl.wait-millis` | — | `100` |
+| `reputation.rbl.listed-ttl-seconds`, `unlisted-ttl-seconds`, `error-ttl-seconds` | — | `900`, `300`, `30` |
+| `reputation.rbl.max-entries` | — | `100000` |
+| `reputation.rbl.nameservers` | — | the system's |
+| `reputation.rbl.httpbl-key` | — | — |
 
 :::note Clustered deployments
 Every node keeps its own in-memory feed index and its own CrowdSec stream cursor — the same thing
