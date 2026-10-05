@@ -24,7 +24,7 @@ rulesets first, then the inline entries — with a `Compile` button that checks 
 | `enabled` | `true` | When false the plugin does nothing at all — a fast way to disable protection on every route referencing it |
 | `block` | `true` | `false` is monitoring mode: rules run and events are emitted, nothing is denied |
 | `rules` | `[]` | The SecLang ruleset, one entry per line or per block. See [rules](./rules.mdx) |
-| `inspect_input_body` | `true` | Whether the request body is read and given to the engine |
+| `inspect_input_body` | `true` | Whether the request body is read and given to the engine. Form, multipart, XML and JSON bodies are split into `ARGS`, JSON including every `+json` type (`application/vnd.api+json`, `application/problem+json`, ...) |
 | `input_body_limit` | `null` | Request body bytes buffered and inspected. **Empty means the 2 MB default**, never unlimited |
 | `inspect_output_body` | `true` | Whether the response body is inspected |
 | `output_body_limit` | `null` | Response body bytes buffered and inspected. Empty means the 2 MB default |

@@ -48,6 +48,23 @@ class EngineSanitySuite extends munit.FunSuite {
     assert(fires(Nil))
   }
 
+  // until seclang-engine 2.5.0, only application/json and text/json were split into ARGS, so an
+  // injection in a JSON:API or problem+json body got past every CRS rule that reads ARGS
+  test("a +json body is inspected like a json one") {
+    Seq("application/json", "application/vnd.api+json", "application/problem+json", "application/x-amz-json-1.1").foreach { ct =>
+      val post = RequestContext(
+        method = "POST",
+        uri = "/api/comments",
+        headers = Headers(Map("Host" -> List("example.com"), "Content-Type" -> List(ct))),
+        body = Some(ByteString(s"""{"comment":"$sqli"}""")),
+        remoteAddr = "1.2.3.4",
+        protocol = "http/1.1"
+      )
+      val res = factory.engine(List("SecRuleEngine On", "@import_preset crs")).evaluate(post, List(1, 2, 5))
+      assert(res.events.flatMap(_.ruleId).contains(942100), s"$ct: the injection in the body was not seen")
+    }
+  }
+
   test("logdata names the parameter that matched") {
     val logs = run(Nil).events.filter(_.ruleId.contains(942100)).flatMap(_.logs)
     logs.foreach(l => println(s"LOGDATA >>> $l"))
