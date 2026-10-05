@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
 import { Badge, Card, ErrorAlert, Loading, Modal, PageHeader, TextInput, useAsync, useToast } from '../components/ui';
@@ -19,10 +19,29 @@ export function FeedsPage() {
   const [lookup, setLookup] = useState('');
   const [result, setResult] = useState(null);
 
+  // the snapshot of each feed, as this node holds it: the entity says what to fetch, the snapshot
+  // what was fetched
+  const byId = ((status.data && status.data.feeds) || []).reduce((acc, f) => ({ ...acc, [f.id]: f.snapshot }), {});
+
+  // a feed is fetched in the background, 5 to 25 seconds after it is created or after a restart:
+  // keep asking until every one that can be fetched has loaded or failed, so "pending" does not stay.
+  // one without a url never is, the server skips it
+  const fetchable = (e) => e.enabled && !!(e.url || '').trim();
+  const pending = !!status.data && (feeds.data || []).some((e) => fetchable(e) && !byId[e.id]) && !status.loading;
+  useEffect(() => {
+    if (!pending) return undefined;
+    const timer = setInterval(() => status.reload({ silent: true }), 3000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
+
+  // `feed` names the one to refresh; without it the server refreshes every feed
   const refresh = (id) =>
-    Reputation.refresh({ ref: id })
-      .then(() => {
-        toast.success('Refresh requested');
+    Reputation.refresh({ feed: id })
+      .then((r) => {
+        const failed = r && r.done ? ((r.snapshots || [])[0] || {}).error : (r && r.error) || 'could not refresh';
+        if (failed) toast.error(failed);
+        else toast.success('Feed refreshed');
         status.reload();
       })
       .catch(toast.error);
@@ -31,8 +50,6 @@ export function FeedsPage() {
     Reputation.lookup({ ip: lookup.trim() })
       .then(setResult)
       .catch(toast.error);
-
-  const byId = ((status.data && status.data.feeds) || []).reduce((acc, f) => ({ ...acc, [f.id || f.ref]: f }), {});
 
   return (
     <div className="content wide">
@@ -55,7 +72,22 @@ export function FeedsPage() {
         createLabel="Add a feed"
         emptyTitle="No threat feed"
         emptyBody={<p className="muted">The catalog carries curated sources with their parser, refresh interval and weight already set.</p>}
+        onChanged={() => status.reload()}
         columns={[
+          {
+            key: 'state',
+            label: 'Status',
+            render: (e) => {
+              const st = byId[e.id];
+              if (!e.enabled) return <Badge>disabled</Badge>;
+              if (!fetchable(e)) return <Badge kind="warning" title="Nothing is fetched until it has one">no url</Badge>;
+              if (!st) return <Badge kind="info">pending</Badge>;
+              // a failed refresh keeps serving the last good snapshot, which is what stale means
+              if (st.error && st.entries > 0) return <Badge kind="warning" title={st.error}>stale</Badge>;
+              if (st.error) return <Badge kind="negative" title={st.error}>failed</Badge>;
+              return <Badge kind="positive">loaded</Badge>;
+            },
+          },
           { key: 'action', label: 'Action', render: (e) => e.action || 'monitor' },
           { key: 'weight', label: 'Weight', render: (e) => e.weight },
           {
@@ -63,15 +95,18 @@ export function FeedsPage() {
             label: 'Ranges',
             render: (e) => {
               const st = byId[e.id];
-              return st ? fmtInt(st.ranges ?? st.size) : '—';
+              if (!st) return '—';
+              const detail = `${fmtInt(st.entries)} entries${st.rejected ? `, ${fmtInt(st.rejected)} rejected` : ''}, merged into ${fmtInt(st.ranges)} ranges`;
+              return <span title={detail}>{fmtInt(st.ranges)}</span>;
             },
           },
           {
             key: 'refreshed',
             label: 'Refreshed',
+            // the last attempt, failed or not: a failure is on the status, with its reason
             render: (e) => {
               const st = byId[e.id];
-              return st && st.last_refresh ? fmtDate(st.last_refresh) : '—';
+              return st && st.fetched_at ? fmtDate(st.fetched_at) : '—';
             },
           },
           {
