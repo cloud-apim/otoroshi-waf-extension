@@ -52,7 +52,7 @@ lazy val root = (project in file("."))
       // OPS-1 needs. back to a released version once they ship.
       "fr.maif" %% "otoroshi" % "18.0.0-preview9" % "provided",
       "com.cloud-apim" %% "seclang-engine" % "2.4.0" excludeAll (all: _*),
-      "com.cloud-apim" %% "seclang-engine-coreruleset" % "2.3.0" excludeAll (all: _*),
+      "com.cloud-apim" %% "seclang-engine-coreruleset" % "2.4.0" excludeAll (all: _*),
       munit % Test,
       // the crowdsec integration suite drives a real Local API in a container; it skips itself
       // when no docker daemon is reachable, so `sbt test` stays runnable without one
