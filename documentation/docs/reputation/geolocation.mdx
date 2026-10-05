@@ -83,6 +83,7 @@ A few things to know:
 - **Keep a chain in one element.** Each element of a WAF config's `rules` is compiled on its own, so
   a `chain` cannot continue into the next element: the first rule would act alone, on every address
   the database knows. Put both lines in the same element, or in a [ruleset](../waf/rulesets.mdx).
+  **Compile** refuses a chain split across two elements.
 
 - **`REMOTE_ADDR` is the client as Otoroshi resolves it** — trusted proxies and forwarded headers
   applied — not the peer of the connection, which behind a load balancer would be the load balancer.

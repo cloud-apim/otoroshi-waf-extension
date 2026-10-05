@@ -128,9 +128,13 @@ final case class ComposedRules(
     missing: Seq[String],
     disabled: Seq[String],
     /** CRS settings were configured, but nothing in the composition imports CRS to read them. */
-    crsIgnored: Boolean = false
+    crsIgnored: Boolean = false,
+    /** Where each rule comes from, in the words a person editing it would use. */
+    origins: Seq[String] = Seq.empty
 ) {
   def complete: Boolean = missing.isEmpty && disabled.isEmpty && !crsIgnored
+  def labelled: Seq[(String, String)] =
+    rules.zipWithIndex.map { case (rule, i) => (origins.lift(i).getOrElse(s"rule ${i + 1}"), rule) }
   def json: JsValue     = Json.obj(
     "count"       -> rules.size,
     "missing"     -> missing,
@@ -161,14 +165,18 @@ object WafRuleComposition {
     val missing  = Seq.newBuilder[String]
     val disabled = Seq.newBuilder[String]
     val body     = Seq.newBuilder[String]
+    val origins  = Seq.newBuilder[String]
     config.rulesets.foreach { ref =>
       resolve(ref) match {
         case None                        => missing += ref
         case Some(rs) if !rs.enabled     => disabled += ref
-        case Some(rs)                    => body ++= rs.rules
+        case Some(rs)                    =>
+          body ++= rs.rules
+          origins ++= rs.rules.indices.map(i => s"ruleset '${rs.name}', rule ${i + 1}")
       }
     }
     body ++= config.rules
+    origins ++= config.rules.indices.map(i => s"rule ${i + 1}")
     val composed = body.result()
 
     // the dials only mean something to CRS. Emitting them into a configuration that never imports it
@@ -181,6 +189,12 @@ object WafRuleComposition {
 
     // ahead of everything: the initialisation rules inside the preset only apply their defaults to
     // variables nobody has set, so being first is what makes them take
-    ComposedRules(preamble ++ composed, missing.result(), disabled.result(), crsIgnored = wantsCrs && !hasCrs)
+    ComposedRules(
+      preamble ++ composed,
+      missing.result(),
+      disabled.result(),
+      crsIgnored = wantsCrs && !hasCrs,
+      origins = preamble.map(_ => "the Core Rule Set options") ++ origins.result()
+    )
   }
 }

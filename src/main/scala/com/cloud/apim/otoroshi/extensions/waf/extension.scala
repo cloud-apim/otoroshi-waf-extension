@@ -19,13 +19,13 @@ import otoroshi.next.extensions.*
 import otoroshi.security.IdGenerator
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits.*
-import play.api.libs.json.{JsNull, JsNumber, JsObject, JsString, JsValue, Json}
+import play.api.libs.json.{JsArray, JsNull, JsNumber, JsObject, JsString, JsValue, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.api.{Configuration, Logger}
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
-import scala.util.{Failure, Success, Try}
+import scala.util.Try
 
 class WafExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val wafConfigDatastore: CloudApimWafConfigDatastore = new KvCloudApimWafConfigDatastore(extensionId, env.datastores.redis, env)
@@ -216,6 +216,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   }
 
   val factory = SecLang.factory(presets, config, integration)
+
+  def presetExists(name: String): Boolean = presets.contains(name) || integration.getExternalPreset(name).isDefined
 
   override def id: AdminExtensionId = CloudApimWafExtension.extensionId
   override def name: String = "Cloud APIM - Threat Protection Suite"
@@ -682,48 +684,54 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     given Materializer     = env.otoroshiMaterializer
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
-      case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
-        val bodyJson = bodyRaw.utf8String.parseJson
-        // compiling the config's own rules alone would validate something it does not run: what
-        // reaches the engine is the referenced rulesets first, then the inline rules
-        val refs     = bodyJson.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
-        val resolved = refs.map(ref => (ref, states.ruleset(ref)))
-        val missing  = resolved.collect { case (ref, None) => ref }
-        val composed = resolved.collect { case (_, Some(rs)) if rs.enabled => rs.rules }.flatten ++
-          bodyJson.select("rules").asOpt[List[String]].getOrElse(List.empty)
-        // the dials are only read by CRS, so a config that sets them without importing it is told
-        val crs        = CrsSettings.read(bodyJson.select("crs").asOpt[JsValue].getOrElse(Json.obj()))
-        val crsIgnored = crs.nonEmpty && !WafRuleComposition.importsCrs(composed)
-        val preamble   = if (crs.nonEmpty && !crsIgnored) CrsSettings.preamble(crs) else Seq.empty
-        val rules = (preamble ++ composed).filterNot(_.trim.startsWith("@import_preset ")).mkString("\n\n")
-        (SecLang.parse(rules) match {
-          case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err.msg))
-          case Right(conf) => Try(SecLang.compile(conf)) match {
-            case Failure(err) => Results.Ok(Json.obj("done" -> false, "error" -> err.getMessage))
-            case Success(_) =>
-              Results.Ok(
-                Json.obj(
-                  "done"             -> true,
-                  "missing_rulesets" -> missing,
-                  "crs_ignored"      -> crsIgnored,
-                  "warning"          -> Option
-                    .when(crsIgnored)(
-                      "This config sets Core Rule Set options but never imports CRS, so they do nothing. " +
-                      "Add '@import_preset crs' to a ruleset or to the rules below."
-                    )
-                    .map(JsString.apply)
-                    .getOrElse(JsNull)
-                    .asInstanceOf[JsValue]
-                )
-              )
-          }
-        }).vfuture
+      case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).map { bodyRaw =>
+        Results.Ok(compileReport(bodyRaw.utf8String.parseJson))
       }
     }).recover {
       case e: Throwable => {
-        e.printStackTrace()
+        logger.error("could not compile the submitted waf config", e)
         Results.Ok(Json.obj("done" -> false, "error" -> e.getMessage))
       }
+    }
+  }
+
+  /**
+   * Whether a config, as submitted, compiles to what the gateway would run.
+   *
+   * The composition is the runtime's own — referenced rulesets in order, the Core Rule Set options,
+   * the inline rules — and it is checked element by element, presets included, the way the engine
+   * reads it. Then the engine is built for real: what passes here is what a route would load.
+   */
+  def compileReport(bodyJson: JsValue): JsObject = {
+    val draft    = CloudApimWafConfig(
+      id = "_compile",
+      name = "_compile",
+      rulesets = bodyJson.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
+      rules = bodyJson.select("rules").asOpt[Seq[String]].getOrElse(Seq.empty),
+      crs = CrsSettings.read(bodyJson.select("crs").asOpt[JsValue].getOrElse(Json.obj()))
+    )
+    val composed = WafRuleComposition.compose(draft, states.ruleset)
+    val problems = com.cloud.apim.otoroshi.extensions.waf.rules.RuleCheck.check(composed.labelled, presetExists)
+    val built    =
+      if (problems.nonEmpty) Left(problems.map(_.text).mkString("\n"))
+      else Try(factory.engine(composed.rules.toList)).toEither.left.map(e => Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
+    built match {
+      case Left(error) =>
+        Json.obj("done" -> false, "error" -> error, "errors" -> JsArray(problems.map(_.json)))
+      case Right(_)    =>
+        Json.obj(
+          "done"             -> true,
+          "missing_rulesets" -> composed.missing,
+          "crs_ignored"      -> composed.crsIgnored,
+          "warning"          -> Option
+            .when(composed.crsIgnored)(
+              "This config sets Core Rule Set options but never imports CRS, so they do nothing. " +
+              "Add '@import_preset crs' to a ruleset or to the rules below."
+            )
+            .map(JsString.apply)
+            .getOrElse(JsNull)
+            .asInstanceOf[JsValue]
+        )
     }
   }
 
@@ -775,13 +783,19 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
           remotePort = 56136,
           protocol = request.select("protocol").asOptString.getOrElse("HTTP/1.1"),
         )
-        println(requestCtx.json.prettify)
-        val res = factory.engine(rules).evaluate(requestCtx, List(1, 2, 3, 4, 5))
-        Results.Ok(Json.obj("done" -> true, "result" -> res.json)).vfuture
+        if (logger.isDebugEnabled) logger.debug(s"testing waf rules against ${requestCtx.json.stringify}")
+        // the factory's own failure on a rule that does not parse is a bare `None.get`
+        com.cloud.apim.otoroshi.extensions.waf.rules.RuleCheck.check(rules.zipWithIndex.map { case (r, i) => (s"rule ${i + 1}", r) }, presetExists) match {
+          case problems if problems.nonEmpty =>
+            Results.Ok(Json.obj("done" -> false, "error" -> problems.map(_.text).mkString("\n"))).vfuture
+          case _                             =>
+            val res = factory.engine(rules).evaluate(requestCtx, List(1, 2, 3, 4, 5))
+            Results.Ok(Json.obj("done" -> true, "result" -> res.json)).vfuture
+        }
       }
     }).recover {
       case e: Throwable => {
-        e.printStackTrace()
+        logger.error("could not test the submitted waf rules", e)
         Results.Ok(Json.obj("done" -> false, "error" -> e.getMessage))
       }
     }

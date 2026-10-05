@@ -146,7 +146,8 @@ SecRule REMOTE_ADDR "@geoLookup" "id:10001,phase:1,deny,status:403,msg:'request 
 
 Without one, `@geoLookup` never matches and `GEO` stays empty. `SecGeoLookupDb` is accepted and
 ignored: the database is the one the extension downloads. As for any chain, keep both lines in the
-same element of `rules`: each element is compiled on its own.
+same element of `rules`: each element is compiled on its own, and **Compile** refuses a chain split
+across two.
 
 ## DNS blocklists
 

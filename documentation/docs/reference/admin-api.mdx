@@ -36,12 +36,27 @@ Backoffice-authenticated — they use the admin session, not an apikey.
 
 ```http
 POST /extensions/cloud-apim/extensions/waf/utils/_compile
-{ "rules": ["@import_preset crs", "SecRuleEngine On"] }
+{ "rules": ["@import_preset crs", "SecRuleEngine On"], "rulesets": [], "crs": {} }
 ```
 
 ```json
-{ "done": true }
+{ "done": true, "missing_rulesets": [], "crs_ignored": false, "warning": null }
 ```
+
+It checks what a config would run, composed the way the gateway composes it: the referenced
+rulesets in order, the CRS options, then `rules`. Each element is checked on its own, as the engine
+reads it, then the engine is built. A preset name nobody provides, a rule that does not parse or
+compile, and a `chain` that ends with its element are refused, each located:
+
+```json
+{
+  "done": false,
+  "error": "ruleset 'baseline', rule 3: does not parse: Parse error at line 1:46 - …",
+  "errors": [{ "index": 2, "origin": "ruleset 'baseline', rule 3", "message": "does not parse: …" }]
+}
+```
+
+A missing ruleset still compiles, and is listed in `missing_rulesets`.
 
 ### Evaluate a request against a ruleset
 
