@@ -31,6 +31,10 @@ case class CloudApimWafConfig(
    rules: Seq[String] = Seq.empty,
    oversizeBodyAction: String = CloudApimWafConfig.OversizeInspectPrefix,
    crs: CrsSettings = CrsSettings.empty,
+   // PRO-3: what a compressed request body may expand to. None is the default, zero or less is off
+   decompressedInputBodyLimit: Option[Long] = None,
+   maxInputCompressionRatio: Option[Long] = None,
+   undecodableBodyAction: String = CloudApimWafConfig.UndecodableReject,
 ) extends EntityLocationSupport {
 
   override def internalId: String               = id
@@ -49,6 +53,23 @@ case class CloudApimWafConfig(
    */
   def effectiveInputBodyLimit: Long  = inputBodyLimit.getOrElse(CloudApimWafConfig.defaultBodyLimit)
   def effectiveOutputBodyLimit: Long = outputBodyLimit.getOrElse(CloudApimWafConfig.defaultBodyLimit)
+
+  /**
+   * What a compressed request body is held to, judged on what it decompresses to.
+   *
+   * A few kilobytes of gzip can stand for gigabytes: the backend decompresses them, the gateway
+   * forwarded them, and one request is a denial of service. The defaults refuse a body that expands
+   * past 64 MiB, or more than a hundredfold once it is past a mebibyte.
+   */
+  def decompressionLimits: com.cloud.apim.otoroshi.extensions.waf.body.DecompressionLimits =
+    com.cloud.apim.otoroshi.extensions.waf.body.DecompressionLimits(
+      maxSize = decompressedInputBodyLimit.getOrElse(CloudApimWafConfig.defaultDecompressedBodyLimit),
+      maxRatio = maxInputCompressionRatio.getOrElse(CloudApimWafConfig.defaultMaxCompressionRatio)
+    )
+
+  /** A body in an encoding the WAF cannot read is a body no rule can see: refused by default. */
+  def rejectsUndecodableBody: Boolean =
+    !undecodableBodyAction.trim.equalsIgnoreCase(CloudApimWafConfig.UndecodableInspectRaw)
 
   /** A body past the limit cannot be cleared by inspection, only accepted unseen or refused. */
   def rejectsOversizeBody: Boolean =
@@ -70,6 +91,13 @@ object CloudApimWafConfig {
   val OversizeInspectPrefix: String = "inspect_prefix"
   val OversizeReject: String        = "reject"
   val oversizeActions: Seq[String]  = Seq(OversizeInspectPrefix, OversizeReject)
+
+  val UndecodableReject: String        = "reject"
+  val UndecodableInspectRaw: String    = "inspect_raw"
+  val undecodableActions: Seq[String]  = Seq(UndecodableReject, UndecodableInspectRaw)
+
+  val defaultDecompressedBodyLimit: Long = 64L * 1024L * 1024L
+  val defaultMaxCompressionRatio: Long   = 100L
 
   /**
    * The cap that applies when no limit is configured: 2 MiB.
@@ -98,6 +126,9 @@ object CloudApimWafConfig {
       "rules" -> o.rules,
       "oversize_body_action" -> o.oversizeBodyAction,
       "crs" -> o.crs.json,
+      "decompressed_input_body_limit" -> o.decompressedInputBodyLimit,
+      "max_input_compression_ratio" -> o.maxInputCompressionRatio,
+      "undecodable_body_action" -> o.undecodableBodyAction,
     )
     override def reads(json: JsValue): JsResult[CloudApimWafConfig] = Try {
       CloudApimWafConfig(
@@ -128,6 +159,15 @@ object CloudApimWafConfig {
         // absent on every config written before the fields existed, and absence means "say nothing",
         // which is exactly what those configs did
         crs = (json \ "crs").asOpt[JsValue].map(CrsSettings.read).getOrElse(CrsSettings.empty),
+        // absent on configs written before PRO-3: the defaults apply, and zero or less turns one off
+        decompressedInputBodyLimit = json.select("decompressed_input_body_limit").asOpt[Long],
+        maxInputCompressionRatio = json.select("max_input_compression_ratio").asOpt[Long],
+        undecodableBodyAction = json
+          .select("undecodable_body_action")
+          .asOpt[String]
+          .map(_.trim.toLowerCase)
+          .filter(CloudApimWafConfig.undecodableActions.contains)
+          .getOrElse(CloudApimWafConfig.UndecodableReject),
       )
     } match {
       case Failure(ex)                            => JsError(ex.getMessage)

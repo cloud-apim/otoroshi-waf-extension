@@ -34,6 +34,11 @@ final case class BodyPrefix(
     if (buffered.isEmpty) tail
     else Source(buffered.grouped(BodyReader.chunkSize).toList).concat(tail)
 
+  /** The whole body again, the part that was never read going through `rest` on its way. */
+  def resumeVia(rest: Flow[ByteString, ByteString, ?]): Source[ByteString, ?] =
+    if (buffered.isEmpty) tail.via(rest)
+    else Source(buffered.grouped(BodyReader.chunkSize).toList).concat(tail.via(rest))
+
   /**
    * Reads the rest and throws it away.
    *

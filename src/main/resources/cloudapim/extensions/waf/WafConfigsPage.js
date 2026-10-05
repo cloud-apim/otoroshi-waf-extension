@@ -209,6 +209,25 @@ class WafConfigsPage extends Component {
         ],
       },
     },
+    decompressed_input_body_limit: {
+      type: 'number',
+      props: { label: 'Decompressed body limit', placeholder: '67108864', suffix: 'bytes', help: 'What a compressed request body may expand to before it is refused. Empty means the 64 MiB default, 0 turns the limit off.' },
+    },
+    max_input_compression_ratio: {
+      type: 'number',
+      props: { label: 'Max compression ratio', placeholder: '100', help: 'How many times a compressed request body may expand, judged once it is past 1 MiB. Empty means 100, 0 turns the limit off.' },
+    },
+    undecodable_body_action: {
+      type: 'select',
+      props: {
+        label: 'Body in an unreadable encoding',
+        help: 'A request body compressed in an encoding the WAF cannot decode (zstd, a chain of codings) is a body no rule can read',
+        possibleValues: [
+          { label: 'Reject the request', value: 'reject' },
+          { label: 'Inspect it as it is', value: 'inspect_raw' },
+        ],
+      },
+    },
     'crs.paranoia_level': {
       type: 'select',
       props: {
@@ -328,6 +347,9 @@ class WafConfigsPage extends Component {
     'output_body_mimetypes',
     '>>>Body limits',
     'oversize_body_action',
+    'decompressed_input_body_limit',
+    'max_input_compression_ratio',
+    'undecodable_body_action',
     '>>>Core Rule Set',
     'crs.paranoia_level',
     'crs.detection_paranoia_level',
@@ -369,6 +391,9 @@ class WafConfigsPage extends Component {
             output_body_limit: null,
             output_body_mimetypes: [],
             oversize_body_action: 'inspect_prefix',
+            decompressed_input_body_limit: null,
+            max_input_compression_ratio: null,
+            undecodable_body_action: 'reject',
             rulesets: [],
             rules: [
               "@import_preset crs",

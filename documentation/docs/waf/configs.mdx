@@ -30,6 +30,9 @@ rulesets first, then the inline entries — with a `Compile` button that checks 
 | `output_body_limit` | `null` | Response body bytes buffered and inspected. Empty means the 2 MB default |
 | `output_body_mimetypes` | `[]` | Restricts response inspection to these media types. Empty means all |
 | `oversize_body_action` | `inspect_prefix` | What to do with a body longer than the limit: inspect the beginning and let it through, or `reject` |
+| `decompressed_input_body_limit` | `null` | What a compressed request body may expand to. **Empty means 64 MiB**, `0` turns it off. See [compressed bodies](#compressed-bodies) |
+| `max_input_compression_ratio` | `null` | How many times a compressed request body may expand, judged once it is past 1 MiB. Empty means 100, `0` turns it off |
+| `undecodable_body_action` | `reject` | A request body in an encoding the WAF cannot decode: refuse it with `415`, or `inspect_raw` |
 | `rulesets` | `[]` | [Rulesets](./rulesets.mdx) to run, in order, **before** the inline rules |
 | `rules` | `[]` | Inline SecLang, applied after every referenced ruleset |
 | `crs` | `{}` | The [Core Rule Set dials](#the-core-rule-set-dials) — paranoia level and anomaly thresholds, as fields |
@@ -155,6 +158,46 @@ scope the WAF plugin away from the upload path.
 
 Either way the truncation is visible: `CloudApimWafTrailEvent` carries `truncated` and
 `oversize_rejected`, so "we did not see all of it" is never silent.
+
+## Compressed bodies
+
+A compressed body is read the way its recipient will read it. A request body sent with
+`Content-Encoding: gzip`, `deflate` or `br` is decompressed for the rules and forwarded as it
+came, and so is a response body. The input and output limits apply to the decompressed bytes.
+
+What a compressed request body expands to is held to two limits, so that a few kilobytes cannot
+stand for gigabytes once the backend decompresses them:
+
+| Limit | Default | Refused with |
+|---|---|---|
+| `decompressed_input_body_limit` | 64 MiB | `413` |
+| `max_input_compression_ratio` | 100, judged past 1 MiB | `413` |
+
+They are checked on the inspected head first, so a decompression bomb is refused before anything
+is forwarded. Past the head, the body is checked on its way to the backend and cut the moment a
+limit is crossed: the backend sees a broken upload rather than decompressing the rest.
+
+A body that cannot be read is refused rather than let through unseen: an encoding the WAF does not
+decode (`zstd`, a chain of codings) with `415`, a body that does not decode as what it claims with
+`400`. `undecodable_body_action: "inspect_raw"` inspects such a body as it is instead. In monitoring
+mode (`block: false`) none of these refuse anything: the event is emitted and the body goes on.
+
+The trail event says why a body was refused, in `rejected_reason`: `decompressed_size`,
+`compression_ratio`, `undecodable_encoding` or `corrupt_body`.
+
+:::caution The Core Rule Set refuses compressed requests by default
+CRS lists `Content-Encoding` among its restricted request headers (`tx.restricted_headers_basic`),
+so rule 920450 refuses any request that carries one, at every paranoia level. With CRS imported, a
+compressed request body only reaches the decoding above once that header is allowed: take
+`/content-encoding/` out of `tx.restricted_headers_basic`, or exclude 920450 for it.
+:::
+
+:::note gzip and deflate on Otoroshi's default server
+The HTTP server Otoroshi runs on by default (Play) decompresses `gzip` and `deflate` request bodies
+itself, before any plugin, and without a limit. The rules still read them in clear, but by then
+nothing says the body was compressed, so the two limits above cannot apply to them: they hold
+`br` bodies, and `gzip` and `deflate` ones behind a server that leaves them encoded.
+:::
 
 ## Compile and test
 

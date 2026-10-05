@@ -64,6 +64,28 @@ export const SCHEMAS = {
             ],
             help: 'A verdict on a truncated body is weaker than one on a whole body; rejecting is the strict reading.',
           },
+          {
+            key: 'decompressed_input_body_limit',
+            label: 'Decompressed body limit',
+            type: 'number',
+            help: 'Bytes a compressed request body may expand to before it is refused. Empty means 64 MiB, 0 turns it off.',
+          },
+          {
+            key: 'max_input_compression_ratio',
+            label: 'Max compression ratio',
+            type: 'number',
+            help: 'How many times a compressed request body may expand, judged past 1 MiB. Empty means 100, 0 turns it off.',
+          },
+          {
+            key: 'undecodable_body_action',
+            label: 'Body in an unreadable encoding',
+            type: 'select',
+            options: [
+              { value: 'reject', label: 'Reject the request' },
+              { value: 'inspect_raw', label: 'Inspect it as it is' },
+            ],
+            help: 'zstd, or a chain of codings: a body no rule can read. Rejecting is the strict reading.',
+          },
         ],
       },
       {

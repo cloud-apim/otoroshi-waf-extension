@@ -1,12 +1,13 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 
-import com.cloud.apim.otoroshi.extensions.waf.body.{BodyPrefix, BodyReader, ResponseBody}
+import com.cloud.apim.otoroshi.extensions.waf.body.{BodyEncoding, BodyPrefix, BodyReader, DecodedBody, DecompressionBreach, ResponseBody}
 import com.cloud.apim.otoroshi.extensions.waf.entities.CloudApimWafConfig
 import com.cloud.apim.otoroshi.extensions.waf.security.{ClientIdentity, ThreatBus, ThreatSignal}
 import com.cloud.apim.otoroshi.extensions.waf.rules.{SharedWafEngine, WafExchange}
 import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.{Disposition, EngineResult, MatchEvent, RequestContext}
 import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import org.joda.time.DateTime
 import otoroshi.env.Env
@@ -259,6 +260,63 @@ object RequestContextBuilder {
   }
 }
 
+/**
+ * A body as the rule engine reads it (PRO-3).
+ *
+ * A compressed request body is decoded for inspection and forwarded as it came, the backend
+ * decompressing it as it always did; what it decompresses to is held to the config's limits, in
+ * the inspected head first and then on its way. An encoding the WAF cannot read is a body no rule
+ * can see, refused unless the config says to inspect it as it is.
+ */
+object RequestBodies {
+
+  /** What the engine reads, whether it was cut short, the body to forward, and how to drop it instead. */
+  final case class Read(bytes: ByteString, truncated: Boolean, forward: Source[ByteString, ?], discard: () => Unit)
+
+  def raw(prefix: BodyPrefix)(using mat: Materializer): Read =
+    Read(prefix.bytes, prefix.truncated, prefix.resume, () => prefix.drain())
+
+  /** Either the body to inspect, or the status and the reason it is refused with. */
+  def read(prefix: BodyPrefix, headers: Map[String, String], config: CloudApimWafConfig, onCut: DecompressionBreach => Unit)(using
+      mat: Materializer
+  ): Either[(Int, String), Read] =
+    BodyEncoding.of(headers) match {
+      case BodyEncoding.Identity           => Right(raw(prefix))
+      case BodyEncoding.Undecodable(_)     =>
+        if (config.rejectsUndecodableBody) Left((415, "undecodable_encoding")) else Right(raw(prefix))
+      case BodyEncoding.Decodable(coding)  =>
+        val decoded = new DecodedBody(coding, prefix.limit, Some(config.decompressionLimits))
+        decoded.feed(prefix.buffered)
+        (decoded.breach, decoded.corrupt) match {
+          case (Some(breach), _) =>
+            decoded.close()
+            Left((413, breach.reason))
+          case (_, Some(_))      =>
+            decoded.close()
+            // a body that does not decode as what it claims is read by no rule, and maybe by the backend
+            if (config.rejectsUndecodableBody) Left((400, "corrupt_body")) else Right(raw(prefix))
+          case _ if !prefix.truncated || !config.block =>
+            // all of it was in the head and is judged already. In monitoring, cutting it is not ours to do
+            decoded.close()
+            Right(Read(decoded.head, prefix.truncated || decoded.truncated, prefix.resume, () => prefix.drain()))
+          case _                 =>
+            Right(Read(decoded.head, truncated = true, prefix.resumeVia(decoded.guard(onCut)), () => { decoded.close(); prefix.drain() }))
+        }
+    }
+
+  /** A response body to inspect, decoded when it is compressed. It is forwarded as it came either way. */
+  def readResponse(prefix: BodyPrefix, headers: Map[String, String]): (ByteString, Boolean) =
+    BodyEncoding.of(headers) match {
+      case BodyEncoding.Decodable(coding) =>
+        val decoded = new DecodedBody(coding, prefix.limit, None)
+        decoded.feed(prefix.buffered)
+        decoded.close()
+        if (decoded.corrupt.isDefined) (prefix.bytes, prefix.truncated)
+        else (decoded.head, prefix.truncated || decoded.truncated)
+      case _                              => (prefix.bytes, prefix.truncated)
+    }
+}
+
 class CloudApimWaf extends NgRequestTransformer {
 
   override def steps: Seq[NgStep]                          = Seq(NgStep.ValidateAccess, NgStep.TransformRequest, NgStep.TransformResponse)
@@ -459,23 +517,40 @@ class CloudApimWaf extends NgRequestTransformer {
         if (config.inspectInputBody && ctx.request.theHasBody) {
           // bounded: at most the configured limit is ever held, whatever the caller decides to send
           BodyReader.prefix(ctx.otoroshiRequest.body, config.effectiveInputBodyLimit).flatMap { prefix =>
-            if (prefix.truncated && config.rejectsOversizeBody) {
-              // nothing inspected it, and the policy says an uninspected body does not go through
-              prefix.drain()
-              triggerFail2Ban(ctx.attrs, 413)
-              CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = true, oversizeRejected = true).toAnalytics()
-              deny(413).map(Left.apply)
-            } else {
-              val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
-                engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, Some(prefix.bytes), Some(ctx.route)), List(1, 2, 5))
+            // a body cut on its way, past the inspected head, for what it decompressed to
+            def cut(breach: DecompressionBreach): Unit =
+              CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = true, oversizeRejected = true, rejectedReason = Some(breach.reason)).toAnalytics()
+            def inspect(body: RequestBodies.Read): Future[Either[Result, NgPluginHttpRequest]] =
+              if (body.truncated && config.rejectsOversizeBody) {
+                // nothing inspected it, and the policy says an uninspected body does not go through
+                body.discard()
+                triggerFail2Ban(ctx.attrs, 413)
+                CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = true, oversizeRejected = true).toAnalytics()
+                deny(413).map(Left.apply)
+              } else {
+                val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
+                  engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, Some(body.bytes), Some(ctx.route)), List(1, 2, 5))
+                }
+                CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
+                act(
+                  res, config, ctx.route, ctx.request, ctx.attrs, payload, body.truncated,
+                  forward = () => ctx.otoroshiRequest.copy(body = body.forward),
+                  drain = body.discard,
+                  deny = deny
+                )
               }
-              CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
-              act(
-                res, config, ctx.route, ctx.request, ctx.attrs, payload, prefix.truncated,
-                forward = () => ctx.otoroshiRequest.copy(body = prefix.resume),
-                drain = () => prefix.drain(),
-                deny = deny
-              )
+            RequestBodies.read(prefix, ctx.otoroshiRequest.headers, config, cut) match {
+              case Left((status, reason)) if config.block =>
+                // compressed past the limits, or in an encoding no rule could read
+                prefix.drain()
+                triggerFail2Ban(ctx.attrs, status)
+                CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = prefix.truncated, oversizeRejected = status == 413, rejectedReason = Some(reason)).toAnalytics()
+                deny(status).map(Left.apply)
+              case Left((_, reason))                       =>
+                // monitoring: said, and inspected as it is
+                CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = prefix.truncated, rejectedReason = Some(reason)).toAnalytics()
+                inspect(RequestBodies.raw(prefix))
+              case Right(body)                             => inspect(body)
             }
           }
         } else {
@@ -513,18 +588,20 @@ class CloudApimWaf extends NgRequestTransformer {
         val hasBody = ResponseBody.hasBody(ctx.request.method, ctx.otoroshiResponse.status, ctx.otoroshiResponse.contentLength)
         if (config.inspectOutputBody && hasBody) {
           BodyReader.prefix(ctx.otoroshiResponse.body, config.effectiveOutputBodyLimit).flatMap { prefix =>
-            if (prefix.truncated && config.rejectsOversizeBody) {
+            // a compressed response is read decompressed and forwarded as it came
+            val (bytes, truncated) = RequestBodies.readResponse(prefix, ctx.otoroshiResponse.headers)
+            if (truncated && config.rejectsOversizeBody) {
               prefix.drain()
               triggerFail2Ban(ctx.attrs, 502)
               CloudApimWafTrailEvent(None, List.empty, payload, Some(ctx.route), config.block, truncated = true, oversizeRejected = true).toAnalytics()
               deny(502).map(Left.apply)
             } else {
               val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.response") {
-                engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, Some(prefix.bytes), Some(ctx.route)), List(3, 4, 5))
+                engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, Some(bytes), Some(ctx.route)), List(3, 4, 5))
               }
               CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
               act(
-                res, config, ctx.route, ctx.request, ctx.attrs, payload, prefix.truncated,
+                res, config, ctx.route, ctx.request, ctx.attrs, payload, truncated,
                 forward = () => ctx.otoroshiResponse.copy(body = prefix.resume),
                 drain = () => prefix.drain(),
                 deny = deny
@@ -623,6 +700,9 @@ case class CloudApimWafTrailEvent(
   blocking: Boolean,
   truncated: Boolean = false,
   oversizeRejected: Boolean = false,
+  // why the body was refused before any rule read it: decompressed_size, compression_ratio,
+  // undecodable_encoding, corrupt_body
+  rejectedReason: Option[String] = None,
 ) extends AnalyticEvent {
 
   override def `@service`: String            = route.map(_.name).getOrElse("--")
@@ -652,6 +732,7 @@ case class CloudApimWafTrailEvent(
       // event proves less than a clean verdict on a whole one — say so rather than imply otherwise
       "truncated"  -> truncated,
       "oversize_rejected" -> oversizeRejected,
+      "rejected_reason" -> rejectedReason,
     ) ++ request
   }
 }

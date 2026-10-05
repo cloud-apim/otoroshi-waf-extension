@@ -26,6 +26,9 @@ carry the usual `_loc`, `id`, `name`, `description`, `tags` and `metadata` field
 | `output_body_limit` | number \| null | `null` — same default |
 | `output_body_mimetypes` | string[] | `[]` — matched on the media type alone, wildcards allowed |
 | `oversize_body_action` | `inspect_prefix` \| `reject` | `inspect_prefix` |
+| `decompressed_input_body_limit` | number \| null | `null` — 64 MiB; `0` turns it off |
+| `max_input_compression_ratio` | number \| null | `null` — 100; `0` turns it off |
+| `undecodable_body_action` | `reject` \| `inspect_raw` | `reject` |
 
 ## WafRuleset
 

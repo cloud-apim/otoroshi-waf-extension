@@ -172,11 +172,12 @@ object Gateway {
       path: String = "/",
       method: String = "GET",
       body: Option[ByteString] = None,
-      contentType: String = "application/octet-stream"
+      contentType: String = "application/octet-stream",
+      headers: Seq[(String, String)] = Seq.empty
   ): WSResponse = {
     val req = ws
       .url(s"http://127.0.0.1:$port$path")
-      .withHttpHeaders("Host" -> route.frontend.domains.head.domain)
+      .withHttpHeaders(("Host" -> route.frontend.domains.head.domain) +: headers*)
       .withRequestTimeout(120.seconds)
       .withMethod(method)
     await(body match {
@@ -197,7 +198,9 @@ object Gateway {
 class TestBackend(
     status: Int = 200,
     contentType: String = "application/json",
-    responseBody: ByteString = ByteString("""{"ok":true}""")
+    responseBody: ByteString = ByteString("""{"ok":true}"""),
+    // sent as is: a compressed response body has to be passed already compressed
+    responseEncoding: Option[String] = None
 )(using system: ActorSystem, mat: Materializer, ec: ExecutionContext) {
 
   private val mediaType: ContentType =
@@ -217,6 +220,7 @@ class TestBackend(
             received.addAndGet(size)
             HttpResponse(
               status = StatusCodes.getForKey(status).getOrElse(StatusCodes.OK),
+              headers = responseEncoding.toList.map(e => org.apache.pekko.http.scaladsl.model.headers.RawHeader("Content-Encoding", e)),
               entity = HttpEntity(mediaType, responseBody)
             )
           }

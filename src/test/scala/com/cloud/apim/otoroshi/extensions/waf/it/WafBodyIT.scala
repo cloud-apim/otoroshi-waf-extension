@@ -25,9 +25,10 @@ class WafBodyIT extends munit.FunSuite {
       inputLimit: Option[Long] = None,
       inspectOutput: Boolean = false,
       outputMimetypes: Seq[String] = Seq.empty,
-      oversize: String = "inspect_prefix"
+      oversize: String = "inspect_prefix",
+      extra: play.api.libs.json.JsObject = Json.obj()
   ): String = Gateway.createWafConfig(
-    Json.obj(
+    extra ++ Json.obj(
       "id"                   -> s"waf-config_${java.util.UUID.randomUUID().toString.take(8)}",
       "name"                 -> "it",
       "description"          -> "",
@@ -47,6 +48,14 @@ class WafBodyIT extends munit.FunSuite {
     plugin = NgPluginHelper.pluginId[CloudApimWaf],
     config = NgPluginInstanceConfig(Json.obj("ref" -> ref))
   )
+
+  private def gzip(bytes: ByteString): ByteString = {
+    val out = new java.io.ByteArrayOutputStream()
+    val gz  = new java.util.zip.GZIPOutputStream(out)
+    gz.write(bytes.toArray)
+    gz.close()
+    ByteString(out.toByteArray)
+  }
 
   private def payload(totalBytes: Int, needle: String, atStart: Boolean): ByteString = {
     val filler = "x" * (totalBytes - needle.length)
@@ -159,6 +168,98 @@ class WafBodyIT extends munit.FunSuite {
     val route = Gateway.createRoute("h3-skip", backend.port, Seq(wafPlugin(ref)))
     try {
       assertEquals(Gateway.call(route, "/", "GET").status, 200)
+    } finally {
+      Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
+    }
+  }
+
+  // -----------------------------------------------------------------------------------------------
+  // PRO-3
+  // -----------------------------------------------------------------------------------------------
+
+  private val bodyRule = Seq(s"""SecRule REQUEST_BODY "@contains $marker" "id:9001,phase:2,deny,status:403"""", "SecRuleEngine On")
+
+  private def brotli(bytes: ByteString): ByteString =
+    ByteString(com.aayushatharva.brotli4j.encoder.Encoder.compress(bytes.toArray))
+
+  private def brotliReady: Boolean = com.aayushatharva.brotli4j.Brotli4jLoader.isAvailable
+
+  // Play's server decodes gzip and deflate request bodies itself, before any plugin: the WAF reads
+  // them in clear, and only brotli, zstd and what Play does not know reach it still encoded
+
+  test("PRO-3 — a gzip payload is inspected in clear") {
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    val ref     = wafConfig(bodyRule)
+    val route   = Gateway.createRoute("pro3-gzip", backend.port, Seq(wafPlugin(ref)))
+    try {
+      val gz = Seq("Content-Encoding" -> "gzip")
+      assertEquals(Gateway.call(route, "/", "POST", Some(gzip(ByteString(s"hello $marker"))), "text/plain", gz).status, 403)
+      assertEquals(Gateway.call(route, "/", "POST", Some(gzip(ByteString("hello " * 1000))), "text/plain", gz).status, 200)
+    } finally {
+      Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
+    }
+  }
+
+  test("PRO-3 — a brotli payload is read decompressed, and forwarded as it came") {
+    assume(brotliReady, "no brotli native library on this platform")
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    val ref     = wafConfig(bodyRule)
+    val route   = Gateway.createRoute("pro3-br", backend.port, Seq(wafPlugin(ref)))
+    try {
+      val br = Seq("Content-Encoding" -> "br")
+      assertEquals(Gateway.call(route, "/", "POST", Some(brotli(ByteString(s"hello $marker"))), "text/plain", br).status, 403)
+      assertEquals(backend.calls.get(), 0L)
+      val clean = brotli(ByteString("hello " * 1000))
+      assertEquals(Gateway.call(route, "/", "POST", Some(clean), "text/plain", br).status, 200)
+      assertEquals(backend.received.get(), clean.size.toLong, "the backend gets the compressed bytes, untouched")
+    } finally {
+      Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
+    }
+  }
+
+  test("PRO-3 — a decompression bomb is refused before anything reaches the backend") {
+    assume(brotliReady, "no brotli native library on this platform")
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    val ref     = wafConfig(bodyRule)
+    val route   = Gateway.createRoute("pro3-bomb", backend.port, Seq(wafPlugin(ref)))
+    try {
+      // a few dozen bytes on the wire, 50 MiB once decompressed
+      val bomb = brotli(ByteString(new Array[Byte](50 * 1024 * 1024)))
+      assertEquals(Gateway.call(route, "/", "POST", Some(bomb), "application/json", Seq("Content-Encoding" -> "br")).status, 413)
+      assertEquals(backend.calls.get(), 0L)
+    } finally {
+      Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
+    }
+  }
+
+  test("PRO-3 — an encoding no rule can read is refused, or inspected as it is when configured so") {
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    val strict  = wafConfig(bodyRule)
+    val lenient = wafConfig(bodyRule, extra = Json.obj("undecodable_body_action" -> "inspect_raw"))
+    val r1      = Gateway.createRoute("pro3-zstd-strict", backend.port, Seq(wafPlugin(strict)))
+    val r2      = Gateway.createRoute("pro3-zstd-lenient", backend.port, Seq(wafPlugin(lenient)))
+    try {
+      val zstd = Seq("Content-Encoding" -> "zstd")
+      assertEquals(Gateway.call(r1, "/", "POST", Some(ByteString("opaque")), "text/plain", zstd).status, 415)
+      // a body that lies about its encoding is not let through either
+      if (brotliReady) assertEquals(Gateway.call(r1, "/", "POST", Some(ByteString("not brotli")), "text/plain", Seq("Content-Encoding" -> "br")).status, 400)
+      assertEquals(Gateway.call(r2, "/", "POST", Some(ByteString("opaque")), "text/plain", zstd).status, 200)
+    } finally {
+      Gateway.deleteRoute(r1); Gateway.deleteRoute(r2); Gateway.deleteWafConfig(strict); Gateway.deleteWafConfig(lenient); backend.stop()
+    }
+  }
+
+  test("PRO-3 — a compressed response is inspected decompressed") {
+    val backend = new TestBackend(responseBody = gzip(ByteString(s"""{"data":"$leak"}""")), responseEncoding = Some("gzip"))(using
+      Gateway.system, Gateway.mat, Gateway.ec
+    )
+    val ref   = wafConfig(
+      Seq(s"""SecRule RESPONSE_BODY "@contains $leak" "id:9002,phase:4,deny,status:403"""", "SecRuleEngine On"),
+      inspectOutput = true
+    )
+    val route = Gateway.createRoute("pro3-response", backend.port, Seq(wafPlugin(ref)))
+    try {
+      assertEquals(Gateway.call(route, "/", "GET").status, 403)
     } finally {
       Gateway.deleteRoute(route); Gateway.deleteWafConfig(ref); backend.stop()
     }
