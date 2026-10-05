@@ -203,13 +203,25 @@ object CloudApimWafFabric {
  * which is useless to a rule and worse to a geolocation.
  */
 object RequestContextBuilder {
+
+  /**
+   * Where the route rides along: the engine calls the integration back with the request context and
+   * nothing else, and an audit event that cannot say which route it came from is hard to use.
+   * Rules cannot read these, a rule only names the variables SecLang defines.
+   */
+  val RouteIdVariable   = "otoroshi_route_id"
+  val RouteNameVariable = "otoroshi_route_name"
+
+  private def routeVariables(route: Option[NgRoute]): Map[String, String] =
+    route.map(r => Map(RouteIdVariable -> r.id, RouteNameVariable -> r.name)).getOrElse(Map.empty)
+
   // the peer's port: the last segment, so that an ipv6 peer does not break it
   private def remotePort(req: RequestHeader): Int = {
     val conn = req.headers.get("Remote-Address").getOrElse("")
     conn.substring(conn.lastIndexOf(':') + 1).toIntOption.getOrElse(0)
   }
 
-  def request(req: RequestHeader, request: NgPluginHttpRequest, body: Option[ByteString])(using env: Env): RequestContext = {
+  def request(req: RequestHeader, request: NgPluginHttpRequest, body: Option[ByteString], route: Option[NgRoute] = None)(using env: Env): RequestContext = {
     RequestContext(
       method = request.method.toUpperCase,
       uri = req.uri,
@@ -223,10 +235,11 @@ object RequestContextBuilder {
       remoteAddr = req.theIpAddress,
       remotePort = remotePort(req),
       protocol = req.version.toLowerCase,
-      secure = req.theSecured
+      secure = req.theSecured,
+      variables = routeVariables(route)
     )
   }
-  def response(req: RequestHeader, response: NgPluginHttpResponse, body: Option[ByteString])(using env: Env): RequestContext = {
+  def response(req: RequestHeader, response: NgPluginHttpResponse, body: Option[ByteString], route: Option[NgRoute] = None)(using env: Env): RequestContext = {
     RequestContext(
       method = req.method.toUpperCase,
       uri = req.theUri.toString(),
@@ -240,7 +253,8 @@ object RequestContextBuilder {
       remoteAddr = req.theIpAddress,
       remotePort = remotePort(req),
       protocol = req.version.toLowerCase,
-      secure = req.theSecured
+      secure = req.theSecured,
+      variables = routeVariables(route)
     )
   }
 }
@@ -453,7 +467,7 @@ class CloudApimWaf extends NgRequestTransformer {
               deny(413).map(Left.apply)
             } else {
               val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
-                engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, Some(prefix.bytes)), List(1, 2, 5))
+                engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, Some(prefix.bytes), Some(ctx.route)), List(1, 2, 5))
               }
               CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
               act(
@@ -466,7 +480,7 @@ class CloudApimWaf extends NgRequestTransformer {
           }
         } else {
           val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.request") {
-            engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None), List(1, 2, 5))
+            engine.evaluate(RequestContextBuilder.request(ctx.request, ctx.otoroshiRequest, None, Some(ctx.route)), List(1, 2, 5))
           }
           CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
           act(
@@ -506,7 +520,7 @@ class CloudApimWaf extends NgRequestTransformer {
               deny(502).map(Left.apply)
             } else {
               val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.response") {
-                engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, Some(prefix.bytes)), List(3, 4, 5))
+                engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, Some(prefix.bytes), Some(ctx.route)), List(3, 4, 5))
               }
               CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
               act(
@@ -519,7 +533,7 @@ class CloudApimWaf extends NgRequestTransformer {
           }
         } else {
           val res = env.metrics.withTimer("cloud_apim.plugins.waf.evaluation.response") {
-            engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None), List(3, 4, 5))
+            engine.evaluate(RequestContextBuilder.response(ctx.request, ctx.otoroshiResponse, None, Some(ctx.route)), List(3, 4, 5))
           }
           CloudApimWafFabric.contribute(ctx.attrs, ctx.request, res, ref)
           act(
@@ -545,6 +559,7 @@ class IncomingRequestValidatorCloudApimWaf extends NgIncomingRequestValidator {
   override def description: Option[String]                 = "Cloud APIM WAF - Incoming Request Validator plugin".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimWafConfigRef("none").some
 
+  // it runs before routing, so there is no route to name
   def report(result: EngineResult, req: JsObject, blocking: Boolean)(using env: Env): Unit = {
     val b = result.disposition match {
       case Disposition.Continue => None
@@ -610,8 +625,8 @@ case class CloudApimWafTrailEvent(
   oversizeRejected: Boolean = false,
 ) extends AnalyticEvent {
 
-  override def `@service`: String            = "--"
-  override def `@serviceId`: String          = "--"
+  override def `@service`: String            = route.map(_.name).getOrElse("--")
+  override def `@serviceId`: String          = route.map(_.id).getOrElse("--")
   def `@id`: String                          = IdGenerator.uuid
   def `@timestamp`: org.joda.time.DateTime   = timestamp
   def `@type`: String                        = "CloudApimWafTrailEvent"
@@ -628,7 +643,7 @@ case class CloudApimWafTrailEvent(
       "@product"   -> "otoroshi",
       "@serviceId" -> `@serviceId`,
       "@service"   -> `@service`,
-      "@env"       -> "prod",
+      "@env"       -> _env.env,
       "blocking"   -> blocking,
       "events"     -> JsArray(events.map(e => e.json)),
       "block"      -> block.map(_.json).getOrElse(JsNull).asValue,

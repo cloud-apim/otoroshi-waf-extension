@@ -96,6 +96,7 @@ final case class CloudApimSecurityEvent(
     "@product"   -> "otoroshi",
     "@service"   -> `@service`,
     "@serviceId" -> `@serviceId`,
+    "@env"       -> _env.env,
     "event"      -> Json.obj(
       "kind"     -> "alert",
       "module"   -> "cloud-apim.security-suite",

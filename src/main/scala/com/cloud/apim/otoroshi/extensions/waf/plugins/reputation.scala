@@ -317,8 +317,8 @@ final case class CloudApimWafReputationEvent(
     request: JsObject
 ) extends AnalyticEvent {
 
-  override def `@service`: String            = "--"
-  override def `@serviceId`: String          = "--"
+  override def `@service`: String            = route.map(_.name).getOrElse("--")
+  override def `@serviceId`: String          = route.map(_.id).getOrElse("--")
   def `@id`: String                          = IdGenerator.uuid
   def `@timestamp`: org.joda.time.DateTime   = timestamp
   def `@type`: String                        = "CloudApimWafReputationEvent"
@@ -335,6 +335,7 @@ final case class CloudApimWafReputationEvent(
       "@product"   -> "otoroshi",
       "@serviceId" -> `@serviceId`,
       "@service"   -> `@service`,
+      "@env"       -> _env.env,
       "blocked"    -> blocked,
       "mode"       -> mode,
       "verdict"    -> verdict.json,

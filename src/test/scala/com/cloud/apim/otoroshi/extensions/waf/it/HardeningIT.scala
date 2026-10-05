@@ -1,15 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.waf.it
 
+import com.cloud.apim.seclang.model.RequestContext
 import otoroshi.next.models.{NgPluginInstance, NgPluginInstanceConfig}
 import otoroshi.next.plugins.api.NgPluginHelper
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.{CloudApimWaf, CloudApimWafPlugins, WafResolution}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.{CloudApimWafAuditEvent, CloudApimWafExtension}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.{CloudApimWaf, CloudApimWafPlugins, CloudApimWafTrailEvent, RequestContextBuilder, WafResolution}
 import play.api.libs.json.{JsValue, Json}
 
 /**
- * H4 to H6 through a real gateway: the engine is built once and survives the sync ticks, a WAF that
- * cannot run is refused or let through as `waf.fail-open` says rather than failing with a 500, and
- * `_compile` checks what the gateway runs.
+ * H4 to H8 through a real gateway: the engine is built once and survives the sync ticks, a WAF that
+ * cannot run is refused or let through as `waf.fail-open` says rather than failing with a 500,
+ * `_compile` checks what the gateway runs, and the events say which route and which environment
+ * they come from.
  */
 class HardeningIT extends munit.FunSuite {
 
@@ -171,5 +173,39 @@ class HardeningIT extends munit.FunSuite {
       assertEquals((missing \ "done").as[Boolean], true)
       assertEquals((missing \ "missing_rulesets").as[Seq[String]], Seq("waf-ruleset_nope"))
     } finally Gateway.deleteWafRuleset(rs)
+  }
+
+  test("the waf events say which route and which environment they come from") {
+    val env     = Gateway.instance.env
+    val backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
+    val route   = Gateway.createRoute("hardening-events", backend.port, Seq.empty)
+    try {
+      val trail = CloudApimWafTrailEvent(None, List.empty, Json.obj(), Some(route), blocking = true).toJson(using env)
+      assertEquals((trail \ "@serviceId").as[String], route.id)
+      assertEquals((trail \ "@service").as[String], route.name)
+      assertEquals((trail \ "@env").as[String], env.env)
+
+      val context = RequestContext(
+        method = "GET",
+        uri = "/",
+        variables = Map(RequestContextBuilder.RouteIdVariable -> route.id, RequestContextBuilder.RouteNameVariable -> route.name)
+      )
+      val state   = com.cloud.apim.seclang.model.RuntimeState(
+        mode = com.cloud.apim.seclang.model.EngineMode.On,
+        webAppId = None,
+        disabledIds = Set.empty,
+        events = Nil,
+        logs = Nil,
+        txMap = new scala.collection.concurrent.TrieMap[String, String](),
+        envMap = new scala.collection.concurrent.TrieMap[String, String](),
+        uidRef = new java.util.concurrent.atomic.AtomicReference[String](null)
+      )
+      val audit   = CloudApimWafAuditEvent(942100, context, state, 2, "msg", List.empty).toJson(using env)
+      assertEquals((audit \ "@serviceId").as[String], route.id)
+      assertEquals((audit \ "@service").as[String], route.name)
+      assertEquals((audit \ "@env").as[String], env.env)
+    } finally {
+      Gateway.deleteRoute(route); backend.stop()
+    }
   }
 }

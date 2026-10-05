@@ -836,8 +836,11 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
 case class CloudApimWafAuditEvent(ruleId: Int, context: RequestContext, state: RuntimeState, phase: Int, msg: String, logdata: List[String]) extends AnalyticEvent {
 
-  override def `@service`: String            = "--"
-  override def `@serviceId`: String          = "--"
+  // the engine calls back with the request context alone, so the plugin put the route on it
+  override def `@service`: String            =
+    context.variables.getOrElse(otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.RequestContextBuilder.RouteNameVariable, "--")
+  override def `@serviceId`: String          =
+    context.variables.getOrElse(otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.RequestContextBuilder.RouteIdVariable, "--")
   def `@id`: String                          = IdGenerator.uuid
   def `@timestamp`: org.joda.time.DateTime   = timestamp
   def `@type`: String                        = "CloudApimWafAuditEvent"
@@ -854,7 +857,7 @@ case class CloudApimWafAuditEvent(ruleId: Int, context: RequestContext, state: R
       "@product"   -> "otoroshi",
       "@serviceId" -> `@serviceId`,
       "@service"   -> `@service`,
-      "@env"       -> "prod",
+      "@env"       -> _env.env,
       "rule_id"     -> ruleId,
       "phase"     -> phase,
       "msg"     -> msg,

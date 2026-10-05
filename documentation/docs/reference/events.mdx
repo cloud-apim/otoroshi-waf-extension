@@ -11,6 +11,10 @@ a webhook, a file — with no extra wiring.
 
 If you only wire one of them up, wire up the first.
 
+All of them carry Otoroshi's envelope: `@serviceId` and `@service` are the id and name of the route
+the request was on, and `@env` is Otoroshi's `app.env`. The route is `--` only where there is none:
+the incoming request validator runs before routing.
+
 ## CloudApimSecurityEvent
 
 The normalised one. Every component of the [fabric](../fabric/overview.mdx) — the threat response,
@@ -124,6 +128,9 @@ trail event — useful when debugging a specific rule, noisy as a permanent stre
 ```json
 {
   "@type": "CloudApimWafAuditEvent",
+  "@serviceId": "route_...",
+  "@service": "public-api",
+  "@env": "prod",
   "rule_id": 942100,
   "phase": 2,
   "msg": "SQL Injection Attack Detected via libinjection",
