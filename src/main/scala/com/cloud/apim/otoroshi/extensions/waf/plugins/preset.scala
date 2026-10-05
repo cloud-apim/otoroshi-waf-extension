@@ -19,6 +19,9 @@ final case class CloudApimSecuritySuitePresetConfig(
     response: Boolean = true,
     reputationMode: String = "block",
     fail2banDryRun: Boolean = true,
+    // DLP-3: off by default, because it rewrites responses rather than refusing requests
+    errorLeakage: Boolean = false,
+    errorLeakageMode: String = "mask",
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -45,6 +48,8 @@ object CloudApimSecuritySuitePresetConfig {
       "response"        -> o.response,
       "reputation_mode" -> o.reputationMode,
       "fail2ban_dry_run" -> o.fail2banDryRun,
+      "error_leakage"   -> o.errorLeakage,
+      "error_leakage_mode" -> o.errorLeakageMode,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -61,6 +66,8 @@ object CloudApimSecuritySuitePresetConfig {
         response = json.select("response").asOpt[Boolean].getOrElse(true),
         reputationMode = json.select("reputation_mode").asOpt[String].getOrElse("block"),
         fail2banDryRun = json.select("fail2ban_dry_run").asOpt[Boolean].getOrElse(true),
+        errorLeakage = json.select("error_leakage").asOpt[Boolean].getOrElse(false),
+        errorLeakageMode = json.select("error_leakage_mode").asOpt[String].map(_.trim.toLowerCase).filter(Set("mask", "monitor")).getOrElse("mask"),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -82,6 +89,8 @@ object CloudApimSecuritySuitePresetConfig {
     "fail2ban",
     "fail2ban_dry_run",
     "response",
+    "error_leakage",
+    "error_leakage_mode",
     "include",
     "exclude"
   )
@@ -163,6 +172,22 @@ object CloudApimSecuritySuitePresetConfig {
       "label" -> "Threat response",
       "props" -> Json.obj("help" -> "Read the accumulated score and apply one graded action. Without it nothing enforces the score.")
     ),
+    "error_leakage"   -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "Error leakage guard",
+      "props" -> Json.obj("help" -> "Replace stack traces, SQL errors and debug pages in responses with a neutral error")
+    ),
+    "error_leakage_mode" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Error leakage mode",
+      "props" -> Json.obj(
+        "help"    -> "'monitor' reports a leak and lets the response through as it is",
+        "options" -> Json.arr(
+          Json.obj("label" -> "Mask", "value"    -> "mask"),
+          Json.obj("label" -> "Monitor", "value" -> "monitor")
+        )
+      )
+    ),
     "include"         -> Json.obj(
       "type"  -> "array",
       "label" -> "Apply on paths",
@@ -206,7 +231,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
   override def core: Boolean                               = true
   override def name: String                                = "Cloud APIM Threat Protection - Preset"
   override def description: Option[String]                 =
-    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF and threat response — in the right order".some
+    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF, threat response and error leakage guard — in the right order".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimSecuritySuitePresetConfig.default.some
 
   override def noJsForm: Boolean              = true
@@ -294,6 +319,16 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    Seq(gate, bots, reputation, fail2ban, waf, response).flatten
+    // on the way back, the last thing between the backend's errors and the caller
+    val leakage = Option.when(config.errorLeakage) {
+      slot(
+        NgPluginHelper.pluginId[CloudApimErrorLeakageGuard],
+        CloudApimErrorLeakageConfig(mode = config.errorLeakageMode).json.asObject,
+        PluginIndex(transformResponse = 1.0.some),
+        config
+      )
+    }
+
+    Seq(gate, bots, reputation, fail2ban, waf, response, leakage).flatten
   }
 }

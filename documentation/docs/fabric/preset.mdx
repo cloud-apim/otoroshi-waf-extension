@@ -43,6 +43,7 @@ wrong. (The preset is missing from the list because this route already carries i
 | 4 | [Fail2ban](./fail2ban.mdx) *(off by default)* | access validation | `4.0` |
 | 5 | Cloud APIM WAF | request transformation | `1.0` |
 | 6 | Threat response | request transformation | `900.0` |
+| 7 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
 
 The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
 rather than by the order slots happen to sit in on the route.
@@ -75,6 +76,8 @@ the preset carry it.
 
   "reputation_mode": "block",
   "fail2ban_dry_run": true,
+  "error_leakage": false,
+  "error_leakage_mode": "mask",
   "include": [],
   "exclude": []
 }
@@ -89,6 +92,8 @@ the preset carry it.
 | `fail2ban` | `false` | Off by default: it is the one detector your own clients can trip. See [Fail2ban](./fail2ban.mdx). |
 | `fail2ban_dry_run` | `true` | Count and report without banning. Leave it on until the failure statuses have been checked against real traffic. |
 | `reputation_mode` | `block` | `monitor` scores without ever denying on its own, leaving the decision to the response. |
+| `error_leakage` | `false` | Off by default: it rewrites responses rather than refusing requests. See [error leakage](../response/error-leakage.mdx). |
+| `error_leakage_mode` | `mask` | `monitor` reports a leak and lets the response through as it is. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 

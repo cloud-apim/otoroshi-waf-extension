@@ -1,0 +1,83 @@
+---
+sidebar_position: 1
+title: Error leakage guard
+description: Keeping stack traces, SQL errors and debug pages from reaching the caller.
+---
+
+# Error leakage guard
+
+A stack trace names your framework, its version and often your file layout. A SQL error names
+your database and the query that failed. Both are reconnaissance material handed to whoever
+triggered them, and the backend that produced them usually has no idea it did.
+
+The **Error leakage guard** (`CloudApimErrorLeakageGuard`) reads responses on their way back out,
+finds what leaks, and replaces the response with a neutral error before it reaches the caller.
+
+## What it looks for
+
+The Core Rule Set already maintains the signatures, so the guard runs its leakage rules as they
+are, with their data files, and they stay CRS's to keep up to date:
+
+| Family | Source |
+|---|---|
+| SQL errors from a dozen database engines | CRS 951xxx, `sql-errors.data` |
+| Java exceptions and stack frames | CRS 952xxx |
+| PHP errors and source code | CRS 953xxx, `php-errors.data` |
+| IIS and ASP.NET errors | CRS 954xxx, 950150, `iis-errors.data`, `asp-dotnet-errors.data` |
+| Ruby errors | CRS 956xxx, `ruby-errors.data` |
+| Directory listings, CGI source code | CRS 950130, 950140 |
+| Python tracebacks, Django and Werkzeug debug pages | the guard's own |
+| Node.js stack frames | the guard's own |
+| Go panics | the guard's own |
+| .NET stack frames | the guard's own |
+| Laravel's error page | the guard's own |
+
+CRS rule 950100 is left out: it flags any `5xx` status, and a status is not a leak, its body is.
+
+## What a leaking response becomes
+
+An error keeps its status. A success that leaks becomes a `500`: it failed, it only did not say so.
+The body takes the response's own shape, so a client that parses errors still can, and it carries
+the request's reference, which is what anyone looking for the original asks for:
+
+```json
+{ "error": "internal_error", "message": "Something went wrong.", "reference": "1843627815893483520" }
+```
+
+An HTML response gets a minimal HTML page with the same reference, anything else plain text. The
+headers that described the original body (`Content-Length`, `Content-Encoding`, `ETag`...) go.
+
+## Configuration
+
+```json
+{
+  "mode": "mask",
+  "body_limit": 262144,
+  "paranoia_level": 1,
+  "content_types": []
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `mode` | `mask` | `mask` replaces a leaking response; `monitor` only reports it |
+| `body_limit` | 256 KiB | Bytes of the response read, decompressed when it is compressed. A leak past them is not seen |
+| `paranoia_level` | `1` | Which of the CRS leakage rules run, from 1 to 4 |
+| `content_types` | `[]` | The response types read. Empty means every textual type: `text/*`, JSON, XML, JavaScript, and responses with no type |
+
+Start in `monitor`: an API that documents its own errors, or a page that legitimately shows code,
+can match a signature. The events say what would have been masked, and on which route.
+
+## Laying it down
+
+On a route, add the plugin, or switch `error_leakage` on in the [preset](../fabric/preset.mdx) or in
+a [global preset](../fabric/global-preset.mdx) rule, with `error_leakage_mode` for its mode. In
+**Threat Studio**, it is the **Error leakage guard** section of a workspace's protection. It is off
+by default, because it rewrites responses rather than refusing requests.
+
+## What it reports
+
+Each leak is a `CloudApimSecurityEvent` of category `leakage`, with action `mask` (outcome
+`blocked`) or `log` in monitor mode (outcome `observed`). Its signal names the rule, the family and
+the request's reference, and its tag is `leakage:<family>`. It does not charge the caller's ledger:
+triggering an error is not, by itself, an attack.

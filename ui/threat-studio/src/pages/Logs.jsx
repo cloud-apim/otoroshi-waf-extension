@@ -40,6 +40,7 @@ const CATEGORIES = [
   { value: 'fail2ban', label: 'Fail2ban' },
   { value: 'challenge', label: 'Challenge' },
   { value: 'ban', label: 'Ban' },
+  { value: 'leakage', label: 'Error leakage' },
 ];
 
 const ACTIONS = [
@@ -49,6 +50,7 @@ const ACTIONS = [
   { value: 'challenge', label: 'Challenge' },
   { value: 'deny', label: 'Deny' },
   { value: 'ban', label: 'Ban' },
+  { value: 'mask', label: 'Mask' },
 ];
 
 const OUTCOMES = [

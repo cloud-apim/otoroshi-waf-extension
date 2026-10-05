@@ -1,0 +1,8 @@
+{
+  "label": "Response protection",
+  "position": 10,
+  "link": {
+    "type": "generated-index",
+    "description": "What responses must not tell the caller, caught on the way back out."
+  }
+}

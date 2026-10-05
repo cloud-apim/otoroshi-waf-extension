@@ -24,6 +24,8 @@ export const PRESET_DEFAULTS = {
   response: true,
   reputation_mode: 'block',
   fail2ban_dry_run: true,
+  error_leakage: false,
+  error_leakage_mode: 'mask',
   include: [],
   exclude: [],
 };
@@ -36,6 +38,7 @@ export const SECTIONS = [
   { key: 'fail2ban', label: 'Fail2ban', help: 'Ban callers that keep producing failed responses — the one detector your own clients can trip' },
   { key: 'waf', label: 'WAF', help: 'Run the rule engine. Needs a WAF config to expand at all.' },
   { key: 'response', label: 'Threat response', help: 'Read the accumulated score and apply one graded action. Without it nothing enforces the score.' },
+  { key: 'error_leakage', label: 'Error leakage guard', help: 'Replace stack traces, SQL errors and debug pages in responses with a neutral error, before they reach the caller' },
 ];
 
 export function loadTable() {

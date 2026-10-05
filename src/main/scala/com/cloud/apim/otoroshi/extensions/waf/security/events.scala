@@ -24,6 +24,8 @@ object ThreatAction {
   case object Challenge extends ThreatAction { val name = "challenge" }
   case object Deny   extends ThreatAction { val name = "deny";  override def denies = true }
   case object Ban    extends ThreatAction { val name = "ban";   override def denies = true }
+  // DLP-3: a response whose leak was replaced by a neutral error. Not a tier action, so not in `all`
+  case object Mask   extends ThreatAction { val name = "mask";  override def denies = true }
 
   val all: Seq[ThreatAction] = Seq(Allow, Log, Challenge, Tarpit, Deny, Ban)
 

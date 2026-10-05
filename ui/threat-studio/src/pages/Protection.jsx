@@ -162,6 +162,16 @@ export function ProtectionPage() {
                 />
               )}
               {s.key === 'waf' && preset.waf && !preset.waf_config && <Badge kind="warning">no config</Badge>}
+              {s.key === 'error_leakage' && preset.error_leakage && (
+                <Segmented
+                  options={[
+                    { value: 'mask', label: 'Mask' },
+                    { value: 'monitor', label: 'Monitor' },
+                  ]}
+                  value={preset.error_leakage_mode}
+                  onChange={(v) => set({ error_leakage_mode: v })}
+                />
+              )}
             </div>
           </div>
         ))}

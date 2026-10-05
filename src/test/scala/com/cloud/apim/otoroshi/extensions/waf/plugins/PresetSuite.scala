@@ -64,8 +64,8 @@ class PresetSuite extends munit.FunSuite {
   }
 
   test("every emitted slot carries an index, or the ordering guarantee is void") {
-    chain(full).foreach { i =>
-      val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined)
+    chain(full.copy(fail2ban = true, errorLeakage = true)).foreach { i =>
+      val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined || p.transformResponse.isDefined)
       assert(indexed, s"${i.plugin} was emitted without a plugin index")
     }
   }
@@ -122,11 +122,29 @@ class PresetSuite extends munit.FunSuite {
       fail2ban = true,
       reputationMode = "monitor",
       fail2banDryRun = false,
+      errorLeakage = true,
+      errorLeakageMode = "monitor",
       include = Seq("/a"),
       exclude = Seq("/b")
     )
     val back = CloudApimSecuritySuitePresetConfig.format.reads(cfg.json).get
     assertEquals(back, cfg)
+  }
+
+  test("the error leakage guard is off by default, and comes last, on the response, once switched on") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.errorLeakage, false)
+    assertEquals(names(chain(full)).contains("CloudApimErrorLeakageGuard"), false)
+    val armed = chain(full.copy(errorLeakage = true))
+    assertEquals(names(armed).last, "CloudApimErrorLeakageGuard")
+    assert(armed.last.pluginIndex.exists(_.transformResponse.isDefined))
+  }
+
+  test("the leakage mode reaches the guard") {
+    def modeOf(cfg: CloudApimSecuritySuitePresetConfig) = chain(cfg)
+      .find(_.plugin == NgPluginHelper.pluginId[CloudApimErrorLeakageGuard])
+      .map(i => (i.config.raw \ "mode").as[String])
+    assertEquals(modeOf(full.copy(errorLeakage = true)), Some("mask"))
+    assertEquals(modeOf(full.copy(errorLeakage = true, errorLeakageMode = "monitor")), Some("monitor"))
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {
