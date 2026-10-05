@@ -38,7 +38,8 @@ enforced — which is where a policy should start.*
   "ban_identity": "auto",
   "waf_match_weight": 45,
   "waf_block_weight": 90,
-  "waf_block_decisive": false
+  "waf_block_decisive": false,
+  "slow_refusal_millis": 0
 }
 ```
 
@@ -51,7 +52,6 @@ still recorded — that record is what tuning reads.
 | `tarpit` | Answer slowly, then serve normally. Costs the attacker a connection and you nothing |
 | `deny` | Refuse this request with `status` |
 | `ban` | Refuse it **and** ban the caller for `ban_for_seconds` |
-
 | `challenge` | Ask the caller to prove something before proceeding. See [challenges](../bots/challenge.mdx) |
 
 :::caution `throttle` is not available
@@ -59,6 +59,21 @@ It appears in the roadmap and has no module behind it yet. It is deliberately ab
 list rather than accepted and ignored, which would let you configure a tier that silently does
 nothing.
 :::
+
+## Refusing slowly
+
+A fast `403` tells the caller at once that the probe failed, and frees it to try the next one.
+`slow_refusal_millis` holds every refusal of the policy that long before sending it: a `deny` or
+`ban` tier, and a caller already banned that the [threat gate](./overview.mdx) stops. The status
+line arrives only after the hold, so a scanner pays a connection and that much time for each
+attempt. `0`, the default, refuses at once.
+
+A held request costs no thread, but it costs a connection on this node as well as on the
+caller's. Each node holds at most `security.tarpit.max-held-connections` requests at once (1000 by
+default), counting `tarpit` tiers too. Past that, a refusal is sent at once and a tarpit lets the
+request through without waiting, so the defence never becomes the denial of service. The
+security event says how long a request was really held, in `decision.held_ms`, and
+`/extensions/cloud-apim/extensions/waf/security/_status` how many are held right now, under `tarpit`.
 
 ## What a WAF verdict is worth
 

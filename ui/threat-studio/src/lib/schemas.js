@@ -227,6 +227,12 @@ export const SCHEMAS = {
             placeholder: 'First enabled one',
             help: 'What a challenge tier serves',
           },
+          {
+            key: 'slow_refusal_millis',
+            label: 'Slow refusal (ms)',
+            type: 'number',
+            help: 'How long a refusal is held before it is sent, at the gate and in the response engine. A fast 403 tells the caller at once that the probe failed; a slow one costs it a connection. 0 refuses at once.',
+          },
         ],
       },
       {

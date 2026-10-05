@@ -136,6 +136,12 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
     // set this to guarantee bans are shared between nodes whatever the otoroshi storage backend is
     // redis-uri = "redis://localhost:6379"
 
+    tarpit {
+      // how many requests one node holds at once, in a tarpit or before a slow refusal. past
+      // this, refusals are sent at once and tarpits let the request through
+      max-held-connections = 1000
+    }
+
     ledger {
       enabled = true
       window-seconds = 3600

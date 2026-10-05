@@ -46,7 +46,7 @@ land where an Elastic pipeline already looks for them.
   "otoroshi": { "route_id": "route_...", "route_name": "public-api", "node": "otoroshi-node-1" },
   "incident": { "id": "...", "count": 34 },
   "message":  "score 75 reached tier 70 (tarpit)",
-  "decision": { "action": "tarpit", "score": 75, "tier": 1, "dry_run": true, "enforced": false }
+  "decision": { "action": "tarpit", "score": 75, "tier": 1, "dry_run": true, "enforced": false, "held_ms": 0 }
 }
 ```
 
@@ -59,6 +59,7 @@ land where an Elastic pipeline already looks for them.
 | `threat.signals[]` | Full attribution — which detector contributed what, and how sure it was |
 | `incident.count` | How many events this identity has already produced in the window |
 | `decision.enforced` | The unambiguous answer to "did this actually do anything" |
+| `decision.held_ms` | How long the request was held before the action took effect: a tarpit, or a [slow refusal](../fabric/policies.mdx#refusing-slowly). `0` when it was not |
 
 :::tip The pair to watch while tuning
 `outcome: "observed"` with a non-`log` action is the dry-run equivalent of "this would have been
@@ -91,8 +92,8 @@ Emitted once per request where at least one WAF rule matched. The main signal.
 | `events[]` | Every rule that matched |
 | `truncated` | The body was longer than the inspection limit, so only its beginning was seen |
 | `oversize_rejected` | The request was refused for being past the limit, without being inspected |
-
 | `rejected_reason` | Why a body was refused before any rule read it: `decompressed_size`, `compression_ratio`, `undecodable_encoding`, `corrupt_body` |
+
 `blocking: false` with a non-null `block` is the "would have been denied" case — the number to
 track while [tuning](../waf/tuning.mdx).
 

@@ -201,6 +201,14 @@ class ThreatPoliciesPage extends Component {
       type: 'number',
       props: { label: 'WAF block weight', help: 'What a WAF denial contributes to the score' },
     },
+    slow_refusal_millis: {
+      type: 'number',
+      props: {
+        label: 'Slow refusal',
+        suffix: 'ms',
+        help: 'How long a refusal is held before it is sent, at the gate and in the response engine. A fast 403 tells the caller at once that the probe failed; a slow one costs it a connection. 0 refuses at once.',
+      },
+    },
     simulate: { type: ThreatSimulator, props: {} },
   };
 
@@ -224,6 +232,7 @@ class ThreatPoliciesPage extends Component {
     'dry_run',
     'ban_identity',
     'waf_block_weight',
+    'slow_refusal_millis',
     '<<<Escalation',
     'tiers',
     '>>>Never scored',

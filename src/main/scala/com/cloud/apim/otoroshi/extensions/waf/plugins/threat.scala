@@ -14,7 +14,7 @@ import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExten
 import play.api.libs.json.*
 import play.api.mvc.{Cookie, RequestHeader, Result, Results}
 
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.{Duration, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
 
@@ -68,6 +68,18 @@ private[plugins] object ThreatSupport {
       promise.future
     }
   }
+
+  /**
+   * `value` once `duration` has passed, the request held in `slot` until then (BEH-5).
+   *
+   * Nothing waits on a thread: the scheduler completes it. The slot is given back when the hold is
+   * over, whatever happens next.
+   */
+  def holdThen[A](slot: TarpitSlot, duration: FiniteDuration)(value: => Future[A])(using env: Env, ec: ExecutionContext): Future[A] =
+    delay(duration, ()).flatMap { _ =>
+      slot.release()
+      value
+    }.andThen { case _ => slot.release() }
 
   def deny(status: Int, ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[Result] =
     Errors.craftResponseResult(
@@ -137,12 +149,15 @@ class CloudApimThreatGate extends NgAccessValidator {
           mod.bans.check(identity) match {
             case None      => NgAccess.NgAllowed.vfuture
             case Some(ban) =>
+              // the caller this is most meant for: already judged, and back
+              val slot     = if (!policy.dryRun && policy.slowRefusalMillis > 0L) mod.tarpit.acquire() else None
               val decision = ThreatDecision(
                 action = ThreatAction.Ban,
                 score = ban.score,
                 tier = None,
                 dryRun = policy.dryRun,
-                reason = s"already banned: ${ban.reason}"
+                reason = s"already banned: ${ban.reason}",
+                heldMillis = slot.map(_ => policy.slowRefusalMillis).getOrElse(0L)
               )
               ctx.attrs.put(ThreatKeys.DecisionKey -> decision)
               mod.record(
@@ -155,8 +170,10 @@ class CloudApimThreatGate extends NgAccessValidator {
                 routeName = ctx.route.name.some,
                 message = s"${ban.ref.key} is banned until ${ban.until}"
               )
-              if (decision.enforced) ThreatSupport.deny(403, ctx).map(NgAccess.NgDenied.apply)
-              else NgAccess.NgAllowed.vfuture
+              if (decision.enforced) {
+                def refuse = ThreatSupport.deny(403, ctx).map(NgAccess.NgDenied.apply)
+                slot.fold(refuse)(ThreatSupport.holdThen(_, policy.slowRefusal)(refuse))
+              } else NgAccess.NgAllowed.vfuture
           }
         }
     }
@@ -371,7 +388,17 @@ class CloudApimThreatResponse extends NgRequestTransformer {
       tier: ThreatTier,
       policy: ThreatPolicy
   )(using env: Env, ec: ExecutionContext): Future[Either[Result, NgPluginHttpRequest]] = {
-    record(mod, ctx, identity, score, decision, policy)
+    // BEH-5: a tarpit, and a refusal held before it is sent, each take one of this node's slots.
+    // With none left they happen at once, and the event says how long the request was really held
+    val holdFor: FiniteDuration = decision.action match {
+      case ThreatAction.Challenge                => Duration.Zero
+      case ThreatAction.Tarpit if !policy.dryRun => tier.tarpit
+      case _ if decision.enforced                => policy.slowRefusal
+      case _                                     => Duration.Zero
+    }
+    val slot = if (holdFor.toMillis > 0L) mod.tarpit.acquire() else None
+    record(mod, ctx, identity, score, decision.copy(heldMillis = slot.map(_ => holdFor.toMillis).getOrElse(0L)), policy)
+    def refuse = ThreatSupport.denyT(tier.status, ctx).map(Left.apply)
     if (decision.action == ThreatAction.Challenge) {
       // a challenge is neither an allow nor a deny: it is a question, and it is skipped entirely
       // when the caller has already answered one recently
@@ -393,7 +420,7 @@ class CloudApimThreatResponse extends NgRequestTransformer {
       // dry run, or a non-denying action: the request goes through either way
       decision.action match {
         case ThreatAction.Tarpit if !policy.dryRun =>
-          ThreatSupport.delay(tier.tarpit, ctx.otoroshiRequest).map(Right.apply)
+          slot.fold(ctx.otoroshiRequest.rightf)(ThreatSupport.holdThen(_, holdFor)(ctx.otoroshiRequest.rightf))
         case _                                     => ctx.otoroshiRequest.rightf
       }
     } else {
@@ -412,9 +439,9 @@ class CloudApimThreatResponse extends NgRequestTransformer {
               timeline = mod.incidents.byKey(ref.key).toSeq.flatMap(_.timeline)
             )
           }
-          ThreatSupport.denyT(tier.status, ctx).map(Left.apply)
+          slot.fold(refuse)(ThreatSupport.holdThen(_, holdFor)(refuse))
         case _                =>
-          ThreatSupport.denyT(tier.status, ctx).map(Left.apply)
+          slot.fold(refuse)(ThreatSupport.holdThen(_, holdFor)(refuse))
       }
     }
   }

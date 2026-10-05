@@ -78,7 +78,10 @@ final case class ThreatPolicy(
     // fabric honours the engine's block instead of diluting it. Off by default, because monitoring
     // the WAF is a deliberate "do not act on it alone" that this would override.
     wafBlockDecisive: Boolean = false,
-    challengeProvider: Option[String] = None
+    challengeProvider: Option[String] = None,
+    // BEH-5: how long a refusal is held before it is sent. A fast 403 tells the caller at once that
+    // the probe failed and frees it for the next one; a slow one costs it a connection. 0 is off
+    slowRefusalMillis: Long = 0L
 ) extends EntityLocationSupport {
 
   override def internalId: String               = id
@@ -132,6 +135,8 @@ final case class ThreatPolicy(
 
   def isExempt(ip: String): Boolean = exemptionSet.nonEmpty && exemptionSet.contains(ip)
 
+  def slowRefusal: FiniteDuration = slowRefusalMillis.max(0L).millis
+
   def banRef(identity: ClientIdentity): Option[IdentityRef] = banIdentity.trim.toLowerCase match {
     case "auto" | "" => identity.refs.headOption
     case kind        => identity.refs.find(_.kind == kind).orElse(identity.refs.headOption)
@@ -155,7 +160,8 @@ object ThreatPolicy {
       "waf_match_weight"   -> o.wafMatchWeight,
       "waf_block_weight"   -> o.wafBlockWeight,
       "waf_block_decisive" -> o.wafBlockDecisive,
-      "challenge_provider" -> o.challengeProvider
+      "challenge_provider" -> o.challengeProvider,
+      "slow_refusal_millis" -> o.slowRefusalMillis
     )
 
     override def reads(json: JsValue): JsResult[ThreatPolicy] = Try {
@@ -176,7 +182,8 @@ object ThreatPolicy {
         wafMatchWeight = json.select("waf_match_weight").asOpt[Int].getOrElse(45),
         wafBlockWeight = json.select("waf_block_weight").asOpt[Int].getOrElse(90),
         wafBlockDecisive = json.select("waf_block_decisive").asOpt[Boolean].getOrElse(false),
-        challengeProvider = json.select("challenge_provider").asOpt[String].filter(_.trim.nonEmpty)
+        challengeProvider = json.select("challenge_provider").asOpt[String].filter(_.trim.nonEmpty),
+        slowRefusalMillis = json.select("slow_refusal_millis").asOpt[Long].getOrElse(0L).max(0L)
       )
     } match {
       case Failure(ex)    => JsError(ex.getMessage)

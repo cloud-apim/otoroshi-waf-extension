@@ -138,6 +138,10 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
 
   private val datastores = new SecurityDatastores(env, extensionId)
 
+  /** BEH-5: the requests this node is holding, in a tarpit or before a slow refusal. */
+  val tarpit: TarpitGate =
+    new TarpitGate(configuration.getOptional[Int]("security.tarpit.max-held-connections").getOrElse(1000).max(0))
+
   /**
    * Where bans and the ledger actually live.
    *
@@ -562,7 +566,8 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       "ban_threshold"        -> ledgerSettings.banThreshold,
       "ban_duration_seconds" -> ledgerSettings.banDuration.toSeconds
     ),
-    "policies"  -> JsArray(states.allThreatPolicies().map(p => Json.obj("id" -> p.id, "name" -> p.name, "dry_run" -> p.dryRun)))
+    "policies"  -> JsArray(states.allThreatPolicies().map(p => Json.obj("id" -> p.id, "name" -> p.name, "dry_run" -> p.dryRun))),
+    "tarpit"    -> tarpit.status
   )
 
   private def refFrom(json: JsValue): Option[IdentityRef] =

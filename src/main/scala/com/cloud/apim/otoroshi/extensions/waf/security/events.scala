@@ -36,7 +36,9 @@ final case class ThreatDecision(
     score: Int,
     tier: Option[Int],
     dryRun: Boolean,
-    reason: String
+    reason: String,
+    // BEH-5: how long the request was held before the action took effect, 0 when it was not
+    heldMillis: Long = 0L
 ) {
   /** In dry-run nothing is enforced, so the decision is recorded and the request proceeds. */
   def enforced: Boolean = !dryRun && action.denies
@@ -46,7 +48,8 @@ final case class ThreatDecision(
     "tier"     -> tier,
     "dry_run"  -> dryRun,
     "enforced" -> enforced,
-    "reason"   -> reason
+    "reason"   -> reason,
+    "held_ms"  -> heldMillis
   )
 }
 
