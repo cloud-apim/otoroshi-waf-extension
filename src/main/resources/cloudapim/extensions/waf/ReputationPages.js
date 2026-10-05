@@ -1084,6 +1084,238 @@ class AsnDatabasesPage extends Component {
   }
 }
 
+class GeoStatus extends Component {
+  state = { status: null, refreshing: false, error: null };
+
+  componentDidMount() {
+    this.load();
+  }
+
+  load = () => {
+    reputationCall('/_status').then((r) => {
+      const all = (r && r.geo) || [];
+      const id = this.props.rawValue && this.props.rawValue.id;
+      this.setState({ status: all.filter((d) => d.id === id)[0] || null });
+    });
+  };
+
+  refresh = () => {
+    this.setState({ refreshing: true, error: null });
+    reputationCall('/_refresh', { geo: true }).then((r) => {
+      this.setState({ refreshing: false });
+      if (!r.done) this.setState({ error: r.error || 'refresh failed, see the status' });
+      this.load();
+    });
+  };
+
+  render() {
+    const snap = this.state.status && this.state.status.snapshot;
+    const rows = [];
+    if (snap && snap.loaded) {
+      rows.push(['Database', snap.database_type || '—']);
+      rows.push(['Built', snap.build_time ? new Date(snap.build_time).toLocaleDateString() : '—']);
+      rows.push(['Addresses', snap.ip_version === 6 ? 'IPv4 and IPv6' : 'IPv4']);
+      rows.push(['Size', `${Math.round((snap.size_bytes || 0) / 1024)} KB`]);
+      rows.push(['Loaded from', snap.url || '—']);
+      rows.push(['Last check', reputationAgo(snap.fetched_at)]);
+    } else if (snap) {
+      rows.push(['Status', 'not loaded on this node']);
+      rows.push(['Last attempt', reputationAgo(snap.fetched_at)]);
+    } else {
+      rows.push(['Status', 'never fetched on this node yet']);
+    }
+    const error = this.state.error || (snap && snap.error);
+    return [
+      React.createElement(
+        'div',
+        { className: 'row mb-3', key: 'status' },
+        React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Database'),
+        React.createElement(
+          'div',
+          { className: 'col-sm-10' },
+          suiteRows(rows, 190),
+          suiteNotice(
+            'cost',
+            'info',
+            'Every node downloads the file and memory-maps it. An unchanged file is not downloaded again, a failed check keeps serving the last good file and is retried after five minutes.'
+          ),
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-success', type: 'button', onClick: this.refresh, disabled: this.state.refreshing },
+            React.createElement('i', { className: 'fas fa-sync' }, null),
+            this.state.refreshing ? ' Checking…' : ' Check now'
+          )
+        )
+      ),
+      error &&
+        React.createElement(
+          'div',
+          { className: 'row mb-3', key: 'error' },
+          React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
+          React.createElement('div', { className: 'col-sm-10' }, suiteNotice('err', snap && snap.loaded ? 'warning' : 'danger', error))
+        ),
+    ];
+  }
+}
+
+class GeoLocate extends Component {
+  state = { ip: '', result: undefined, calling: false };
+
+  send = () => {
+    const ip = this.state.ip.trim();
+    this.setState({ calling: true, result: undefined });
+    reputationCall('/_geo', { ips: [ip] }).then((r) => {
+      this.setState({ calling: false, result: (r && r.results && r.results[ip]) || null });
+    });
+  };
+
+  render() {
+    const res = this.state.result;
+    const rows = res
+      ? [
+          ['Country', [res.country_name, res.country].filter(Boolean).join(' — ') || res.country || '—'],
+          ['City', res.city || '—'],
+          ['Coordinates', res.latitude != null ? `${res.latitude}, ${res.longitude}` : '—'],
+          ['Network', res.org ? `${res.org}${res.asn ? ` (AS${res.asn})` : ''}` : '—'],
+          ['Source', res.located ? 'geolocation database' : 'registration country of the network (ASN database)'],
+        ]
+      : [];
+    return [
+      React.createElement(
+        'div',
+        { className: 'row mb-3', key: 'input' },
+        React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Locate an address'),
+        React.createElement(
+          'div',
+          { className: 'col-sm-10', style: { display: 'flex', gap: 8 } },
+          React.createElement('input', {
+            type: 'text',
+            className: 'form-control',
+            placeholder: '1.2.3.4',
+            value: this.state.ip,
+            onChange: (e) => this.setState({ ip: e.target.value }),
+          }),
+          React.createElement(
+            'button',
+            { className: 'btn btn-sm btn-success', type: 'button', onClick: this.send, disabled: this.state.calling || !this.state.ip.trim() },
+            React.createElement('i', { className: 'fas fa-search' }, null),
+            ' Locate'
+          )
+        )
+      ),
+      res !== undefined &&
+        React.createElement(
+          'div',
+          { className: 'row mb-3', key: 'result' },
+          React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
+          React.createElement(
+            'div',
+            { className: 'col-sm-10' },
+            res === null ? suiteNotice('miss', 'info', 'No database knows this address.') : suiteRows(rows, 190)
+          )
+        ),
+    ];
+  }
+}
+
+class GeoDatabasesPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id', placeholder: '---' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    url: {
+      type: 'string',
+      props: {
+        label: 'Url',
+        help: 'A MaxMind DB file (.mmdb), raw, gzipped or in a tar.gz. {yyyy} and {MM} stand for the current month, then the previous one while the new file is not out.',
+      },
+    },
+    username: { type: 'string', props: { label: 'Username', help: 'Sent as basic auth: your account id, for MaxMind' } },
+    password: { type: 'password', props: { label: 'Password', help: 'Your license key, for MaxMind' } },
+    headers: { type: 'object', props: { label: 'Headers' } },
+    refresh_interval_seconds: { type: 'number', props: { label: 'Check interval', suffix: 'seconds', help: 'An unchanged file is not downloaded again' } },
+    timeout_millis: { type: 'number', props: { label: 'Timeout', suffix: 'ms' } },
+    max_size_mb: { type: 'number', props: { label: 'Max size', suffix: 'MB', help: 'Once extracted. Country databases are a few MB, city ones a few hundred' } },
+    attribution: { type: 'string', props: { label: 'Attribution', help: 'Shown wherever a location is: the free databases ask for it' } },
+    attribution_url: { type: 'string', props: { label: 'Attribution link' } },
+    status: { type: GeoStatus, props: {} },
+    locate: { type: GeoLocate, props: {} },
+  };
+
+  columns = [
+    { title: 'Name', filterId: 'name', content: (item) => item.name },
+    { title: 'Enabled', filterId: 'enabled', content: (item) => (item.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Source', content: (item) => (item.url || '').split('?')[0] },
+  ];
+
+  formFlow = [
+    '_loc', 'id', 'name', 'description',
+    '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<Source', 'enabled', 'url', 'username', 'password', 'headers', 'refresh_interval_seconds', 'timeout_millis', 'max_size_mb',
+    '<<<Attribution', 'attribution', 'attribution_url',
+    '<<<Status', 'status',
+    '>>>Test', 'locate',
+  ];
+
+  componentDidMount() {
+    this.props.setTitle('Geolocation databases');
+  }
+
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'geo-databases');
+
+  render() {
+    return React.createElement(
+      Table,
+      {
+        parentProps: this.props,
+        selfUrl: 'extensions/cloud-apim/waf/geodatabases',
+        defaultTitle: 'All geolocation databases',
+        defaultValue: () => ({
+          id: 'geo-database_' + uuid(),
+          name: 'Geolocation database',
+          description: 'DB-IP lite, country level. Free, monthly, and it asks for attribution',
+          tags: [],
+          metadata: {},
+          enabled: true,
+          url: 'https://download.db-ip.com/free/dbip-country-lite-{yyyy}-{MM}.mmdb.gz',
+          username: null,
+          password: null,
+          headers: {},
+          refresh_interval_seconds: 86400,
+          timeout_millis: 300000,
+          max_size_mb: 512,
+          attribution: 'IP Geolocation by DB-IP',
+          attribution_url: 'https://db-ip.com',
+        }),
+        itemName: 'Geolocation database',
+        formSchema: this.formSchema,
+        formFlow: this.formFlow,
+        columns: this.columns,
+        stayAfterSave: true,
+        fetchItems: (paginationState) => this.client.findAll(),
+        updateItem: this.client.update,
+        deleteItem: this.client.delete,
+        createItem: this.client.create,
+        navigateTo: (item) => {
+          window.location = `/bo/dashboard/extensions/cloud-apim/waf/geodatabases/edit/${item.id}`;
+        },
+        itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/waf/geodatabases/edit/${item.id}`,
+        showActions: true,
+        showLink: true,
+        rowNavigation: true,
+        extractKey: (item) => item.id,
+        export: true,
+        kubernetesKind: 'waf.extensions.cloud-apim.com/GeoDatabase',
+      },
+      null
+    );
+  }
+}
+
 const ReputationFeatures = [
   {
     title: 'Threat feeds',
@@ -1110,6 +1342,14 @@ const ReputationFeatures = [
     icon: () => 'fa-project-diagram',
   },
   {
+    title: 'Geolocation databases',
+    description: 'Where an address is, for @geoLookup and the consoles',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/geodatabases',
+    display: () => true,
+    icon: () => 'fa-map-marker-alt',
+  },
+  {
     title: 'CrowdSec bouncers',
     description: 'CrowdSec Local API connections, in both directions',
     absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
@@ -1123,6 +1363,7 @@ const ReputationSidebarItems = [
   { title: 'Threat feeds', text: 'IP reputation feeds', path: 'extensions/cloud-apim/waf/threatfeeds', icon: 'shield-alt' },
   { title: 'Threat feed catalog', text: 'Curated sources', path: 'extensions/cloud-apim/waf/threatfeedcatalog', icon: 'book' },
   { title: 'ASN databases', text: 'Network classification', path: 'extensions/cloud-apim/waf/asndatabases', icon: 'project-diagram' },
+  { title: 'Geolocation databases', text: 'Where an address is', path: 'extensions/cloud-apim/waf/geodatabases', icon: 'map-marker-alt' },
   { title: 'CrowdSec bouncers', text: 'CrowdSec connections', path: 'extensions/cloud-apim/waf/crowdsecbouncers', icon: 'crow' },
 ];
 
@@ -1151,9 +1392,29 @@ const ReputationSearchItems = [
     label: 'Cloud APIM Threat Protection - CrowdSec bouncers',
     value: 'crowdsecbouncers',
   },
+  {
+    action: () => {
+      window.location.href = '/bo/dashboard/extensions/cloud-apim/waf/geodatabases';
+    },
+    env: React.createElement('span', { className: 'fas fa-map-marker-alt' }, null),
+    label: 'Cloud APIM Threat Protection - Geolocation databases',
+    value: 'geodatabases',
+  },
 ];
 
 const ReputationRoutes = [
+  {
+    path: '/extensions/cloud-apim/waf/geodatabases/:taction/:titem',
+    component: (props) => React.createElement(GeoDatabasesPage, props, null),
+  },
+  {
+    path: '/extensions/cloud-apim/waf/geodatabases/:taction',
+    component: (props) => React.createElement(GeoDatabasesPage, props, null),
+  },
+  {
+    path: '/extensions/cloud-apim/waf/geodatabases',
+    component: (props) => React.createElement(GeoDatabasesPage, props, null),
+  },
   {
     path: '/extensions/cloud-apim/waf/asndatabases/:taction/:titem',
     component: (props) => React.createElement(AsnDatabasesPage, props, null),

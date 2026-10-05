@@ -21,6 +21,7 @@ import { SettingsPage } from './pages/Settings';
 import { FleetPage } from './pages/Fleet';
 import { FeedsPage } from './pages/Feeds';
 import { AsnPage } from './pages/Asn';
+import { GeoPage } from './pages/Geo';
 import { CrowdsecPage } from './pages/Crowdsec';
 import { PreRoutingPage } from './pages/PreRouting';
 import { RulesetsPage } from './pages/Rulesets';
@@ -51,6 +52,7 @@ const GLOBAL_PAGES = {
   fleet: FleetPage,
   feeds: FeedsPage,
   asn: AsnPage,
+  geo: GeoPage,
   crowdsec: CrowdsecPage,
   prerouting: PreRoutingPage,
   rulesets: RulesetsPage,

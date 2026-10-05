@@ -23,6 +23,7 @@ const RESOURCES = {
   'threat-feeds': () => Resources.threatFeeds,
   'crowdsec-bouncers': () => Resources.crowdsecBouncers,
   'asn-databases': () => Resources.asnDatabases,
+  'geo-databases': () => Resources.geoDatabases,
 };
 
 /**

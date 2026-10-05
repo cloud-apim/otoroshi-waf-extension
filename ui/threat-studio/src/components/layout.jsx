@@ -37,6 +37,7 @@ export const GLOBAL_PAGES = [
   { id: 'fleet', label: 'Fleet', icon: 'map' },
   { id: 'feeds', label: 'Threat feeds', icon: 'globe' },
   { id: 'asn', label: 'ASN databases', icon: 'network' },
+  { id: 'geo', label: 'Geolocation', icon: 'pin' },
   { id: 'crowdsec', label: 'CrowdSec', icon: 'users' },
   { id: 'prerouting', label: 'Pre-routing', icon: 'flag' },
   { id: 'rulesets', label: 'WAF rulesets', icon: 'layers' },

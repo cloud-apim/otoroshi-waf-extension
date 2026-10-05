@@ -39,6 +39,7 @@ const SUITE_TOOLS = [
       { t: 'Threat feed catalog', d: 'Curated sources, ready to enable', p: 'threatfeedcatalog', i: 'book' },
       { t: 'Threat feeds', d: 'IP reputation feeds and their refresh', p: 'threatfeeds', i: 'shield-alt' },
       { t: 'ASN databases', d: 'Residential, hosting, VPN — a signal, never a rule on its own', p: 'asndatabases', i: 'project-diagram' },
+      { t: 'Geolocation databases', d: 'Where an address is, for @geoLookup and the consoles', p: 'geodatabases', i: 'map-marker-alt' },
       { t: 'CrowdSec bouncers', d: 'Consume community decisions, and report back', p: 'crowdsecbouncers', i: 'crow' },
     ],
   },

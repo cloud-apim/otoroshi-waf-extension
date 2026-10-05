@@ -20,7 +20,7 @@ DELETE /apis/waf.extensions.cloud-apim.com/v1/waf-configs/{id}
 ```
 
 The same shape for every other collection: `waf-rulesets`, `threat-policies`, `threat-feeds`,
-`asn-databases`, `crowdsec-bouncers`, `bot-policies`, `challenge-providers` and
+`asn-databases`, `geo-databases`, `crowdsec-bouncers`, `bot-policies`, `challenge-providers` and
 `honeypot-policies`.
 
 ```bash
@@ -198,12 +198,12 @@ All under `/extensions/cloud-apim/extensions/waf/reputation`, backoffice-authent
 | Method | Path | Body | Purpose |
 |---|---|---|---|
 | `GET` | `/_catalog` | — | The curated source catalog |
-| `GET` | `/_status` | — | Every feed and bouncer with its runtime state |
+| `GET` | `/_status` | — | Every feed, bouncer, ASN and geolocation database with its runtime state |
 | `POST` | `/_template` | `{"entry":"tor-exit-nodes"}` | Build a `ThreatFeed` from a catalog entry |
-| `POST` | `/_refresh` | `{"feed":"<id>"}`, `{}`, or `{"asn":true}` | Refresh one feed, all of them, or the ASN table |
+| `POST` | `/_refresh` | `{"feed":"<id>"}`, `{}`, `{"asn":true}` or `{"geo":true}` | Refresh one feed, all of them, the ASN table, or the geolocation databases |
 | `POST` | `/_rollback` | `{"feed":"<id>"}` | Restore the previous snapshot |
 | `POST` | `/_lookup` | `{"ip":"1.2.3.4"}` | Evaluate an address against every enabled source |
-| `POST` | `/_geo` | `{"ips":["1.2.3.4", …]}` | Network, AS number and registration country of up to 500 addresses, from the enabled ASN databases — what Threat Studio shows next to a caller |
+| `POST` | `/_geo` | `{"ips":["1.2.3.4", …]}` | Location (geolocation databases), network and AS number (ASN databases) of up to 500 addresses, with the attributions the data requires — what Threat Studio shows next to a caller. `located: false` means the country is only where the network is registered |
 | `POST` | `/_crowdsec_sync` | `{"bouncer":"<id>"}` or `{}` | Sync one bouncer, or all of them |
 
 `/_status` is the one worth wiring into monitoring:

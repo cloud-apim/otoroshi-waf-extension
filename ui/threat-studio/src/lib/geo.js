@@ -1,7 +1,8 @@
 import { Reputation } from './security';
 
-// Where an address comes from, as the ASN databases know it: the network, its AS number and the
-// country it is registered in. Display only — the score never reads this.
+// Where an address comes from: the network and its AS number from the ASN databases, and the
+// location from the geolocation databases. Without a geolocation database the country is the one
+// the network is registered in. Display only — the score never reads this.
 //
 // A table of callers asks for a page worth of addresses at once, so lookups are coalesced: every
 // address requested in the same tick goes out in one call, and the answer is kept for the session.
@@ -21,9 +22,32 @@ function flush() {
   for (let i = 0; i < batch.length; i += MAX_PER_CALL) ask(batch.slice(i, i + MAX_PER_CALL));
 }
 
+// The free geolocation databases are licensed on the condition that whoever displays them says
+// where the data comes from: every answer carries the attributions, and whatever shows a location
+// shows them (see `GeoAttribution`).
+let attributions = [];
+const attributionListeners = new Set();
+
+export function getGeoAttributions() {
+  return attributions;
+}
+
+export function onGeoAttributions(listener) {
+  attributionListeners.add(listener);
+  return () => attributionListeners.delete(listener);
+}
+
+export function setGeoAttributions(next) {
+  const list = Array.isArray(next) ? next : [];
+  if (JSON.stringify(list) === JSON.stringify(attributions)) return;
+  attributions = list;
+  attributionListeners.forEach((l) => l(list));
+}
+
 function ask(chunk) {
   Reputation.geo({ ips: chunk.map(([ip]) => ip) })
     .then((res) => {
+      setGeoAttributions(res && res.attributions);
       const results = (res && res.results) || {};
       chunk.forEach(([ip, resolve]) => resolve(decorate(results[ip])));
     })
@@ -84,7 +108,7 @@ export function countryName(country) {
 }
 
 function decorate(raw) {
-  if (!raw || (!raw.country && !raw.org)) return null;
+  if (!raw || (!raw.country && !raw.org && !raw.city)) return null;
   // iptoasn marks unregistered space as `None`
   const country = raw.country && raw.country !== 'None' ? raw.country : '';
   return {
@@ -93,14 +117,18 @@ function decorate(raw) {
     country,
     countryName: countryName(country),
     flag: flagOf(country),
+    city: raw.city || '',
+    // false when the country is only the one the network is registered in
+    located: !!raw.located,
   };
 }
 
-/** "France · Clever Cloud SAS (AS213394)" */
+/** "Paris, France · Clever Cloud SAS (AS213394)" */
 export function describeGeo(geo) {
   if (!geo) return '';
   const network = geo.org ? `${geo.org}${geo.asn ? ` (AS${geo.asn})` : ''}` : geo.asn ? `AS${geo.asn}` : '';
-  return [geo.countryName, network].filter(Boolean).join(' · ');
+  const place = [geo.city, geo.countryName].filter(Boolean).join(', ');
+  return [place, network].filter(Boolean).join(' · ');
 }
 
 /**

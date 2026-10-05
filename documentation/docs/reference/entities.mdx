@@ -125,6 +125,25 @@ A named body of SecLang that several configs can share. See [rulesets](../waf/ru
 The list is **ordered**: the first matching category wins. See
 [ASN classification](../reputation/asn.mdx#order-is-the-whole-trick).
 
+## GeoDatabase
+
+`geo-databases` · `waf.extensions.cloud-apim.com/GeoDatabase`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `url` | string | `https://download.db-ip.com/free/dbip-country-lite-{yyyy}-{MM}.mmdb.gz` |
+| `username` | string | — · basic auth, the account id for MaxMind |
+| `password` | string | — · basic auth, the license key for MaxMind |
+| `headers` | object | `{}` |
+| `refresh_interval_seconds` | number | `86400` |
+| `timeout_millis` | number | `300000` |
+| `max_size_mb` | number | `512` — once extracted |
+| `attribution` | string | `IP Geolocation by DB-IP` |
+| `attribution_url` | string | `https://db-ip.com` |
+
+Any MaxMind DB file, raw, gzipped or in a tar.gz. See [Geolocation](../reputation/geolocation.mdx).
+
 ## ThreatPolicy
 
 `threat-policies` · `waf.extensions.cloud-apim.com/ThreatPolicy`

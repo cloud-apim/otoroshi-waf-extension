@@ -576,6 +576,40 @@ export const SCHEMAS = {
       },
     ],
   },
+
+  /* ------------------------------------------------------------------ geolocation database */
+  'geo-databases': {
+    resource: () => Resources.geoDatabases,
+    label: 'Geolocation database',
+    create: [
+      { key: 'name', label: 'Name', type: 'text', placeholder: 'Geolocation database' },
+      { key: 'url', label: 'Source url', type: 'text', help: 'A .mmdb file, raw, gzipped or in a tar.gz. {yyyy} and {MM} stand for the current month' },
+    ],
+    sections: [
+      { title: 'Identity', fields: common },
+      {
+        title: 'Source',
+        description: 'Any MaxMind DB file: DB-IP lite (free, no key), MaxMind GeoLite2 or GeoIP2, IPinfo lite, IP66. {yyyy} and {MM} stand for the current month, then the previous one while the new file is not out.',
+        fields: [
+          { key: 'url', label: 'Url', type: 'text' },
+          { key: 'username', label: 'Username', type: 'text', help: 'Sent as basic auth: your account id, for MaxMind' },
+          { key: 'password', label: 'Password', type: 'secret', help: 'Your license key, for MaxMind' },
+          { key: 'headers', label: 'Headers', type: 'json', help: 'Extra request headers, as a JSON object' },
+          { key: 'refresh_interval_seconds', label: 'Check every (s)', type: 'number', help: 'An unchanged file is not downloaded again' },
+          { key: 'timeout_millis', label: 'Timeout (ms)', type: 'number' },
+          { key: 'max_size_mb', label: 'Max size (MB)', type: 'number', help: 'Once extracted. Country databases are a few MB, city ones a few hundred' },
+        ],
+      },
+      {
+        title: 'Attribution',
+        description: 'The free databases are licensed on the condition that whoever displays them says where the data comes from. The studio shows this wherever it shows a location.',
+        fields: [
+          { key: 'attribution', label: 'Text', type: 'text' },
+          { key: 'attribution_url', label: 'Link', type: 'text' },
+        ],
+      },
+    ],
+  },
 };
 
 export function schemaOf(plural) {

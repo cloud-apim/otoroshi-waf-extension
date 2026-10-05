@@ -60,6 +60,7 @@ export const Resources = {
   threatFeeds: resource('threat-feeds'),
   crowdsecBouncers: resource('crowdsec-bouncers'),
   asnDatabases: resource('asn-databases'),
+  geoDatabases: resource('geo-databases'),
   routes: { list: (filters = {}) => {
     const params = new URLSearchParams({ in_mem: inMem() });
     Object.entries(filters).forEach(([k, v]) => params.append(`filter.${k}`, String(v)));

@@ -134,16 +134,29 @@ you have tuned level 1 produces a flood of false positives and usually ends with
 the WAF entirely. Go up only after [tuning](./tuning.mdx) the level below.
 :::
 
+## Geolocation
+
+`@geoLookup` and the `GEO` collection work once a [geolocation database](../reputation/geolocation.mdx)
+is configured — DB-IP lite by default, free and keyless:
+
+```
+SecRule REMOTE_ADDR "@geoLookup" "id:10001,phase:1,deny,status:403,msg:'request from %{GEO.COUNTRY_CODE}',chain"
+    SecRule GEO:COUNTRY_CODE "@within KP IR" "t:none"
+```
+
+Without one, `@geoLookup` never matches and `GEO` stays empty. `SecGeoLookupDb` is accepted and
+ignored: the database is the one the extension downloads. As for any chain, keep both lines in the
+same element of `rules`: each element is compiled on its own.
+
 ## Operators that are parsed but never match
 
-Eight SecLang operators are accepted by the parser and always evaluate to **no match**. They depend
-on a host environment the engine does not provide — DNS resolution, a geolocation database, a
-filesystem, an XML toolchain. Each one logs at debug level when it is reached.
+Seven SecLang operators are accepted by the parser and always evaluate to **no match**. They depend
+on a host environment the engine does not provide — DNS resolution, a filesystem, an XML toolchain.
+Each one logs at debug level when it is reached.
 
 | Operator | What it would do |
 |---|---|
 | `@rbl` | DNSBL lookup of the source address |
-| `@geoLookup` | Geolocation of the source address — the `GEO` collection stays empty |
 | `@inspectFile` | Hand an uploaded file to an external program |
 | `@validateDTD` | Validate an XML body against a DTD |
 | `@validateSchema` | Validate an XML body against an XSD |

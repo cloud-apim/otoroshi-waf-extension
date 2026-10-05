@@ -87,7 +87,7 @@ class WafExtensionState() {
   }
 }
 
-class CloudApimWafIntegration(env: Env, configuration: Configuration) extends SecLangIntegration {
+class CloudApimWafIntegration(env: Env, configuration: Configuration, geolocate: String => Option[Map[String, String]] = _ => None) extends SecLangIntegration {
 
   private val logger = Logger("cloud-apim-waf")
   private val maxCacheItems = configuration.getOptional[Int]("integration.max-cache-items").getOrElse(1000)
@@ -117,6 +117,9 @@ class CloudApimWafIntegration(env: Env, configuration: Configuration) extends Se
   override def audit(ruleId: Int, context: RequestContext, state: RuntimeState, phase: Int, msg: String, logdata: List[String]): Unit = {
     CloudApimWafAuditEvent(ruleId, context, state, phase, msg, logdata).toAnalytics()(using env)
   }
+
+  // @geoLookup: a memory-mapped database read, so answering inline is fine
+  override def geoLookup(address: String): Option[Map[String, String]] = geolocate(address)
 }
 
 object CloudApimWafExtension {
@@ -182,7 +185,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   private val logger = Logger("cloud-apim-waf-extension")
   private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
-  private val integration = new CloudApimWafIntegration(env, configuration)
+  private val integration = new CloudApimWafIntegration(env, configuration, ip => reputation.geolocate(ip).map(_.seclang))
 
   val factory = SecLang.factory(presets, config, integration)
 

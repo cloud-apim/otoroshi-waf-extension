@@ -1,0 +1,121 @@
+---
+sidebar_position: 5.5
+title: Geolocation
+description: Where an address is, from a MaxMind DB file each node downloads — for @geoLookup and for the consoles.
+---
+
+# Geolocation
+
+A geolocation database says where an address is: its country, and for the larger databases its
+region, city and coordinates. It backs two things:
+
+- **`@geoLookup` and the `GEO` collection** in WAF rules, so a rule can say "from these countries";
+- **the location the consoles show** next to every address, and the map of Threat Studio.
+
+**Threat Protection → Geolocation databases**, or **Threat Studio → Geolocation**.
+
+## Sources
+
+Any database in the MaxMind DB format (`.mmdb`) works. The file can be served raw, gzipped or as a
+tar.gz, which covers how every provider below publishes it; the format is told from the content,
+not from the url.
+
+| Source | Account | Content | Licence | Updated | Url |
+|---|---|---|---|---|---|
+| **DB-IP lite, country** (default) | none | country, continent | CC BY 4.0 | monthly | `https://download.db-ip.com/free/dbip-country-lite-{yyyy}-{MM}.mmdb.gz` |
+| DB-IP lite, city | none | + region, city, coordinates | CC BY 4.0 | monthly | `https://download.db-ip.com/free/dbip-city-lite-{yyyy}-{MM}.mmdb.gz` |
+| MaxMind GeoLite2 | account id + license key | country, or city | GeoLite EULA | twice a week | `https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz` |
+| IPinfo lite | token | country, continent, ASN | CC BY-SA 4.0 | daily | `https://ipinfo.io/data/ipinfo_lite.mmdb?token=…` |
+| IP66 | none | country, continent, ASN | CC BY 4.0 | daily | `https://downloads.ip66.dev/db/ip66.mmdb` |
+
+`{yyyy}` and `{MM}` are filled with the current month. DB-IP publishes a new file at the start of
+each month, so until it is out the previous month's url is tried next.
+
+For MaxMind, put the account id in `username` and the license key in `password`: they are sent as
+basic auth, and only to MaxMind: the download redirects to a presigned storage url on another host,
+which never sees them.
+
+**Country or city?** The country database is 4 MB to download and 8 MB on disk. The city one is
+121 MB to download, fifteen times the ranges, and its coordinates are approximate. For rules and for
+the consoles, the country is what matters; the city mostly makes the globe prettier.
+
+:::info Attribution is a licence condition
+The free databases are free on the condition that whoever displays the data says where it comes
+from. Fill `attribution` and `attribution_url` (the defaults are DB-IP's): Threat Studio shows them
+under the map and wherever it shows a location.
+:::
+
+## How it is kept reliable
+
+Each node downloads the database, unpacks it and memory-maps it. A lookup is a read of that
+mapping, in memory, with no network and no lock on the request path.
+
+| What can go wrong | What happens |
+|---|---|
+| The provider is down, slow, or answers an error | The last good database keeps serving. The error is shown on the database's status, and the download is retried five minutes later rather than at the next refresh |
+| The file is not a database (an html maintenance page served as 200, a truncated download) | It is opened before it is swapped in: a file that does not open never replaces the one serving |
+| Nothing changed | The check is a conditional request (`If-None-Match`, `If-Modified-Since`): nothing is downloaded |
+| A new file is published | It is swapped in at once; the one it replaces is closed a minute later, so a lookup already holding it finishes |
+| An archive inflates without end | The extracted size is capped by `max_size_mb`, as is the download |
+| The node has no writable temporary directory | That refresh fails, visibly, and is retried. Point `reputation.geo.work-dir` at a writable volume |
+
+Nothing forks a process or calls a shell: gzip and tar are read by the JVM.
+
+## In WAF rules
+
+`@geoLookup` locates its target — normally `REMOTE_ADDR` — and fills `GEO` for the rules that follow:
+
+```
+SecRule REMOTE_ADDR "@geoLookup" \
+    "id:10001,phase:1,deny,status:403,\
+    msg:'request from %{GEO.COUNTRY_CODE}',\
+    chain"
+    SecRule GEO:COUNTRY_CODE "@within KP IR" "t:none"
+```
+
+| `GEO` member | From a country database | From a city database |
+|---|---|---|
+| `COUNTRY_CODE`, `COUNTRY_CODE3`, `COUNTRY_NAME`, `COUNTRY_CONTINENT` | yes | yes |
+| `REGION`, `CITY`, `POSTAL_CODE`, `LATITUDE`, `LONGITUDE` | — | when known |
+
+A few things to know:
+
+- **Keep a chain in one element.** Each element of a WAF config's `rules` is compiled on its own, so
+  a `chain` cannot continue into the next element: the first rule would act alone, on every address
+  the database knows. Put both lines in the same element, or in a [ruleset](../waf/rulesets.mdx).
+
+- **`REMOTE_ADDR` is the client as Otoroshi resolves it** — trusted proxies and forwarded headers
+  applied — not the peer of the connection, which behind a load balancer would be the load balancer.
+- **An address no database knows does not match**, and `!@geoLookup` does. Without any geolocation
+  database, `@geoLookup` never matches.
+- **`GEO` lives for one evaluation.** The request phases (1, 2) and the response phases (3, 4) are
+  evaluated separately: a response rule that needs `GEO` runs `@geoLookup` again, which costs a
+  memory read.
+- **`SecGeoLookupDb` is accepted and ignored**: the database is the one configured here.
+- **The CRS does not use it.** CRS 4 moved country blocking out of its rules; this is for your own.
+
+:::caution A country is not an identity
+Blocking a country stops the traffic that does not bother to hide, which is a fair amount of noise.
+It does not stop anyone with a VPN. Treat it as noise reduction, not as protection.
+:::
+
+## In the consoles
+
+Next to an address, Threat Studio shows where it is from the geolocation databases, and its network
+from the [ASN databases](./asn.mdx). For an address no geolocation database knows, the country is the
+one its network is registered in — close enough to tell a french ISP from a US cloud, and marked as
+such.
+
+When several geolocation databases are loaded, the first one by id that knows an address answers.
+
+## Fields
+
+| Field | Default |
+|---|---|
+| `url` | DB-IP lite, country, `{yyyy}-{MM}` |
+| `username`, `password` | — · sent as basic auth |
+| `headers` | `{}` |
+| `refresh_interval_seconds` | `86400` — how often to ask whether the file changed |
+| `timeout_millis` | `300000` |
+| `max_size_mb` | `512` — once extracted |
+| `attribution`, `attribution_url` | `IP Geolocation by DB-IP`, `https://db-ip.com` |

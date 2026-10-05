@@ -191,6 +191,7 @@ final class ReputationRegistry {
 
   private val snapshots = new TrieMap[String, FeedSnapshot]()
   private val asnSnapshots = new TrieMap[String, AsnSnapshot]()
+  private val geoSnapshots = new TrieMap[String, GeoSnapshot]()
   private val previous  = new TrieMap[String, FeedSnapshot]()
   private val bouncers  = new TrieMap[String, CrowdSecStore]()
 
@@ -234,6 +235,11 @@ final class ReputationRegistry {
   def putAsnSnapshot(id: String, snap: AsnSnapshot): Unit = { asnSnapshots.put(id, snap); () }
   def allAsnSnapshots: Map[String, AsnSnapshot]           = asnSnapshots.readOnlySnapshot().toMap
   def retainAsnSnapshots(ids: Set[String]): Unit          = asnSnapshots.keySet.diff(ids).foreach(asnSnapshots.remove)
+
+  def geoSnapshot(id: String): Option[GeoSnapshot]        = geoSnapshots.get(id)
+  def putGeoSnapshot(id: String, snap: GeoSnapshot): Unit = { geoSnapshots.put(id, snap); () }
+  def allGeoSnapshots: Map[String, GeoSnapshot]           = geoSnapshots.readOnlySnapshot().toMap
+  def removeGeoSnapshot(id: String): Option[GeoSnapshot]  = geoSnapshots.remove(id)
 
   def crowdSecStore(bouncerId: String): CrowdSecStore  = bouncers.getOrElseUpdate(bouncerId, new CrowdSecStore())
   def crowdSecStoreOpt(id: String): Option[CrowdSecStore] = bouncers.get(id)
@@ -295,6 +301,7 @@ final class ReputationRegistry {
   def status: JsValue = Json.obj(
     "feeds"    -> JsArray(allSnapshots.map(_.json)),
     "crowdsec" -> JsObject(allCrowdSecStores.view.mapValues(_.status).toMap),
-    "asn"      -> JsObject(allAsnSnapshots.view.mapValues(_.json).toMap)
+    "asn"      -> JsObject(allAsnSnapshots.view.mapValues(_.json).toMap),
+    "geo"      -> JsObject(allGeoSnapshots.view.mapValues(_.json).toMap)
   )
 }

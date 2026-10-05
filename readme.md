@@ -30,6 +30,7 @@ This extension is built on top of the following open-source Cloud APIM libraries
 - **Threat intelligence feeds**: Match callers against blocklists and cloud provider ranges, with a catalog of 14 curated sources
 - **CrowdSec integration**: Consume decisions from a Local API, and report WAF detections back as alerts
 - **ASN classification**: Resolve the caller to its network from the public routing table, shipped as a low weight and never as a block — a datacenter is not a verdict
+- **Geolocation**: Any MaxMind DB file (DB-IP lite by default, free and keyless), downloaded and memory-mapped by each node, backing `@geoLookup` and the `GEO` collection in WAF rules
 - **Weighted scoring**: Sources carry a weight and an action, so weak signals accumulate instead of forcing a binary judgement
 - **Nothing blocking on the request path**: In-memory range index, scheduled refreshes, fail-open on every external dependency
 
@@ -147,6 +148,7 @@ Nine, all with full CRUD, admin API, import/export and Kubernetes CRDs, under th
 | `ThreatPolicy` | `threat-policies` | Score tiers and the action at each, dry run, exemptions |
 | `ThreatFeed` | `threat-feeds` | A reputation source: url, format, refresh interval, weight, action |
 | `AsnDatabase` | `asn-databases` | Address-to-network table and its ordered categories |
+| `GeoDatabase` | `geo-databases` | A geolocation database (`.mmdb`): source, credentials, attribution |
 | `CrowdSecBouncer` | `crowdsec-bouncers` | A CrowdSec Local API connection, in both directions |
 | `BotPolicy` | `bot-policies` | Crawler signatures, per-category rules, `robots.txt` generation |
 | `ChallengeProvider` | `challenge-providers` | Proof of work settings, or a vendor widget |

@@ -24,6 +24,7 @@ class ReputationDatastores(env: Env, extensionId: AdminExtensionId) {
   val threatFeedDatastore: ThreatFeedDatastore           = new KvThreatFeedDatastore(extensionId, env.datastores.redis, env)
   val crowdSecBouncerDatastore: CrowdSecBouncerDatastore = new KvCrowdSecBouncerDatastore(extensionId, env.datastores.redis, env)
   val asnDatabaseDatastore: AsnDatabaseDatastore        = new KvAsnDatabaseDatastore(extensionId, env.datastores.redis, env)
+  val geoDatabaseDatastore: GeoDatabaseDatastore        = new KvGeoDatabaseDatastore(extensionId, env.datastores.redis, env)
 }
 
 class ReputationState {
@@ -31,6 +32,7 @@ class ReputationState {
   private val _feeds    = new UnboundedTrieMap[String, ThreatFeed]()
   private val _bouncers = new UnboundedTrieMap[String, CrowdSecBouncer]()
   private val _asn      = new UnboundedTrieMap[String, AsnDatabase]()
+  private val _geo      = new UnboundedTrieMap[String, GeoDatabase]()
 
   val registry: ReputationRegistry = new ReputationRegistry()
 
@@ -44,6 +46,12 @@ class ReputationState {
   def allAsnDatabases(): Seq[AsnDatabase]         = _asn.values.toSeq
   def updateAsnDatabases(values: Seq[AsnDatabase]): Unit = {
     _asn.addAll(values.map(v => (v.id, v))).remAll(_asn.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  def geoDatabase(id: String): Option[GeoDatabase] = _geo.get(id)
+  def allGeoDatabases(): Seq[GeoDatabase]         = _geo.values.toSeq
+  def updateGeoDatabases(values: Seq[GeoDatabase]): Unit = {
+    _geo.addAll(values.map(v => (v.id, v))).remAll(_geo.keySet.toSeq.diff(values.map(_.id)))
   }
 
   def crowdSecBouncer(id: String): Option[CrowdSecBouncer] = _bouncers.get(id)
@@ -80,6 +88,27 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
   val asnRefresher: AsnRefresher = new AsnRefresher(http, states.registry, logger)
   val crowdsec: CrowdSecClient = new CrowdSecClient(http, states.registry, logger)
 
+  // geolocation databases are files, memory-mapped: they live in a directory of their own, created
+  // on first use so that a read-only filesystem fails one refresh, visibly, rather than the startup
+  private lazy val geoWorkDir: java.nio.file.Path =
+    configuration.getOptional[String]("reputation.geo.work-dir").filter(_.trim.nonEmpty) match {
+      case Some(dir) => java.nio.file.Files.createDirectories(java.nio.file.Paths.get(dir))
+      case None      => java.nio.file.Files.createTempDirectory("cloud-apim-waf-geo-")
+    }
+
+  // a replaced generation is closed a minute later: a lookup that already holds it gets to finish
+  private def retireGeo(snapshot: GeoSnapshot): Unit = {
+    env.otoroshiScheduler.scheduleOnce(60L.seconds)(closeGeo(snapshot))
+    ()
+  }
+
+  private def closeGeo(snapshot: GeoSnapshot): Unit = {
+    snapshot.reader.foreach(reader => Try(reader.close()))
+    snapshot.file.foreach(file => Try(java.nio.file.Files.deleteIfExists(file)))
+  }
+
+  val geoRefresher: GeoRefresher = new GeoRefresher(http, states.registry, () => geoWorkDir, retireGeo, logger)
+
   private val ticker   = new AtomicReference[Option[Cancellable]](None)
   private val relay    = new AtomicReference[Option[org.apache.pekko.actor.ActorRef]](None)
   private val inFlight = new TrieMap[String, Boolean]()
@@ -102,6 +131,7 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
 
   def stop(): Unit = {
     ticker.getAndSet(None).foreach(_.cancel())
+    states.registry.allGeoSnapshots.keys.flatMap(states.registry.removeGeoSnapshot).foreach(closeGeo)
     relay.getAndSet(None).foreach { actor =>
       env.analyticsActorSystem.eventStream.unsubscribe(actor)
       env.analyticsActorSystem.stop(actor)
@@ -135,11 +165,15 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
       feeds    <- datastores.threatFeedDatastore.findAllAndFillSecrets()
       bouncers <- datastores.crowdSecBouncerDatastore.findAllAndFillSecrets()
       asnDbs   <- datastores.asnDatabaseDatastore.findAllAndFillSecrets()
+      geoDbs   <- datastores.geoDatabaseDatastore.findAllAndFillSecrets()
     } yield {
       states.updateThreatFeeds(feeds)
       states.updateCrowdSecBouncers(bouncers)
       states.updateAsnDatabases(asnDbs)
       states.registry.retainAsnSnapshots(asnDbs.map(_.id).toSet)
+      states.updateGeoDatabases(geoDbs)
+      // a deleted database releases its file, after the same grace as a replaced one
+      states.registry.allGeoSnapshots.keySet.diff(geoDbs.map(_.id).toSet).flatMap(states.registry.removeGeoSnapshot).foreach(retireGeo)
       // drop the runtime index of anything that no longer exists
       states.registry.retainSnapshots(feeds.map(_.id).toSet)
       val bouncerIds = bouncers.map(_.id).toSet
@@ -152,7 +186,8 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
   def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = Seq(
     AdminExtensionEntity(ThreatFeed.resource(env, datastores, states)),
     AdminExtensionEntity(CrowdSecBouncer.resource(env, datastores, states)),
-    AdminExtensionEntity(AsnDatabase.resource(env, datastores, states))
+    AdminExtensionEntity(AsnDatabase.resource(env, datastores, states)),
+    AdminExtensionEntity(GeoDatabase.resource(env, datastores, states))
   )
 
   // -----------------------------------------------------------------------------------------------
@@ -167,6 +202,9 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
       }
       states.allAsnDatabases().filter(_.usable).foreach { db =>
         guard(s"asn:${db.id}", asnRefresher.isDue(db, now))(asnRefresher.refresh(db).map(_ => ()))
+      }
+      states.allGeoDatabases().filter(_.usable).foreach { db =>
+        guard(s"geo:${db.id}", geoRefresher.isDue(db, now))(geoRefresher.refresh(db).map(_ => ()))
       }
       states.allCrowdSecBouncers().foreach { bouncer =>
         guard(s"pull:${bouncer.id}", bouncer.pullUsable && crowdsec.isPullDue(bouncer, now))(
@@ -211,6 +249,14 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
    */
   def network(ip: String): Option[AsnRecord] =
     states.allAsnDatabases().iterator.filter(_.enabled).flatMap(db => states.registry.asnSnapshot(db.id)).flatMap(_.ranges.get(ip)).nextOption()
+
+  /** The enabled geolocation databases that have something loaded, in a stable order. */
+  private def loadedGeoDatabases(): Seq[(GeoDatabase, GeoSnapshot)] =
+    states.allGeoDatabases().filter(_.enabled).sortBy(_.id).flatMap(db => states.registry.geoSnapshot(db.id).filter(_.loaded).map(db -> _))
+
+  /** Where an address is, from the first loaded geolocation database that knows it. */
+  def geolocate(ip: String): Option[GeoLocation] =
+    loadedGeoDatabases().iterator.flatMap { case (_, snapshot) => snapshot.lookup(ip) }.nextOption()
 
   /**
    * Called for every waf trail event.
@@ -320,6 +366,15 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
         "snapshot" -> states.registry.asnSnapshot(db.id).map(_.json).getOrElse(JsNull).asValue
       )
     }
+    val geo = states.allGeoDatabases().map { db =>
+      Json.obj(
+        "id"       -> db.id,
+        "name"     -> db.name,
+        "enabled"  -> db.enabled,
+        "url"      -> GeoDatabase.redact(db.url),
+        "snapshot" -> states.registry.geoSnapshot(db.id).map(_.json).getOrElse(JsNull).asValue
+      )
+    }
     val bouncers = states.allCrowdSecBouncers().map { bouncer =>
       Json.obj(
         "id"            -> bouncer.id,
@@ -333,7 +388,7 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
         "store"         -> states.registry.crowdSecStoreOpt(bouncer.id).map(_.status).getOrElse(JsNull).asValue
       )
     }
-    Json.obj("feeds" -> JsArray(feeds), "crowdsec" -> JsArray(bouncers), "asn" -> JsArray(asn))
+    Json.obj("feeds" -> JsArray(feeds), "crowdsec" -> JsArray(bouncers), "asn" -> JsArray(asn), "geo" -> JsArray(geo))
   }
 
   private def handleTemplate(body: JsValue): Future[Result] = {
@@ -351,8 +406,17 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
     }
   }
 
+  private def handleRefreshGeo(): Future[Result] = {
+    val dbs = states.allGeoDatabases().filter(_.usable)
+    if (dbs.isEmpty) Results.Ok(Json.obj("done" -> false, "error" -> "no usable geolocation database")).vfuture
+    else Future.sequence(dbs.map(geoRefresher.refresh)).map { snaps =>
+      Results.Ok(Json.obj("done" -> snaps.forall(_.error.isEmpty), "snapshots" -> JsArray(snaps.map(_.json))))
+    }
+  }
+
   private def handleRefresh(body: JsValue): Future[Result] = {
     if (body.select("asn").asOpt[Boolean].contains(true)) return handleRefreshAsn()
+    if (body.select("geo").asOpt[Boolean].contains(true)) return handleRefreshGeo()
     val requested = body.select("feed").asOptString
     val feeds     = requested match {
       case Some(id) => states.threatFeed(id).toSeq
@@ -391,12 +455,34 @@ class ReputationModule(env: Env, extensionId: AdminExtensionId, configuration: C
     }
   }
 
-  /** Batched, because a table of callers asks for a page worth of addresses at once. */
+  /**
+   * Batched, because a table of callers asks for a page worth of addresses at once.
+   *
+   * The network comes from the asn databases and the location from the geolocation ones. When both
+   * answer, `country` is where the address is rather than where its network is registered.
+   */
   private def handleGeo(body: JsValue): Future[Result] = {
-    val ips     = body.select("ips").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty).distinct.take(500)
-    val results = ips.map(ip => ip -> network(ip).map(_.json).getOrElse(JsNull))
-    val sources = states.allAsnDatabases().count(db => db.enabled && states.registry.asnSnapshot(db.id).exists(_.entries > 0))
-    Results.Ok(Json.obj("done" -> true, "sources" -> sources, "results" -> JsObject(results))).vfuture
+    val ips       = body.select("ips").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty).distinct.take(500)
+    val geoLoaded = loadedGeoDatabases()
+    val results   = ips.map { ip =>
+      val net = network(ip)
+      val loc = geolocate(ip)
+      val merged = (net, loc) match {
+        case (None, None)        => JsNull
+        case (n, l)              =>
+          n.map(_.json.as[JsObject]).getOrElse(Json.obj()) ++ l.map(_.json.as[JsObject]).getOrElse(Json.obj()) ++ Json.obj(
+            "country" -> l.flatMap(_.countryCode).orElse(n.map(_.country)),
+            "located" -> l.isDefined
+          )
+      }
+      ip -> merged
+    }
+    val sources = states.allAsnDatabases().count(db => db.enabled && states.registry.asnSnapshot(db.id).exists(_.entries > 0)) + geoLoaded.size
+    // the free databases are licensed on the condition that whoever displays them says where from
+    val attributions = geoLoaded.collect {
+      case (db, _) if db.attribution.trim.nonEmpty => Json.obj("text" -> db.attribution.trim, "url" -> db.attributionUrl.trim)
+    }.distinct
+    Results.Ok(Json.obj("done" -> true, "sources" -> sources, "attributions" -> JsArray(attributions), "results" -> JsObject(results))).vfuture
   }
 
   private def handleCrowdSecSync(body: JsValue): Future[Result] = {

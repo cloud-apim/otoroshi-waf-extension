@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { describeGeo, ipOfIdentity, lookupGeo } from '../lib/geo';
+import { describeGeo, getGeoAttributions, ipOfIdentity, lookupGeo, onGeoAttributions } from '../lib/geo';
 
 export function useGeo(ip) {
   const [geo, setGeo] = useState(null);
@@ -29,6 +29,34 @@ export function IpAddress({ value, fallback = '—' }) {
   );
 }
 
+export function useGeoAttributions() {
+  const [list, setList] = useState(getGeoAttributions());
+  useEffect(() => onGeoAttributions(setList), []);
+  return list;
+}
+
+/** "IP Geolocation by DB-IP": the credit the free databases ask for, wherever a location is shown. */
+export function GeoAttribution({ style }) {
+  const list = useGeoAttributions();
+  if (!list.length) return null;
+  return (
+    <div className="faint geo-attribution" style={{ fontSize: 11, marginTop: 8, ...style }}>
+      {list.map((a, i) => (
+        <span key={a.text}>
+          {i > 0 && ' · '}
+          {a.url ? (
+            <a href={a.url} target="_blank" rel="noreferrer">
+              {a.text}
+            </a>
+          ) : (
+            a.text
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** The `dt`/`dd` rows a drawer adds under an address: country and network, when known. */
 export function GeoRows({ value }) {
   const geo = useGeo(ipOfIdentity(value));
@@ -40,7 +68,14 @@ export function GeoRows({ value }) {
           <dt>Country</dt>
           <dd>
             {geo.flag} {geo.countryName}
+            {geo.country && !geo.located ? <span className="faint" title="No geolocation database knows this address: this is the country its network is registered in"> · registration</span> : null}
           </dd>
+        </>
+      )}
+      {geo.city && (
+        <>
+          <dt>City</dt>
+          <dd>{geo.city}</dd>
         </>
       )}
       {(geo.org || geo.asn) && (

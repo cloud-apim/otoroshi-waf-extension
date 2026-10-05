@@ -120,10 +120,19 @@ object CloudApimWafFabric {
   }
 }
 
+/**
+ * `REMOTE_ADDR` is the client as Otoroshi resolves it (trusted proxies, forwarded headers), not the
+ * peer of the connection: behind a load balancer the peer is the load balancer for every request,
+ * which is useless to a rule and worse to a geolocation.
+ */
 object RequestContextBuilder {
+  // the peer's port: the last segment, so that an ipv6 peer does not break it
+  private def remotePort(req: RequestHeader): Int = {
+    val conn = req.headers.get("Remote-Address").getOrElse("")
+    conn.substring(conn.lastIndexOf(':') + 1).toIntOption.getOrElse(0)
+  }
+
   def request(req: RequestHeader, request: NgPluginHttpRequest, body: Option[ByteString])(using env: Env): RequestContext = {
-    val conn = req.headers.get("Remote-Address").getOrElse("0.0.0.0:0")
-    val connParts = conn.split(":")
     RequestContext(
       method = request.method.toUpperCase,
       uri = req.uri,
@@ -134,15 +143,13 @@ object RequestContextBuilder {
       status = None,
       statusTxt = None,
       startTime = System.currentTimeMillis(),
-      remoteAddr = connParts.headOption.getOrElse("0.0.0.0"),
-      remotePort = connParts.lastOption.map(_.toInt).getOrElse(0),
+      remoteAddr = req.theIpAddress,
+      remotePort = remotePort(req),
       protocol = req.version.toLowerCase,
       secure = req.theSecured
     )
   }
   def response(req: RequestHeader, response: NgPluginHttpResponse, body: Option[ByteString])(using env: Env): RequestContext = {
-    val conn = req.headers.get("Remote-Address").getOrElse("0.0.0.0:0")
-    val connParts = conn.split(":")
     RequestContext(
       method = req.method.toUpperCase,
       uri = req.theUri.toString(),
@@ -153,8 +160,8 @@ object RequestContextBuilder {
       status = Some(response.status),
       statusTxt = StatusCodes.get(response.status),
       startTime = System.currentTimeMillis(),
-      remoteAddr = connParts.headOption.getOrElse("0.0.0.0"),
-      remotePort = connParts.lastOption.map(_.toInt).getOrElse(0),
+      remoteAddr = req.theIpAddress,
+      remotePort = remotePort(req),
       protocol = req.version.toLowerCase,
       secure = req.theSecured
     )

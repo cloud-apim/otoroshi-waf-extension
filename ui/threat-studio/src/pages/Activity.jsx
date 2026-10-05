@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useWorkspace } from '../App';
 import { AreaChart, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
-import { IpAddress } from '../components/ip';
+import { GeoAttribution, IpAddress } from '../components/ip';
 import { RuleId, useRules } from '../components/rule';
 import { Card, Empty, ErrorAlert, Loading, PageHeader, Segmented, Tabs, useAsync } from '../components/ui';
 import { DataTable, Donut, HourGrid, Kpi, NoExporter, PeriodPicker, Ranked, RefreshControl, ShareBar, useTimeView } from '../components/widgets';
@@ -374,7 +374,7 @@ function Geography({ d, query, setQuery }) {
 
       <Card
         title="Where the decisions come from"
-        description="The country a caller's network is registered in, as the ASN databases know it — close enough to tell a french isp from a us cloud, not a geolocation of the address itself. Click a country to see its sources."
+        description="Where each caller is, from the geolocation databases — or, for an address none of them knows, the country its network is registered in, from the ASN databases. Click a country to see its sources."
       >
         <div className="geo-toolbar">
           <Segmented options={METRICS} value={metric.value} onChange={(v) => setQuery({ metric: v === 'decisions' ? null : v })} />
@@ -425,6 +425,7 @@ function Geography({ d, query, setQuery }) {
             speed={speed}
           />
         </Suspense>
+        <GeoAttribution />
       </Card>
 
       <div className="grid c2">
