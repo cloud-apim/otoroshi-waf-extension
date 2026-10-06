@@ -24,6 +24,7 @@ const RESOURCES = {
   'crowdsec-bouncers': () => Resources.crowdsecBouncers,
   'asn-databases': () => Resources.asnDatabases,
   'geo-databases': () => Resources.geoDatabases,
+  'alert-rules': () => Resources.alertRules,
 };
 
 /**
@@ -42,7 +43,7 @@ const STUDIO_DEFAULTS = {
 };
 
 export async function seedFor(plural, { workspaceId, kind, patch } = {}) {
-  const resource = RESOURCES[plural]();
+  const resource = resourceOf(plural);
   const template = await resource.template();
   return {
     ...template,
@@ -53,12 +54,15 @@ export async function seedFor(plural, { workspaceId, kind, patch } = {}) {
 }
 
 export function createEntity(plural, entity) {
-  return RESOURCES[plural]().create(entity);
+  return resourceOf(plural).create(entity);
 }
 
+/** The schema says it first: an entity the studio has a form for can always be created. */
 export function resourceOf(plural) {
   const schema = schemaOf(plural);
-  return schema ? schema.resource() : RESOURCES[plural]();
+  if (schema) return schema.resource();
+  if (RESOURCES[plural]) return RESOURCES[plural]();
+  throw new Error(`the studio does not know how to create ${plural}`);
 }
 
 /** Compiles what a config would run, so nothing is saved that the engine cannot parse. */
