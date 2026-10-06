@@ -20,6 +20,10 @@ class TarpitIT extends munit.FunSuite {
 
   override val munitTimeout = 5.minutes
 
+  // bans and allowlists the test client itself: no other suite doing so may run meanwhile
+  override def beforeAll(): Unit = Gateway.theCaller.acquire()
+  override def afterAll(): Unit  = Gateway.theCaller.release()
+
   private def mod                            = Gateway.instance.env.adminExtensions.extension[CloudApimWafExtension].get.security
   private def await[A](f: scala.concurrent.Future[A]): A = Await.result(f, 30.seconds)
   private val caller                         = IdentityRef("ip", "127.0.0.1")

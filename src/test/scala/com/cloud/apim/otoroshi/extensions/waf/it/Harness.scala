@@ -43,6 +43,15 @@ object Gateway {
 
   lazy val port: Int = freePort
 
+  /**
+   * Held by a suite that bans or allowlists the test client itself.
+   *
+   * Every call comes from 127.0.0.1, and sbt runs suites side by side: one suite allowlisting the
+   * caller while another expects it banned makes the second fail at random. A semaphore rather than
+   * a lock, because a suite's `beforeAll` and `afterAll` need not run on the same thread.
+   */
+  val theCaller: java.util.concurrent.Semaphore = new java.util.concurrent.Semaphore(1)
+
   lazy val instance: Otoroshi = {
     val config = ConfigFactory
       .parseString(s"""

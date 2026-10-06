@@ -22,6 +22,10 @@ class IncidentConsoleIT extends munit.FunSuite {
 
   override val munitTimeout = Duration(5, "min")
 
+  // bans and allowlists the test client itself: no other suite doing so may run meanwhile
+  override def beforeAll(): Unit = Gateway.theCaller.acquire()
+  override def afterAll(): Unit  = Gateway.theCaller.release()
+
   private def ext = Gateway.instance.env.adminExtensions.extension[CloudApimWafExtension].get
   private def mod = ext.security
 
