@@ -108,7 +108,8 @@ class LoginIT extends munit.FunSuite {
       settle()
       val incident = mod.incidents.byKey(caller.key)
       assert(incident.exists(_.tags.contains("login:account_takeover")), s"$incident")
-      assert(incident.exists(_.lastMessage.contains("c***@example.com")), s"${incident.map(_.lastMessage)}")
+      // in the timeline rather than as the last message: other suites record on 127.0.0.1 meanwhile
+      assert(incident.exists(_.timeline.exists(_.message.contains("c***@example.com"))), s"${incident.map(_.timeline)}")
     } finally {
       Gateway.deleteRoute(r1); Gateway.deleteRoute(r2); failing.stop(); passing.stop()
     }
