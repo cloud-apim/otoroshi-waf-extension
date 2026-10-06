@@ -143,6 +143,9 @@ class BanStore(
   @volatile var lastRefresh: Long         = 0L
   @volatile var lastError: Option[String] = None
 
+  /** Told about every ban this node issues, whoever asked for it: the alerting listens here (OPS-6). */
+  @volatile var onIssued: BanEntry => Unit = _ => ()
+
   // the caller passes one hash key rather than a key per ban: refreshing is a single HGETALL
   // instead of a KEYS scan followed by N GETs, which is the difference between usable and unusable
   // on a real redis
@@ -199,6 +202,7 @@ class BanStore(
       )
       // local first: the node that decided enforces on its very next request, whatever redis does
       cache.put(ref.key, entry)
+      scala.util.Try(onIssued(entry)).failed.foreach(e => logger.error("a ban listener failed", e))
       store
         .hset(hashKey, ref.key, Json.stringify(entry.json))
         .map { _ =>

@@ -142,6 +142,17 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
       max-held-connections = 1000
     }
 
+    alerts {
+      // off: no alert rule is evaluated on this node, whatever the rules say
+      enabled = true
+    }
+
+    events {
+      // also emit every decision and every alert as an OCSF Detection Finding, as its own event
+      // type (CloudApimSecurityOcsf), for Security Lake, Sentinel and the other OCSF readers
+      ocsf = false
+    }
+
     ledger {
       enabled = true
       window-seconds = 3600

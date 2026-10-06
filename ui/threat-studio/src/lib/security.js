@@ -26,6 +26,7 @@ export const Security = {
   simulate: (body) => api.post(`${SECURITY}/_simulate`, body),
   robotsTxt: (body) => api.post(`${SECURITY}/_robots_txt`, body),
   challengeFromPreset: (body) => api.post(`${SECURITY}/_challenge_from_preset`, body),
+  alertTest: (body) => api.post(`${SECURITY}/_alert_test`, body),
 };
 
 export const Reputation = {

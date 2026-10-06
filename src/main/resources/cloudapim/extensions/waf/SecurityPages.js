@@ -1487,6 +1487,132 @@ class HoneypotPoliciesPage extends Component {
   }
 }
 
+class AlertChannelTest extends Component {
+  state = { result: null, busy: false };
+  send = () => {
+    this.setState({ busy: true, result: null });
+    securityCall('/_alert_test', { rule: this.props.rawValue }).then((r) => this.setState({ busy: false, result: r }));
+  };
+  render() {
+    const r = this.state.result;
+    const d = r && r.delivery;
+    return React.createElement(
+      'div',
+      { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Test'),
+      React.createElement(
+        'div',
+        { className: 'col-sm-10' },
+        suiteNotice('alerttest', 'info', 'Sends a test alert through the channel as it is in this form, saved or not. Nothing is recorded.'),
+        React.createElement(
+          'button',
+          { className: 'btn btn-sm btn-success', type: 'button', onClick: this.send, disabled: this.state.busy },
+          React.createElement('i', { className: 'fas fa-paper-plane' }, null),
+          this.state.busy ? ' Sending...' : ' Send a test alert'
+        ),
+        r
+          ? suiteNotice(
+              'alertresult',
+              r.done ? 'success' : 'danger',
+              r.error
+                ? r.error
+                : d.status === 0
+                ? d.body
+                : 'The channel answered ' + d.status + (d.body ? ': ' + d.body : '')
+            )
+          : null
+      )
+    );
+  }
+}
+
+class AlertRulesPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    trigger: {
+      type: 'select',
+      props: {
+        label: 'Trigger',
+        help: 'An incident reaching a score, a ban issued by anything, or a burst of decisions on a route',
+        possibleValues: [
+          { label: 'Incident', value: 'incident' },
+          { label: 'Ban', value: 'ban' },
+          { label: 'Burst', value: 'burst' },
+        ],
+      },
+    },
+    min_score: { type: 'number', props: { label: 'Min. score', help: 'Incident: the highest score of the incident' } },
+    min_count: { type: 'number', props: { label: 'Min. decisions', help: 'Incident: how many decisions it folds' } },
+    enforced_only: { type: 'bool', props: { label: 'Enforced only', help: 'Incident and burst: count only what was enforced' } },
+    categories: { type: 'array', props: { label: 'Categories', help: 'threat, honeypot, fail2ban, challenge, ban, upload, leakage, sensitive_data. Empty means every one' } },
+    routes: { type: 'array', props: { label: 'Routes', help: 'Route ids or names. Empty means every route' } },
+    burst_threshold: { type: 'number', props: { label: 'Burst threshold', help: 'Burst: decisions on one route' } },
+    burst_window_seconds: { type: 'number', props: { label: 'Burst window', suffix: 'seconds' } },
+    cooldown_seconds: { type: 'number', props: { label: 'Cooldown', suffix: 'seconds', help: 'One alert per attacker, ban or route within it, for the whole cluster' } },
+    'channel.kind': {
+      type: 'select',
+      props: {
+        label: 'Channel',
+        possibleValues: [
+          { label: 'Slack', value: 'slack' },
+          { label: 'Microsoft Teams', value: 'teams' },
+          { label: 'PagerDuty', value: 'pagerduty' },
+          { label: 'Webhook', value: 'webhook' },
+          { label: 'Event only (data exporters)', value: 'event' },
+        ],
+      },
+    },
+    'channel.url': { type: 'string', props: { label: 'Url', help: 'The incoming webhook. Empty for PagerDuty means its Events API v2' } },
+    'channel.routing_key': { type: 'string', props: { label: 'Routing key', help: 'PagerDuty only' } },
+    'channel.headers': { type: 'object', props: { label: 'Headers', help: 'Webhook only' } },
+    'channel.timeout_millis': { type: 'number', props: { label: 'Timeout', suffix: 'ms' } },
+    test: { type: AlertChannelTest, props: {} },
+  };
+  columns = [
+    { title: 'Name', filterId: 'name', content: (i) => i.name },
+    { title: 'Enabled', content: (i) => (i.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Trigger', content: (i) => i.trigger, style: { width: 100 } },
+    { title: 'Channel', content: (i) => (i.channel || {}).kind, style: { width: 110 } },
+  ];
+  formFlow = [
+    '_loc', 'id', 'name', 'description', '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<When', 'enabled', 'trigger', 'min_score', 'min_count', 'enforced_only', 'categories', 'routes',
+    'burst_threshold', 'burst_window_seconds', 'cooldown_seconds',
+    '<<<Where', 'channel.kind', 'channel.url', 'channel.routing_key', 'channel.headers', 'channel.timeout_millis', 'test',
+  ];
+  componentDidMount() { this.props.setTitle('Alert rules'); }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'alert-rules');
+  render() {
+    return React.createElement(Table, {
+      parentProps: this.props,
+      selfUrl: 'extensions/cloud-apim/waf/alerts',
+      defaultTitle: 'All alert rules',
+      defaultValue: () => ({
+        id: 'alert-rule_' + uuid(), name: 'Enforced attacks',
+        description: 'One message per attacker, when an incident reaches a high score',
+        tags: [], metadata: {}, enabled: true, trigger: 'incident', min_score: 70, min_count: 1, enforced_only: true,
+        categories: [], routes: [], burst_threshold: 100, burst_window_seconds: 60, cooldown_seconds: 900,
+        channel: { kind: 'slack', url: '', routing_key: '', headers: {}, timeout_millis: 10000 },
+      }),
+      itemName: 'Alert rule',
+      formSchema: this.formSchema, formFlow: this.formFlow, columns: this.columns,
+      stayAfterSave: true,
+      fetchItems: () => this.client.findAll(),
+      updateItem: this.client.update, deleteItem: this.client.delete, createItem: this.client.create,
+      navigateTo: (i) => { window.location = `/bo/dashboard/extensions/cloud-apim/waf/alerts/edit/${i.id}`; },
+      itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/alerts/edit/${i.id}`,
+      showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
+      kubernetesKind: 'waf.extensions.cloud-apim.com/AlertRule',
+    }, null);
+  }
+}
+
 const SecurityFeatures = [
   {
     title: 'Threat policies',
@@ -1521,6 +1647,14 @@ const SecurityFeatures = [
     icon: () => 'fa-bug',
   },
   {
+    title: 'Alert rules',
+    description: 'One message per attack, to Slack, Teams, PagerDuty or a webhook',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/alerts',
+    display: () => true,
+    icon: () => 'fa-bell',
+  },
+  {
     title: 'Bans & incidents',
     description: 'Who is banned, on what evidence, and what to do about them',
     absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
@@ -1536,6 +1670,7 @@ const SecuritySidebarItems = [
   { title: 'Challenge presets', text: 'Vendor presets', path: 'extensions/cloud-apim/waf/challengepresets', icon: 'store' },
   { title: 'Bot policies', text: 'Crawlers and AI agents', path: 'extensions/cloud-apim/waf/botpolicies', icon: 'robot' },
   { title: 'Honeypots', text: 'Paths and canary tokens', path: 'extensions/cloud-apim/waf/honeypots', icon: 'bug' },
+  { title: 'Alert rules', text: 'Slack, Teams, PagerDuty', path: 'extensions/cloud-apim/waf/alerts', icon: 'bell' },
   { title: 'Bans & incidents', text: 'Live security state', path: 'extensions/cloud-apim/waf/security', icon: 'gavel' },
 ];
 
@@ -1572,6 +1707,7 @@ const SecurityRoutes = [
   ...suiteEntityRoutes('challengeproviders', ChallengeProvidersPage),
   ...suiteEntityRoutes('botpolicies', BotPoliciesPage),
   ...suiteEntityRoutes('honeypots', HoneypotPoliciesPage),
+  ...suiteEntityRoutes('alerts', AlertRulesPage),
   {
     path: '/extensions/cloud-apim/waf/threatpolicies/:taction/:titem',
     component: (props) => React.createElement(ThreatPoliciesPage, props, null),

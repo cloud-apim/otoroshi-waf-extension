@@ -61,6 +61,7 @@ export const Resources = {
   crowdsecBouncers: resource('crowdsec-bouncers'),
   asnDatabases: resource('asn-databases'),
   geoDatabases: resource('geo-databases'),
+  alertRules: resource('alert-rules'),
   routes: { list: (filters = {}) => {
     const params = new URLSearchParams({ in_mem: inMem() });
     Object.entries(filters).forEach(([k, v]) => params.append(`filter.${k}`, String(v)));

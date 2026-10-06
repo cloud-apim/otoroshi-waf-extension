@@ -251,7 +251,37 @@ Friendly Captcha, captcha.eu, Turnstile and hCaptcha. See [challenges](../bots/c
 This one is evaluated **before routing**, from the global configuration — it has no route plugin.
 See [honeypots](../bots/honeypots.mdx).
 
+## AlertRule
+
+`alert-rules` · `waf.extensions.cloud-apim.com/AlertRule`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `trigger` | `incident` \| `ban` \| `burst` | `incident` |
+| `min_score` | number | `70` — incident: the highest score it reached |
+| `min_count` | number | `1` — incident: the decisions it folds |
+| `enforced_only` | boolean | `true` — incident and burst: count only what was enforced |
+| `categories` | string[] | `[]` — every category |
+| `routes` | string[] | `[]` — every route, by id or name |
+| `burst_threshold` | number | `100` |
+| `burst_window_seconds` | number | `60` |
+| `cooldown_seconds` | number | `900` — one alert per key within it, cluster-wide |
+| `channel` | AlertChannel | Slack |
+
+### AlertChannel
+
+| Field | Type | Default |
+|---|---|---|
+| `kind` | `slack` \| `teams` \| `pagerduty` \| `webhook` \| `event` | `slack` |
+| `url` | string | `""` — PagerDuty's Events API v2 when empty |
+| `routing_key` | string | `""` — PagerDuty only |
+| `headers` | object | `{}` — webhook only |
+| `timeout_millis` | number | `10000` |
+
+See [alerting](../fabric/alerting.mdx).
+
 :::tip Secrets
-`headers` on a feed, and `api_key` / `push_password` on a bouncer, all go through Otoroshi's secret
-filling. Use vault references rather than literal values.
+`headers` on a feed, `api_key` / `push_password` on a bouncer, and an alert rule's channel `url`,
+`routing_key` and `headers`, all go through Otoroshi's secret filling. Use vault references rather than literal values.
 :::

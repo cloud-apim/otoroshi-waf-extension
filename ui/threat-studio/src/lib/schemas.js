@@ -504,6 +504,82 @@ export const SCHEMAS = {
     ],
   },
 
+  /* ------------------------------------------------------------------ alert rule */
+  'alert-rules': {
+    resource: () => Resources.alertRules,
+    label: 'Alert rule',
+    create: [
+      { key: 'name', label: 'Name', type: 'text', placeholder: 'Enforced attacks to #security' },
+      {
+        key: 'trigger',
+        label: 'Trigger',
+        type: 'select',
+        options: [
+          { value: 'incident', label: 'Incident — an attacker reaches a score' },
+          { value: 'ban', label: 'Ban — anything bans someone' },
+          { value: 'burst', label: 'Burst — a route sees many decisions at once' },
+        ],
+      },
+      {
+        key: 'channel.kind',
+        label: 'Channel',
+        type: 'select',
+        options: [
+          { value: 'slack', label: 'Slack' },
+          { value: 'teams', label: 'Microsoft Teams' },
+          { value: 'pagerduty', label: 'PagerDuty' },
+          { value: 'webhook', label: 'Webhook' },
+          { value: 'event', label: 'Event only — for data exporters' },
+        ],
+      },
+    ],
+    sections: [
+      { title: 'Identity', fields: common },
+      {
+        title: 'When',
+        description: 'An alert is about something that lasts, never about one request: an attack is one message, not one per decision.',
+        fields: [
+          {
+            key: 'trigger',
+            label: 'Trigger',
+            type: 'select',
+            options: ['incident', 'ban', 'burst'].map((v) => ({ value: v, label: v })),
+          },
+          { key: 'min_score', label: 'Min. score', type: 'number', when: (v) => v.trigger === 'incident', help: 'The highest score the incident reached' },
+          { key: 'min_count', label: 'Min. decisions', type: 'number', when: (v) => v.trigger === 'incident' },
+          { key: 'burst_threshold', label: 'Decisions', type: 'number', when: (v) => v.trigger === 'burst', help: 'On one route, within the window' },
+          { key: 'burst_window_seconds', label: 'Window (s)', type: 'number', when: (v) => v.trigger === 'burst' },
+          { key: 'enforced_only', label: 'Enforced only', type: 'bool', when: (v) => v.trigger !== 'ban', help: 'Leave on: a dry run would otherwise page someone' },
+          {
+            key: 'categories',
+            label: 'Categories',
+            type: 'lines',
+            rows: 2,
+            when: (v) => v.trigger !== 'ban',
+            help: 'threat, honeypot, fail2ban, challenge, ban, upload, leakage, sensitive_data. Empty means every one',
+          },
+          { key: 'routes', label: 'Routes', type: 'lines', rows: 2, when: (v) => v.trigger !== 'ban', help: 'Route ids or names. Empty means every route' },
+          { key: 'cooldown_seconds', label: 'Cooldown (s)', type: 'number', help: 'One alert per attacker, ban or route within it, for the whole cluster' },
+        ],
+      },
+      {
+        title: 'Where',
+        fields: [
+          {
+            key: 'channel.kind',
+            label: 'Channel',
+            type: 'select',
+            options: ['slack', 'teams', 'pagerduty', 'webhook', 'event'].map((v) => ({ value: v, label: v })),
+          },
+          { key: 'channel.url', label: 'Url', type: 'secret', when: (v) => (v.channel || {}).kind !== 'event', help: 'The incoming webhook. Empty for PagerDuty means its Events API v2' },
+          { key: 'channel.routing_key', label: 'Routing key', type: 'secret', when: (v) => (v.channel || {}).kind === 'pagerduty' },
+          { key: 'channel.headers', label: 'Headers', type: 'json', rows: 3, when: (v) => (v.channel || {}).kind === 'webhook' },
+          { key: 'channel.timeout_millis', label: 'Timeout (ms)', type: 'number', when: (v) => (v.channel || {}).kind !== 'event' },
+        ],
+      },
+    ],
+  },
+
   /* ------------------------------------------------------------------ crowdsec */
   'crowdsec-bouncers': {
     resource: () => Resources.crowdsecBouncers,

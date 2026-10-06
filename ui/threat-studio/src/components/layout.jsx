@@ -41,6 +41,7 @@ export const GLOBAL_PAGES = [
   { id: 'crowdsec', label: 'CrowdSec', icon: 'users' },
   { id: 'prerouting', label: 'Pre-routing', icon: 'flag' },
   { id: 'rulesets', label: 'WAF rulesets', icon: 'layers' },
+  { id: 'alerts', label: 'Alerts', icon: 'bell' },
   { id: 'cluster', label: 'Cluster & state', icon: 'server' },
 ];
 

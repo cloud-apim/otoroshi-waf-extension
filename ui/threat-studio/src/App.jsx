@@ -26,6 +26,7 @@ import { CrowdsecPage } from './pages/Crowdsec';
 import { PreRoutingPage } from './pages/PreRouting';
 import { RulesetsPage } from './pages/Rulesets';
 import { ClusterPage } from './pages/Cluster';
+import { AlertsPage } from './pages/Alerts';
 
 const StudioContext = createContext(null);
 export const useStudio = () => useContext(StudioContext);
@@ -56,6 +57,7 @@ const GLOBAL_PAGES = {
   crowdsec: CrowdsecPage,
   prerouting: PreRoutingPage,
   rulesets: RulesetsPage,
+  alerts: AlertsPage,
   cluster: ClusterPage,
 };
 

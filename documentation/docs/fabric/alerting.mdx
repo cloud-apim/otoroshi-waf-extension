@@ -1,0 +1,98 @@
+---
+sidebar_position: 8
+title: Alerting & SIEM export
+description: One message per attack to Slack, Teams, PagerDuty or a webhook, and the decisions in OCSF.
+---
+
+# Alerting & SIEM export
+
+An attack is thousands of decisions. A channel that receives one message per decision is a channel
+nobody reads after the first hour, so alerts here are about what lasts: an attacker whose incident
+reaches a score, a ban, a burst on a route. Each is sent once per attacker, ban or route and per
+cooldown, for the whole cluster.
+
+Otoroshi's data exporters already carry events anywhere: Elastic, Splunk, Datadog, Kafka, a mailer,
+a webhook. What alert rules add is the deduplication, and the payload each channel actually
+expects: Slack and Teams do not read a raw event, and PagerDuty wants its Events API.
+
+## Alert rules
+
+An **alert rule** (`AlertRule`) says when to tell someone, and where.
+
+| Trigger | Fires when | Key |
+|---|---|---|
+| `incident` | An identity's [incident](./incidents.mdx) reaches `min_score` over at least `min_count` decisions, at least one of them enforced | the identity |
+| `ban` | A [ban](./bans.mdx) is issued, by anything: a policy, the ledger, fail2ban, a honeypot, an operator | the banned identity |
+| `burst` | A route sees `burst_threshold` decisions within `burst_window_seconds` | the route |
+
+`categories` (`threat`, `honeypot`, `fail2ban`, `challenge`, `ban`, `upload`, `leakage`,
+`sensitive_data`) and `routes` (ids or names) narrow what an incident or burst rule covers; empty
+means everything. `enforced_only`, on by default, keeps dry runs and monitoring from paging anyone.
+
+After an alert, its key is quiet for `cooldown_seconds` (900 by default, never less than 10): an
+attacker hammering a route for an hour is one message, and a second attacker is a second one.
+
+```json
+{
+  "name": "Enforced attacks to #security",
+  "trigger": "incident",
+  "min_score": 70,
+  "min_count": 1,
+  "enforced_only": true,
+  "categories": [],
+  "routes": [],
+  "cooldown_seconds": 900,
+  "channel": { "kind": "slack", "url": "${vault://local/slack-security-webhook}" }
+}
+```
+
+## Channels
+
+| `kind` | Receives | Needs |
+|---|---|---|
+| `slack` | A message with a fallback text, a header, the facts and a link to the console | An incoming webhook `url` |
+| `teams` | An Adaptive Card, as Teams workflows expect it | A workflow webhook `url` |
+| `pagerduty` | An Events API v2 `trigger`, deduplicated on the rule and the key, so a repeat updates the same PagerDuty incident | A `routing_key`. `url` defaults to PagerDuty's endpoint |
+| `webhook` | The alert as it is, see [the event](../reference/events.mdx#cloudapimsecurityalert) | A `url`, and `headers` if it wants a token |
+| `event` | Nothing directly | A data exporter routed to `@type: CloudApimSecurityAlert` |
+
+Whatever the channel, every alert is also emitted as a `CloudApimSecurityAlert` event, so an
+exporter can send it somewhere else too. The `url`, `routing_key` and `headers` go through
+Otoroshi's secret filling: put vault references there rather than the webhook itself.
+
+**Send a test alert** from the rule's form, in the backoffice or in Threat Studio, before relying on
+it: the answer is what the channel said, so a wrong url or a revoked token shows up there rather than
+on the day of the first attack.
+
+## Across a cluster
+
+Every node evaluates what it sees, and the shared state decides which node sends: the first node to
+claim an alert key in the store sends it, the others find it claimed. Two nodes that see the same
+attacker at the same moment send one message. Burst counts are kept in the shared state too, so a
+burst spread over twelve nodes is still one burst. As for bans, this is only shared when the shared
+state is: see `security.redis-uri` in the [configuration reference](../install.mdx#configuration-reference).
+
+Nothing here runs on the request. A decision only schedules the evaluation, and a channel that is
+slow or down costs a log line, not latency.
+
+`security.alerts.enabled = false` stops a node from evaluating any rule.
+
+## OCSF
+
+The `CloudApimSecurityEvent` the console reads is shaped after ECS. For Security Lake, Sentinel and
+the other SIEMs that read OCSF, `security.events.ocsf = true` also emits every decision and every
+alert as an OCSF 1.3 **Detection Finding**, as its own event type, `CloudApimSecurityOcsf`, for an
+exporter to route. It doubles the security event volume, which is why it is off by default.
+
+| Fabric | OCSF |
+|---|---|
+| severity 1 to 4 | `severity_id` 2 (Low) to 5 (Critical) |
+| enforced denial | `action_id` 2 Denied, `disposition_id` 2 Blocked |
+| observed only | `action_id` 3 Observed, `disposition_id` 15 Detected |
+| masked response | `action_id` 4 Modified, `disposition_id` 11 Corrected |
+| caller | `src_endpoint.ip`, `actor.user.name`, `actor.user.credential_uid` for an api key |
+| route | `resources[]` |
+| incident | `metadata.correlation_uid` |
+| alert | `disposition_id` 19 Alert, the rule in `finding_info.analytic` |
+
+What OCSF has no field for, the signals in particular, is kept under `unmapped`.

@@ -71,6 +71,8 @@ class SecurityDatastores(env: Env, extensionId: AdminExtensionId) {
     new KvBotPolicyDatastore(extensionId, env.datastores.redis, env)
   val honeypotPolicyDatastore: HoneypotPolicyDatastore =
     new KvHoneypotPolicyDatastore(extensionId, env.datastores.redis, env)
+  val alertRuleDatastore: AlertRuleDatastore =
+    new KvAlertRuleDatastore(extensionId, env.datastores.redis, env)
 }
 
 class SecurityState {
@@ -78,6 +80,13 @@ class SecurityState {
   private val _challenges = new UnboundedTrieMap[String, ChallengeProvider]()
   private val _bots       = new UnboundedTrieMap[String, BotPolicy]()
   private val _honeypots  = new UnboundedTrieMap[String, HoneypotPolicy]()
+  private val _alerts     = new UnboundedTrieMap[String, AlertRule]()
+
+  def alertRule(id: String): Option[AlertRule] = _alerts.get(id)
+  def allAlertRules(): Seq[AlertRule]         = _alerts.values.toSeq
+  def updateAlertRules(values: Seq[AlertRule]): Unit = {
+    _alerts.addAll(values.map(v => (v.id, v))).remAll(_alerts.keySet.toSeq.diff(values.map(_.id)))
+  }
 
   def botPolicy(id: String): Option[BotPolicy] = _bots.get(id)
   def allBotPolicies(): Seq[BotPolicy]         = _bots.values.toSeq
@@ -223,6 +232,31 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     logger
   )
 
+  private val alertsEnabled: Boolean =
+    configuration.getOptional[Boolean]("security.alerts.enabled").getOrElse(true)
+
+  /** OPS-6: decisions and alerts also emitted as OCSF findings, as their own event type. */
+  val ocsfEnabled: Boolean =
+    configuration.getOptional[Boolean]("security.events.ocsf").getOrElse(false)
+
+  val alerts: AlertEngine = new AlertEngine(
+    prefix = keyPrefix,
+    store = sharedState,
+    rules = () => states.allAlertRules(),
+    sender = new WsAlertSender(env),
+    node = nodeId,
+    link = () => Try(s"${env.backOfficeUrl}/extensions/cloud-apim/waf/security").toOption,
+    emit = alert => {
+      CloudApimSecurityAlertEvent(alert).toAnalytics()(using env)
+      if (ocsfEnabled)
+        CloudApimSecurityOcsfEvent(Ocsf.alert(alert), alert.routeId, alert.routeName, alert.identity.filter(_.kind == IdentityRef.Ip).map(_.value))
+          .toAnalytics()(using env)
+    },
+    logger = logger,
+    enabled = () => alertsEnabled
+  )
+  bans.onIssued = alerts.banned
+
   private val botSettings = BotVerificationSettings(
     enabled = configuration.getOptional[Boolean]("security.bots.verify").getOrElse(true),
     positiveTtl = configuration.getOptional[Long]("security.bots.positive-ttl-seconds").getOrElse(21600L).seconds,
@@ -339,7 +373,9 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       challenges <- datastores.challengeProviderDatastore.findAllAndFillSecrets()
       bots       <- datastores.botPolicyDatastore.findAllAndFillSecrets()
       honeypots  <- datastores.honeypotPolicyDatastore.findAllAndFillSecrets()
+      alertRules <- datastores.alertRuleDatastore.findAllAndFillSecrets()
     } yield {
+      states.updateAlertRules(alertRules)
       states.updateThreatPolicies(policies)
       states.updateChallengeProviders(challenges)
       states.updateBotPolicies(bots)
@@ -352,7 +388,8 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     AdminExtensionEntity(ThreatPolicy.resource(env, datastores, states)),
     AdminExtensionEntity(ChallengeProvider.resource(env, datastores, states)),
     AdminExtensionEntity(BotPolicy.resource(env, datastores, states)),
-    AdminExtensionEntity(HoneypotPolicy.resource(env, datastores, states))
+    AdminExtensionEntity(HoneypotPolicy.resource(env, datastores, states)),
+    AdminExtensionEntity(AlertRule.resource(env, datastores, states))
   )
 
   private def tick(): Unit = {
@@ -409,7 +446,7 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       routeId = routeId,
       routeName = routeName
     )
-    CloudApimSecurityEvent(
+    val event = CloudApimSecurityEvent(
       category = category,
       action = decision.action.name,
       outcome = if (decision.enforced) "blocked" else "observed",
@@ -425,8 +462,33 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       incidentCount = incident.count,
       message = message,
       extra = Json.obj("decision" -> decision.json)
-    ).toAnalytics()(using env)
+    )
+    event.toAnalytics()(using env)
+    if (ocsfEnabled)
+      CloudApimSecurityOcsfEvent(
+        Ocsf.decision(
+          uid = event.`@id`,
+          time = System.currentTimeMillis(),
+          category = category,
+          action = decision.action.name,
+          enforced = decision.enforced,
+          severity = severityOf(decision.score),
+          identity = identity,
+          score = decision.score,
+          tags = tags,
+          signals = signals,
+          routeId = routeId,
+          routeName = routeName,
+          incidentId = Some(incident.id),
+          message = message,
+          node = nodeId
+        ),
+        routeId,
+        routeName,
+        Some(identity.ip)
+      ).toAnalytics()(using env)
     if (ledgerWeight > 0) ledger.recordAll(identity, ledgerWeight, message, tags)
+    alerts.decision(incident, category, decision.enforced, routeId, routeName)
     incident
   }
 
@@ -438,6 +500,12 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
   // -----------------------------------------------------------------------------------------------
 
   def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_alert_test",
+      wantsBody = true,
+      handle = (_, _, _, body) => withJsonBody(body)(handleAlertTest)
+    ),
     AdminExtensionBackofficeAuthRoute(
       method = "GET",
       path = s"$basePath/_status",
@@ -567,7 +635,12 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       "ban_duration_seconds" -> ledgerSettings.banDuration.toSeconds
     ),
     "policies"  -> JsArray(states.allThreatPolicies().map(p => Json.obj("id" -> p.id, "name" -> p.name, "dry_run" -> p.dryRun))),
-    "tarpit"    -> tarpit.status
+    "tarpit"    -> tarpit.status,
+    "alerts"    -> Json.obj(
+      "enabled" -> alertsEnabled,
+      "ocsf"    -> ocsfEnabled,
+      "rules"   -> states.allAlertRules().count(_.enabled)
+    )
   )
 
   private def refFrom(json: JsValue): Option[IdentityRef] =
@@ -577,6 +650,23 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
         value <- (json \ "value").asOpt[String]
       } yield IdentityRef(kind, value)
     }.orElse((json \ "ip").asOpt[String].map(IdentityRef(IdentityRef.Ip, _)))
+
+  /**
+   * Sends a test alert through a rule's channel: the rule as it is being edited, or a saved one by
+   * id. The answer is what the channel said, so a wrong url or a refused token shows up here rather
+   * than on the day of the first attack.
+   */
+  private def handleAlertTest(body: JsValue): Future[Result] = {
+    val rule = (body \ "rule").asOpt[JsObject].flatMap(json => AlertRule.format.reads(json).asOpt)
+      .orElse((body \ "id").asOpt[String].flatMap(states.alertRule))
+    rule match {
+      case None    => Results.Ok(Json.obj("done" -> false, "error" -> "no rule to test")).vfuture
+      case Some(r) =>
+        alerts.send(r, alerts.testAlert(r)).map { delivery =>
+          Results.Ok(Json.obj("done" -> (delivery.ok || r.channel.kind == "event"), "channel" -> r.channel.kind, "delivery" -> delivery.json))
+        }
+    }
+  }
 
   private def handleRobots(body: JsValue): Future[Result] = {
     botPolicy((body \ "policy").asOpt[String]) match {

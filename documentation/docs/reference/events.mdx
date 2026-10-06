@@ -206,12 +206,46 @@ or an incident moved to a new state.
 audited too: knowing that someone *tried* to ban a caller the allowlist protects is worth as much as
 knowing they succeeded.
 
+## CloudApimSecurityAlert
+
+One per alert an [alert rule](../fabric/alerting.mdx) sends, once for the whole cluster, whatever its
+channel: route it with a data exporter to anything Otoroshi reaches, a mailer included.
+
+```json
+{
+  "@type": "CloudApimSecurityAlert",
+  "event": { "kind": "alert", "dataset": "cloud-apim.alert", "category": "incident", "severity": 3 },
+  "alert": {
+    "rule": { "id": "alert-rule_1f3a...", "name": "Enforced attacks" },
+    "trigger": "incident",
+    "key": "incident:ip:203.0.113.7",
+    "level": "high",
+    "title": "Incident on ip 203.0.113.7: score 90",
+    "summary": "waf block on /login",
+    "identity": { "kind": "ip", "value": "203.0.113.7" },
+    "facts": { "Score": "90", "Decisions": "12, 12 enforced" },
+    "details": { "...": "the incident, the ban, or the burst count" },
+    "link": "https://otoroshi.example.com/bo/dashboard/extensions/cloud-apim/waf/security"
+  }
+}
+```
+
+## CloudApimSecurityOcsf
+
+Emitted only when `security.events.ocsf` is on: every `CloudApimSecurityEvent` and every alert again,
+as an OCSF 1.3 **Detection Finding** (class `2004`), for Security Lake, Sentinel and the other SIEMs
+that read OCSF. A decision says what was done in OCSF's terms: `action_id` 2 and `disposition_id` 2
+when it was enforced, 3 and 15 when it was only observed, 4 and 11 for a masked response. The
+fabric's own fields that OCSF has no place for are under `unmapped`. The ECS-shaped events stay what
+the console reads; this is an additional stream.
+
 ## Suggested exporters
 
 | Goal | Filter on |
 |---|---|
 | The one dashboard to build first | `@type: CloudApimSecurityEvent`, group by `event.category` and `event.action` |
-| Alerting without a pager storm | `@type: CloudApimSecurityEvent` with `event.outcome: blocked`, group by `incident.id` |
+| Alerting without a pager storm | `@type: CloudApimSecurityAlert`, or an [alert rule](../fabric/alerting.mdx) straight to the channel |
+| A SIEM that reads OCSF | `@type: CloudApimSecurityOcsf`, with `security.events.ocsf` on |
 | Is the policy ready to arm? | `@type: CloudApimSecurityEvent`, `outcome: observed` and `event.action != log` |
 | Attack dashboard | `@type: CloudApimWafTrailEvent`, group by `events[].rule_id` |
 | Tuning backlog | `blocking: false` and `block != null`, group by rule id |
