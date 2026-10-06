@@ -1,0 +1,119 @@
+---
+sidebar_position: 0
+title: API contracts
+description: Checking every request against the API's OpenAPI contract, and refusing what it does not declare.
+---
+
+# API contracts
+
+A WAF looks for what is known to be bad. An API's OpenAPI contract says what is good: which paths
+exist, with which methods, which parameters of which types, which bodies of which shape. A request
+that matches no operation, sends a string where an integer is declared, or carries a property the
+schema does not allow, is not something the backend was written to receive — whatever it is, and
+whether or not a rule knows it. Whole classes of attack never reach the backend, because the
+payload does not match the contract to begin with.
+
+The **API contract** plugin (`CloudApimApiContract`) checks every request against one.
+
+## The contract
+
+An **API contract** entity holds the document itself: OpenAPI **3.0** or **3.1**, **JSON or YAML**,
+pasted, or imported once from a URL in Threat Studio. It is stored, never fetched on a schedule:
+what is enforced changes when someone changes it here, not when a file elsewhere does.
+
+`base_path` is what the contract's paths are relative to on the route. Left empty, it is the path of
+the contract's first server: with `servers: [{url: https://api.example.com/v1}]`, `/pets` in the
+contract is `/v1/pets` on the route.
+
+Each contract is compiled once per version of it, every schema with the JSON schema dialect of the
+document's version: 3.0 with `nullable`, 3.1 as JSON Schema 2020-12. Formats (`date`, `date-time`,
+`uuid`, `email`…) are asserted, not only annotated. Local references (`#/components/schemas/Pet`)
+are followed; a reference outside the document is never fetched, is reported as a warning, and its
+schema checks nothing. A Swagger 2 document must be converted first.
+
+## What is checked
+
+| Mismatch | When | Refused with |
+|---|---|---|
+| `unknown_path` | No operation of the contract has this path, or it is outside the base path | `404` |
+| `method_not_allowed` | The path exists, not with this method. A `HEAD` is a `GET`; a preflight `OPTIONS` the contract does not declare goes through | `405`, with `Allow` |
+| `missing_parameter` | A required path, query or header parameter is absent | `400` |
+| `invalid_parameter` | A parameter does not match its schema, read as the type it declares: `?limit=ten` against an integer, a value outside an enum, a pattern, a format | `400` |
+| `unknown_parameter` | A query parameter the operation does not declare, only with `reject_unknown_query_params` | `400` |
+| `missing_body` | The request body is required and there is none | `400` |
+| `unsupported_media_type` | The body's media type is not one the operation accepts | `415` |
+| `invalid_body` | A JSON body does not match its schema: types, required properties, `additionalProperties: false`, enums, formats | `400` |
+| `body_too_large` | A JSON body to check is over `max_body_bytes` (1 MiB): it cannot be checked, so it does not match | `413` |
+
+Path parameters are decoded; a literal path (`/pets/mine`) wins over a template (`/pets/{id}`).
+Array query parameters are read as repeated (`?tag=a&tag=b`) or comma-separated, as their `explode`
+says. Cookie parameters, security schemes and non-JSON bodies are not checked beyond their media
+type.
+
+## Monitor, then enforce
+
+`mode: "monitor"`, the default, reports what does not match and lets it through: a
+`CloudApimSecurityEvent` of category `api`, tagged `api:<mismatch>`, with every mismatch in its
+signals, once a minute per route, operation and kind of mismatch. Leave it there until the reports
+are only about callers you want refused — a contract that lags behind the API refuses its newest
+endpoints.
+
+`mode: "enforce"` refuses, with the status above and the gateway's plain error. With
+`expose_errors`, the refusal is JSON and says what did not match:
+
+```json
+{
+  "error": "the request does not match the API contract",
+  "violations": [
+    { "kind": "invalid_body", "where": "body", "detail": "required property 'name' not found" }
+  ]
+}
+```
+
+With `contribute`, each mismatch is also a signal on the [threat score](../fabric/policies.mdx):
+`unknown_path_weight` (20) for a path or method outside the contract, `violation_weight` (30) for
+the rest. A scanner walking paths that do not exist then climbs the policy's tiers like any other.
+
+## Responses
+
+With `validate_responses`, each response is checked too: a status the operation does not declare
+(exact, then `2XX`, then `default`) is `undeclared_status`, a media type it does not declare
+`undeclared_media_type`, a JSON body that does not match its schema `invalid_response`. A response
+is never refused for it, only reported: it is how a field that should not be there, or an API that
+drifted from its contract, gets noticed. A response is held until up to `max_body_bytes` of it is
+read, so it is off by default.
+
+## Objects
+
+The [object guard](./objects.mdx) reads the objects a request is about from the contract when one
+matched: `GET /pets/42` against `/pets/{petId}` is the object `42` of kind `/pets/{petId}`, with no
+template to declare and nothing to detect.
+
+## Configuration
+
+```json
+{
+  "contract": "api-contract_…",
+  "mode": "monitor",
+  "expose_errors": false,
+  "contribute": false,
+  "reject_unknown_query_params": false,
+  "max_body_bytes": 1048576,
+  "validate_responses": false,
+  "unknown_path_weight": 20,
+  "violation_weight": 30
+}
+```
+
+Without `contract`, the route names its own in its metadata, under `cloud-apim-api-contract`: one
+[preset](../fabric/preset.mdx) or [global preset](../fabric/global-preset.mdx) rule can then lay the
+check over many routes, each with its own contract. A contract that does not compile is logged once
+an hour and checks nothing: a broken contract never refuses traffic.
+
+## Laying it down
+
+The plugin runs as a request transformer before the WAF, so what does not match the contract never
+reaches the rule engine; on the way back, before the guards that rewrite a response. In the preset,
+switch `api_contract` on, with `api_contract_id` and `api_contract_mode`. In **Threat Studio**,
+contracts live on the **API contracts** page, where a contract's operations can be listed, and a
+workspace's protection has an **API contract** section.

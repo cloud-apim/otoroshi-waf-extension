@@ -44,6 +44,7 @@ export const GLOBAL_PAGES = [
   { id: 'rulefeeds', label: 'Rule feeds', icon: 'download' },
   { id: 'alerts', label: 'Alerts', icon: 'bell' },
   { id: 'scanners', label: 'Malware scanners', icon: 'shield' },
+  { id: 'contracts', label: 'API contracts', icon: 'file' },
   { id: 'cluster', label: 'Cluster & state', icon: 'server' },
 ];
 

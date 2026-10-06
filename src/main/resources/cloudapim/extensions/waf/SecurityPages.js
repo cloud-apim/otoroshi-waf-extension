@@ -1553,7 +1553,7 @@ class AlertRulesPage extends Component {
     min_score: { type: 'number', props: { label: 'Min. score', help: 'Incident: the highest score of the incident' } },
     min_count: { type: 'number', props: { label: 'Min. decisions', help: 'Incident: how many decisions it folds' } },
     enforced_only: { type: 'bool', props: { label: 'Enforced only', help: 'Incident and burst: count only what was enforced' } },
-    categories: { type: 'array', props: { label: 'Categories', help: 'threat, honeypot, fail2ban, challenge, ban, traffic, upload, login, objects, leakage, sensitive_data. Empty means every one' } },
+    categories: { type: 'array', props: { label: 'Categories', help: 'threat, honeypot, fail2ban, challenge, ban, traffic, api, upload, login, objects, leakage, sensitive_data. Empty means every one' } },
     routes: { type: 'array', props: { label: 'Routes', help: 'Route ids or names. Empty means every route' } },
     burst_threshold: { type: 'number', props: { label: 'Burst threshold', help: 'Burst: decisions on one route' } },
     burst_window_seconds: { type: 'number', props: { label: 'Burst window', suffix: 'seconds' } },
@@ -1706,6 +1706,89 @@ class MalwareScannersPage extends Component {
       itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/scanners/edit/${i.id}`,
       showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
       kubernetesKind: 'waf.extensions.cloud-apim.com/MalwareScanner',
+    }, null);
+  }
+}
+
+class ApiContractCheck extends Component {
+  state = { result: null, busy: false };
+  send = () => {
+    const c = this.props.rawValue || {};
+    this.setState({ busy: true, result: null });
+    securityCall('/_contract_check', { spec: c.spec || '', base_path: c.base_path || '' }).then((r) => this.setState({ busy: false, result: r }));
+  };
+  render() {
+    const r = this.state.result;
+    return React.createElement(
+      'div',
+      { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Check'),
+      React.createElement(
+        'div',
+        { className: 'col-sm-10' },
+        suiteNotice('contractcheck', 'info', 'Compiles the contract as it is in this form, saved or not, and lists the operations a request is checked against.'),
+        React.createElement(
+          'button',
+          { className: 'btn btn-sm btn-success', type: 'button', onClick: this.send, disabled: this.state.busy },
+          React.createElement('i', { className: 'fas fa-check' }, null),
+          this.state.busy ? ' Compiling...' : ' Compile'
+        ),
+        r
+          ? suiteNotice(
+              'contractresult',
+              r.done ? ((r.warnings || []).length ? 'warning' : 'success') : 'danger',
+              r.done
+                ? 'OpenAPI ' + r.version + (r.base_path ? ', under ' + r.base_path : '') + ': ' +
+                  (r.operations || []).map((o) => o.method + ' ' + o.path).join(', ') +
+                  ((r.warnings || []).length ? '. Warnings: ' + r.warnings.join('; ') : '')
+                : r.error
+            )
+          : null
+      )
+    );
+  }
+}
+
+class ApiContractsPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    base_path: { type: 'string', props: { label: 'Base path', help: "What the contract's paths are relative to on the route. Empty: the path of the contract's first server" } },
+    spec: { type: 'text', props: { label: 'OpenAPI document', help: 'OpenAPI 3.0 or 3.1, JSON or YAML', style: { fontFamily: 'monospace', minHeight: 400 } } },
+    check: { type: ApiContractCheck, props: {} },
+  };
+  columns = [
+    { title: 'Name', filterId: 'name', content: (i) => i.name },
+    { title: 'Enabled', content: (i) => (i.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Base path', content: (i) => i.base_path || '-' },
+  ];
+  formFlow = ['_loc', 'id', 'name', 'description', '>>>Metadata and tags', 'tags', 'metadata', '<<<Contract', 'enabled', 'base_path', 'spec', 'check'];
+  componentDidMount() { this.props.setTitle('API contracts'); }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'api-contracts');
+  render() {
+    return React.createElement(Table, {
+      parentProps: this.props,
+      selfUrl: 'extensions/cloud-apim/waf/contracts',
+      defaultTitle: 'All API contracts',
+      defaultValue: () => ({
+        id: 'api-contract_' + uuid(), name: 'My API', description: 'The OpenAPI contract of an API',
+        tags: [], metadata: {}, enabled: true, base_path: '',
+        spec: 'openapi: 3.0.3\ninfo:\n  title: My API\n  version: "1.0"\npaths: {}\n',
+      }),
+      itemName: 'API contract',
+      formSchema: this.formSchema, formFlow: this.formFlow, columns: this.columns,
+      stayAfterSave: true,
+      fetchItems: () => this.client.findAll(),
+      updateItem: this.client.update, deleteItem: this.client.delete, createItem: this.client.create,
+      navigateTo: (i) => { window.location = `/bo/dashboard/extensions/cloud-apim/waf/contracts/edit/${i.id}`; },
+      itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/contracts/edit/${i.id}`,
+      showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
+      kubernetesKind: 'waf.extensions.cloud-apim.com/ApiContract',
     }, null);
   }
 }
@@ -1864,6 +1947,14 @@ const SecurityFeatures = [
     icon: () => 'fa-virus-slash',
   },
   {
+    title: 'API contracts',
+    description: 'OpenAPI contracts requests are checked against',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/contracts',
+    display: () => true,
+    icon: () => 'fa-file-code',
+  },
+  {
     title: 'Alert rules',
     description: 'One message per attack, to Slack, Teams, PagerDuty or a webhook',
     absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
@@ -1889,6 +1980,7 @@ const SecuritySidebarItems = [
   { title: 'Honeypots', text: 'Paths and canary tokens', path: 'extensions/cloud-apim/waf/honeypots', icon: 'bug' },
   { title: 'Rule feeds', text: 'Packs and virtual patches', path: 'extensions/cloud-apim/waf/rulefeeds', icon: 'satellite-dish' },
   { title: 'Malware scanners', text: 'clamd and ICAP', path: 'extensions/cloud-apim/waf/scanners', icon: 'virus-slash' },
+  { title: 'API contracts', text: 'OpenAPI, enforced', path: 'extensions/cloud-apim/waf/contracts', icon: 'file-code' },
   { title: 'Alert rules', text: 'Slack, Teams, PagerDuty', path: 'extensions/cloud-apim/waf/alerts', icon: 'bell' },
   { title: 'Bans & incidents', text: 'Live security state', path: 'extensions/cloud-apim/waf/security', icon: 'gavel' },
 ];
@@ -1928,6 +2020,7 @@ const SecurityRoutes = [
   ...suiteEntityRoutes('honeypots', HoneypotPoliciesPage),
   ...suiteEntityRoutes('alerts', AlertRulesPage),
   ...suiteEntityRoutes('scanners', MalwareScannersPage),
+  ...suiteEntityRoutes('contracts', ApiContractsPage),
   ...suiteEntityRoutes('rulefeeds', RuleFeedsPage),
   {
     path: '/extensions/cloud-apim/waf/threatpolicies/:taction/:titem',

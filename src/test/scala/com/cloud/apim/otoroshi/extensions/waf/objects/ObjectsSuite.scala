@@ -60,6 +60,13 @@ class ObjectsSuite extends munit.FunSuite {
     assertEquals(ObjectRef("k", "abc").number, None)
   }
 
+  test("what the API contract says the object is comes after the declared templates, and before detection") {
+    val fromContract = Some(ObjectRef("/accounts/{accountId}", "acc-7"))
+    assertEquals(ObjectPaths.resolve(Seq.empty, true, "GET", "/accounts/acc-7", fromContract).map(_._1), fromContract)
+    assertEquals(ObjectPaths.resolve(Seq(ObjectTemplate("/accounts/{id}", "account")), true, "GET", "/accounts/acc-7", fromContract).map(_._1), Some(ObjectRef("account", "acc-7")))
+    assertEquals(ObjectPaths.resolve(Seq.empty, true, "GET", "/accounts/12", None).map(_._1), Some(ObjectRef("/accounts/{id}", "12")))
+  }
+
   test("templates come first, detection after, and a preflight is never an object") {
     val templates = Seq(ObjectTemplate("/api/orders/{id}", name = "order"))
     assertEquals(ObjectPaths.resolve(templates, true, "GET", "/api/orders/abc").map(_._1), Some(ObjectRef("order", "abc")))

@@ -42,6 +42,9 @@ export const PRESET_DEFAULTS = {
   objects_mode: 'alert',
   objects_paths: [],
   objects_budget: 0,
+  api_contract: false,
+  api_contract_id: null,
+  api_contract_mode: 'monitor',
   include: [],
   exclude: [],
 };
@@ -53,6 +56,7 @@ export const SECTIONS = [
   { key: 'reputation', label: 'IP reputation', help: 'Score the caller against every enabled feed, CrowdSec bouncer and ASN database' },
   { key: 'fail2ban', label: 'Fail2ban', help: 'Ban callers that keep producing failed responses — the one detector your own clients can trip' },
   { key: 'traffic', label: 'Traffic guard', help: 'Learn the usual traffic of each route, source, api key and network, and score a surge away from it' },
+  { key: 'api_contract', label: 'API contract', help: 'Check every request against an OpenAPI contract: paths, methods, parameters and bodies' },
   { key: 'waf', label: 'WAF', help: 'Run the rule engine. Needs a WAF config to expand at all.' },
   { key: 'uploads', label: 'Upload guard', help: 'Refuse uploaded files by what they are: disguised scripts and executables, polyglots, archive bombs and zip slips' },
   { key: 'login', label: 'Login guard', help: 'Score credential stuffing, password spraying and likely account takeovers on the login endpoints' },
@@ -183,6 +187,7 @@ export function enforcementOf(ws, { policies = [], configs = [] } = {}) {
   if (preset.response && policy && !policy.dry_run) reasons.push('the threat response enforces');
   if (preset.reputation && preset.reputation_mode === 'block') reasons.push('IP reputation blocks');
   if (preset.fail2ban && !preset.fail2ban_dry_run) reasons.push('fail2ban bans');
+  if (preset.api_contract && preset.api_contract_mode === 'enforce') reasons.push('the API contract refuses');
   if (reasons.length > 0) return { armed: true, reason: reasons.join(', ') };
   if (preset.response && !preset.threat_policy) return { armed: false, reason: 'no threat policy: the built-in one is dry run' };
   if (preset.response && policy && policy.dry_run) return { armed: false, reason: `${policy.name} is in dry run` };

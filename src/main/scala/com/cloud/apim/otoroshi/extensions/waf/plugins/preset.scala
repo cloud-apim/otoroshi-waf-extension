@@ -45,6 +45,10 @@ final case class CloudApimSecuritySuitePresetConfig(
     objectsMode: String = "alert",
     objectsPaths: Seq[String] = Seq.empty,
     objectsBudget: Long = 0L,
+    // API-1: off by default, and monitoring once on. Empty contract: each route's metadata names its own
+    apiContract: Boolean = false,
+    apiContractId: Option[String] = None,
+    apiContractMode: String = "monitor",
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -89,6 +93,9 @@ object CloudApimSecuritySuitePresetConfig {
       "objects_mode"    -> o.objectsMode,
       "objects_paths"   -> o.objectsPaths,
       "objects_budget"  -> o.objectsBudget,
+      "api_contract"    -> o.apiContract,
+      "api_contract_id" -> o.apiContractId,
+      "api_contract_mode" -> o.apiContractMode,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -124,6 +131,9 @@ object CloudApimSecuritySuitePresetConfig {
         objectsMode = json.select("objects_mode").asOpt[String].map(_.trim.toLowerCase).filter(Set("alert", "score")).getOrElse("alert"),
         objectsPaths = json.select("objects_paths").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty),
         objectsBudget = json.select("objects_budget").asOpt[Long].filter(_ >= 0L).getOrElse(0L),
+        apiContract = json.select("api_contract").asOpt[Boolean].getOrElse(false),
+        apiContractId = json.select("api_contract_id").asOpt[String].map(_.trim).filter(_.nonEmpty),
+        apiContractMode = json.select("api_contract_mode").asOpt[String].map(_.trim.toLowerCase).filter(Set("monitor", "enforce")).getOrElse("monitor"),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -163,6 +173,9 @@ object CloudApimSecuritySuitePresetConfig {
     "objects_mode",
     "objects_paths",
     "objects_budget",
+    "api_contract",
+    "api_contract_id",
+    "api_contract_mode",
     "include",
     "exclude"
   )
@@ -371,6 +384,28 @@ object CloudApimSecuritySuitePresetConfig {
       "label" -> "Object budget",
       "props" -> Json.obj("help" -> "Distinct objects of one kind a consumer may read per hour, across the cluster, refused past it. 0 is none")
     ),
+    "api_contract"    -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "API contract",
+      "props" -> Json.obj("help" -> "Check every request against an OpenAPI contract: paths, methods, parameters and bodies")
+    ),
+    "api_contract_id" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Contract",
+      "props" -> Json.obj(
+        "help"               -> "Empty: each route's metadata names its own, under cloud-apim-api-contract",
+        "optionsFrom"        -> "/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/api-contracts",
+        "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id")
+      )
+    ),
+    "api_contract_mode" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Contract mode",
+      "props" -> Json.obj(
+        "help"    -> "Report what does not match the contract, or refuse it",
+        "options" -> Json.arr(Json.obj("label" -> "Monitor", "value" -> "monitor"), Json.obj("label" -> "Enforce", "value" -> "enforce"))
+      )
+    ),
     "include"         -> Json.obj(
       "type"  -> "array",
       "label" -> "Apply on paths",
@@ -414,7 +449,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
   override def core: Boolean                               = true
   override def name: String                                = "Cloud APIM Threat Protection - Preset"
   override def description: Option[String]                 =
-    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, traffic guard, WAF, upload guard, login guard, object guard, threat response, error leakage guard and sensitive data guard — in the right order".some
+    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, traffic guard, API contract, WAF, upload guard, login guard, object guard, threat response, error leakage guard and sensitive data guard — in the right order".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimSecuritySuitePresetConfig.default.some
 
   override def noJsForm: Boolean              = true
@@ -517,6 +552,17 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
+    // before the WAF: what does not match the contract never reaches the rule engine. On the way
+    // back, before the guards that rewrite a response, so it checks what the backend answered
+    val contract = Option.when(config.apiContract) {
+      slot(
+        NgPluginHelper.pluginId[CloudApimApiContract],
+        CloudApimApiContractConfig(contract = config.apiContractId, mode = config.apiContractMode).json.asObject,
+        PluginIndex(transformRequest = 0.5.some, transformResponse = 0.5.some),
+        config
+      )
+    }
+
     // after the uploads, and before the response, which reads what it contributes
     val login = Option.when(config.login) {
       slot(
@@ -573,6 +619,6 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    Seq(gate, bots, reputation, fail2ban, traffic, waf, uploads, login, objects, response, leakage, sensitive).flatten
+    Seq(gate, bots, reputation, fail2ban, traffic, contract, waf, uploads, login, objects, response, leakage, sensitive).flatten
   }
 }

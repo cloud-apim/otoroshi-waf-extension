@@ -64,7 +64,7 @@ class PresetSuite extends munit.FunSuite {
   }
 
   test("every emitted slot carries an index, or the ordering guarantee is void") {
-    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true, login = true, traffic = true, objects = true)).foreach { i =>
+    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true, login = true, traffic = true, objects = true, apiContract = true)).foreach { i =>
       val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined || p.transformResponse.isDefined)
       assert(indexed, s"${i.plugin} was emitted without a plugin index")
     }
@@ -140,6 +140,9 @@ class PresetSuite extends munit.FunSuite {
       objectsMode = "score",
       objectsPaths = Seq("/api/orders/{id}"),
       objectsBudget = 500L,
+      apiContract = true,
+      apiContractId = Some("api-contract_1"),
+      apiContractMode = "enforce",
       include = Seq("/a"),
       exclude = Seq("/b")
     )
@@ -237,6 +240,24 @@ class PresetSuite extends munit.FunSuite {
       .map(i => CloudApimObjectGuardConfig.format.reads(i.config.raw).get)
       .get
     assertEquals((declared.contribute, declared.autoDetect, declared.budget, declared.paths.map(_.path)), (true, false, 500L, Seq("/api/orders/{id}")))
+  }
+
+  test("the API contract is off by default, runs before the WAF, and reads the route's metadata when no contract is named") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.apiContract, false)
+    assertEquals(names(chain(full)).contains("CloudApimApiContract"), false)
+    val armed     = chain(full.copy(apiContract = true))
+    val transform = armed.flatMap(i => i.pluginIndex.flatMap(_.transformRequest).map(i.plugin -> _)).toMap
+    assert(transform(NgPluginHelper.pluginId[CloudApimApiContract]) < transform(NgPluginHelper.pluginId[CloudApimWaf]))
+    val guard     = armed.find(_.plugin == NgPluginHelper.pluginId[CloudApimApiContract]).get
+    assert(guard.pluginIndex.exists(_.transformResponse.isDefined))
+    val cfg       = CloudApimApiContractConfig.format.reads(guard.config.raw).get
+    assertEquals((cfg.contract, cfg.mode), (None, "monitor"))
+    val named     = chain(full.copy(apiContract = true, apiContractId = Some("api-contract_1"), apiContractMode = "enforce"))
+      .find(_.plugin == NgPluginHelper.pluginId[CloudApimApiContract])
+      .map(i => CloudApimApiContractConfig.format.reads(i.config.raw).get)
+      .get
+    assertEquals((named.contract, named.mode), (Some("api-contract_1"), "enforce"))
+    assertEquals(CloudApimApiContractConfig.configFlow.filterNot(CloudApimApiContractConfig.configSchema.keys.contains), Seq.empty[String])
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {

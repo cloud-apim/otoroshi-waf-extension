@@ -75,6 +75,8 @@ class SecurityDatastores(env: Env, extensionId: AdminExtensionId) {
     new KvAlertRuleDatastore(extensionId, env.datastores.redis, env)
   val malwareScannerDatastore: MalwareScannerDatastore =
     new KvMalwareScannerDatastore(extensionId, env.datastores.redis, env)
+  val apiContractDatastore: ApiContractDatastore =
+    new KvApiContractDatastore(extensionId, env.datastores.redis, env)
 }
 
 class SecurityState {
@@ -84,6 +86,13 @@ class SecurityState {
   private val _honeypots  = new UnboundedTrieMap[String, HoneypotPolicy]()
   private val _alerts     = new UnboundedTrieMap[String, AlertRule]()
   private val _scanners   = new UnboundedTrieMap[String, MalwareScanner]()
+  private val _contracts  = new UnboundedTrieMap[String, ApiContract]()
+
+  def apiContract(id: String): Option[ApiContract] = _contracts.get(id)
+  def allApiContracts(): Seq[ApiContract]         = _contracts.values.toSeq
+  def updateApiContracts(values: Seq[ApiContract]): Unit = {
+    _contracts.addAll(values.map(v => (v.id, v))).remAll(_contracts.keySet.toSeq.diff(values.map(_.id)))
+  }
 
   def malwareScanner(id: String): Option[MalwareScanner] = _scanners.get(id)
   def allMalwareScanners(): Seq[MalwareScanner]         = _scanners.values.toSeq
@@ -279,6 +288,14 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       configuration.getOptional[Int]("security.objects.max-keys").getOrElse(20000).max(100)
     )
 
+  /** API-1: every contract, compiled once per version of it. */
+  val apiContracts: com.cloud.apim.otoroshi.extensions.waf.api.ApiContracts =
+    new com.cloud.apim.otoroshi.extensions.waf.api.ApiContracts()
+
+  /** The contract a route is checked against: the one named, or the one its metadata names. */
+  def apiContractOf(named: Option[String], routeMetadata: Map[String, String]): Option[ApiContract] =
+    named.filter(_.trim.nonEmpty).orElse(routeMetadata.get(ApiContract.RouteMetadataKey)).flatMap(states.apiContract).filter(_.enabled)
+
   /** BEH-2: the distinct objects each consumer read per window, cluster-wide. */
   val objectBudgets: com.cloud.apim.otoroshi.extensions.waf.objects.ObjectBudgets =
     new com.cloud.apim.otoroshi.extensions.waf.objects.ObjectBudgets(s"$keyPrefix:objects", sharedState)
@@ -417,9 +434,12 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       honeypots  <- datastores.honeypotPolicyDatastore.findAllAndFillSecrets()
       alertRules <- datastores.alertRuleDatastore.findAllAndFillSecrets()
       scanners   <- datastores.malwareScannerDatastore.findAllAndFillSecrets()
+      contracts  <- datastores.apiContractDatastore.findAllAndFillSecrets()
     } yield {
       states.updateAlertRules(alertRules)
       states.updateMalwareScanners(scanners)
+      states.updateApiContracts(contracts)
+      apiContracts.warm(contracts)
       states.updateThreatPolicies(policies)
       states.updateChallengeProviders(challenges)
       states.updateBotPolicies(bots)
@@ -434,7 +454,8 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     AdminExtensionEntity(BotPolicy.resource(env, datastores, states)),
     AdminExtensionEntity(HoneypotPolicy.resource(env, datastores, states)),
     AdminExtensionEntity(AlertRule.resource(env, datastores, states)),
-    AdminExtensionEntity(MalwareScanner.resource(env, datastores, states))
+    AdminExtensionEntity(MalwareScanner.resource(env, datastores, states)),
+    AdminExtensionEntity(ApiContract.resource(env, datastores, states))
   )
 
   private def tick(): Unit = {
@@ -553,6 +574,18 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       path = s"$basePath/_scanner_test",
       wantsBody = true,
       handle = (_, _, _, body) => withJsonBody(body)(handleScannerTest)
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_contract_check",
+      wantsBody = true,
+      handle = (_, _, _, body) => withJsonBody(body)(handleContractCheck)
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_contract_fetch",
+      wantsBody = true,
+      handle = (_, _, _, body) => withJsonBody(body)(handleContractFetch)
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -754,6 +787,46 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
           val works = eicar.isInstanceOf[ScanVerdict.Infected] && clean == ScanVerdict.Clean
           Results.Ok(Json.obj("done" -> works, "eicar" -> verdictJson(eicar), "clean" -> verdictJson(clean)))
         }
+    }
+  }
+
+  /**
+   * Compiles a contract, the one given or a stored one, and says what it declares: the operations a
+   * request is checked against, the base path, and what could not be compiled.
+   */
+  private def handleContractCheck(body: JsValue): Future[Result] = {
+    import com.cloud.apim.otoroshi.extensions.waf.api.ContractCompiler
+    val contract = (body \ "spec").asOpt[String].map(spec => (spec, (body \ "base_path").asOpt[String].getOrElse("")))
+      .orElse((body \ "id").asOpt[String].flatMap(states.apiContract).map(c => (c.spec, c.basePath)))
+    contract match {
+      case None                     => Results.Ok(Json.obj("done" -> false, "error" -> "no contract to check")).vfuture
+      case Some((spec, basePath)) =>
+        Future {
+          ContractCompiler.compile(spec, basePath) match {
+            case Left(error)     => Results.Ok(Json.obj("done" -> false, "error" -> error))
+            case Right(compiled) => Results.Ok(Json.obj("done" -> true) ++ compiled.summary.as[JsObject])
+          }
+        }(using env.otoroshiExecutionContext)
+    }
+  }
+
+  /** Brings a contract's text in from where it is published, once, for the operator to store. */
+  private def handleContractFetch(body: JsValue): Future[Result] = {
+    given ExecutionContext = env.otoroshiExecutionContext
+    (body \ "url").asOpt[String].map(_.trim).filter(u => u.startsWith("https://") || u.startsWith("http://")) match {
+      case None      => Results.Ok(Json.obj("done" -> false, "error" -> "an http or https url is needed")).vfuture
+      case Some(url) =>
+        env.Ws
+          .url(url)
+          .withRequestTimeout(scala.concurrent.duration.Duration(15, "seconds"))
+          .withFollowRedirects(true)
+          .get()
+          .map { response =>
+            if (response.status != 200) Results.Ok(Json.obj("done" -> false, "error" -> s"$url answered ${response.status}"))
+            else if (response.bodyAsBytes.size > 5 * 1024 * 1024) Results.Ok(Json.obj("done" -> false, "error" -> "the contract is over 5 MB"))
+            else Results.Ok(Json.obj("done" -> true, "spec" -> response.bodyAsBytes.utf8String))
+          }
+          .recover { case e => Results.Ok(Json.obj("done" -> false, "error" -> s"$url could not be fetched: ${e.getMessage}")) }
     }
   }
 

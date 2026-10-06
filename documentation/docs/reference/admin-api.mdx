@@ -268,6 +268,10 @@ All under `/extensions/cloud-apim/extensions/waf/security`, backoffice-authentic
 | `POST` | `/_challenge_from_preset` | `{"preset":"friendly-captcha"}` | Build a provider from a preset |
 | `GET` | `/_bot_catalog` | — | Every known bot signature |
 | `POST` | `/_robots_txt` | `{"policy":"<id>"}` | The robots.txt a bot policy enforces |
+| `POST` | `/_alert_test` | `{"rule":{…}}` or `{"id":"<id>"}` | Send a test message to an alert rule's channel |
+| `POST` | `/_scanner_test` | `{"scanner":{…}}` or `{"id":"<id>"}` | EICAR must come back infected, a plain file clean |
+| `POST` | `/_contract_check` | `{"spec":"…","base_path":""}` or `{"id":"<id>"}` | Compile an API contract: its version, base path, operations and warnings |
+| `POST` | `/_contract_fetch` | `{"url":"https://…"}` | Fetch a contract's text once, for it to be stored. Nothing is saved |
 
 Two of these answer `done: false` for outcomes that are decisions rather than failures, and say
 which: `/_ban` returns `{"done":false,"refused":"allowlisted","allowlist":{…}}` when the identity is

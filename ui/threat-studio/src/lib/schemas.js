@@ -558,7 +558,7 @@ export const SCHEMAS = {
             type: 'lines',
             rows: 2,
             when: (v) => v.trigger !== 'ban',
-            help: 'threat, honeypot, fail2ban, challenge, ban, traffic, upload, login, objects, leakage, sensitive_data. Empty means every one',
+            help: 'threat, honeypot, fail2ban, challenge, ban, traffic, api, upload, login, objects, leakage, sensitive_data. Empty means every one',
           },
           { key: 'routes', label: 'Routes', type: 'lines', rows: 2, when: (v) => v.trigger !== 'ban', help: 'Route ids or names. Empty means every route' },
           { key: 'cooldown_seconds', label: 'Cooldown (s)', type: 'number', help: 'One alert per attacker, ban or route within it, for the whole cluster' },
@@ -609,6 +609,33 @@ export const SCHEMAS = {
           { key: 'refresh_interval_seconds', label: 'Refresh every (s)', type: 'number' },
           { key: 'timeout_millis', label: 'Timeout (ms)', type: 'number' },
           { key: 'promotion_delay_seconds', label: 'Promotion delay (s)', type: 'number', help: 'How long a checked version waits before it is installed. 0 installs it at once' },
+        ],
+      },
+    ],
+  },
+
+  /* ------------------------------------------------------------------ api contract */
+  'api-contracts': {
+    resource: () => Resources.apiContracts,
+    label: 'API contract',
+    create: [
+      { key: 'name', label: 'Name', type: 'text', placeholder: 'Orders API' },
+      { key: 'spec', label: 'OpenAPI document', type: 'textarea', rows: 14, mono: true, help: 'OpenAPI 3.0 or 3.1, JSON or YAML' },
+    ],
+    sections: [
+      { title: 'Identity', fields: common },
+      {
+        title: 'Contract',
+        description: 'Requests are checked against it as it is stored here. A reference outside the document is not fetched: it checks nothing.',
+        fields: [
+          {
+            key: 'base_path',
+            label: 'Base path',
+            type: 'text',
+            placeholder: '/v1',
+            help: "What the contract's paths are relative to on the route. Empty: the path of the contract's first server",
+          },
+          { key: 'spec', label: 'OpenAPI document', type: 'textarea', rows: 24, mono: true },
         ],
       },
     ],

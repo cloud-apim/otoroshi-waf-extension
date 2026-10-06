@@ -84,12 +84,22 @@ object ObjectPaths {
     Option.when(ids.nonEmpty)(ObjectRef(parts.map(p => if (idLike(p)) "{id}" else p).mkString("/", "/", ""), ids.mkString("/")))
   }
 
-  /** Declared templates first, the first that matches; then, when on, what looks like an identifier. */
-  def resolve(templates: Seq[ObjectTemplate], autoDetect: Boolean, method: String, path: String): Option[(ObjectRef, Option[ObjectTemplate])] =
+  /**
+   * Declared templates first, the first that matches; then the object the API contract says the
+   * request is about, its path parameters; then, when on, what looks like an identifier.
+   */
+  def resolve(
+      templates: Seq[ObjectTemplate],
+      autoDetect: Boolean,
+      method: String,
+      path: String,
+      contract: Option[ObjectRef] = None
+  ): Option[(ObjectRef, Option[ObjectTemplate])] =
     if (method.equalsIgnoreCase("OPTIONS")) None
     else {
       val parts = split(path)
       templates.iterator.flatMap(t => t.resolve(method, parts).map(ref => (ref, Some(t)))).nextOption()
+        .orElse(contract.map(ref => (ref, None)))
         .orElse(if (autoDetect) auto(parts).map(ref => (ref, None)) else None)
     }
 }

@@ -46,6 +46,7 @@ const CATEGORIES = [
   { value: 'login', label: 'Login' },
   { value: 'traffic', label: 'Traffic' },
   { value: 'objects', label: 'Objects' },
+  { value: 'api', label: 'API contract' },
 ];
 
 const ACTIONS = [

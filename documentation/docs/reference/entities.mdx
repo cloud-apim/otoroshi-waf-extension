@@ -300,6 +300,19 @@ See [alerting](../fabric/alerting.mdx).
 
 See [malware scanning](../waf/uploads.mdx#malware-scanning).
 
+## ApiContract
+
+`api-contracts` · `waf.extensions.cloud-apim.com/ApiContract`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `spec` | string | an example — the OpenAPI 3.0 or 3.1 document, JSON or YAML |
+| `base_path` | string | `""` — the path of the contract's first server |
+
+See [API contracts](../api/contracts.mdx). A route names its own under the metadata key
+`cloud-apim-api-contract`.
+
 ## RuleFeed
 
 `rule-feeds` · `waf.extensions.cloud-apim.com/RuleFeed`

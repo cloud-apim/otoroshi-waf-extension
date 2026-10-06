@@ -17,7 +17,8 @@ A consumer is its api key, else its user, else its address.
 
 ## What an object is
 
-From the path alone, since the route's OpenAPI contract is not read yet:
+From the [API contract](./contracts.mdx) when one matched the request, its path parameters naming
+the object (`/pets/{petId}`); otherwise from the path alone:
 
 - **Declared paths**, `paths`: templates such as `/api/orders/{id}`, where each `{name}` is one
   segment of the identifier and a trailing `*` matches anything after. The kind of object is the
@@ -26,7 +27,8 @@ From the path alone, since the route's OpenAPI contract is not read yet:
   MongoDB ObjectId or a ULID. `/users/42/orders/7` is an object of kind `/users/{id}/orders/{id}`,
   identified by `42/7`.
 
-Declared paths are tried first. Preflight requests are never objects.
+Declared paths are tried first, then the contract, then detection. Preflight requests are never
+objects.
 
 ```json
 {

@@ -29,6 +29,7 @@ import { ClusterPage } from './pages/Cluster';
 import { AlertsPage } from './pages/Alerts';
 import { ScannersPage } from './pages/Scanners';
 import { RuleFeedsPage } from './pages/RuleFeeds';
+import { ApiContractsPage } from './pages/ApiContracts';
 
 const StudioContext = createContext(null);
 export const useStudio = () => useContext(StudioContext);
@@ -62,6 +63,7 @@ const GLOBAL_PAGES = {
   alerts: AlertsPage,
   scanners: ScannersPage,
   rulefeeds: RuleFeedsPage,
+  contracts: ApiContractsPage,
   cluster: ClusterPage,
 };
 

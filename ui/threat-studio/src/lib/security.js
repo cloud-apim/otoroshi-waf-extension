@@ -28,6 +28,8 @@ export const Security = {
   challengeFromPreset: (body) => api.post(`${SECURITY}/_challenge_from_preset`, body),
   alertTest: (body) => api.post(`${SECURITY}/_alert_test`, body),
   scannerTest: (body) => api.post(`${SECURITY}/_scanner_test`, body),
+  contractCheck: (body) => api.post(`${SECURITY}/_contract_check`, body),
+  contractFetch: (body) => api.post(`${SECURITY}/_contract_fetch`, body),
 };
 
 const FEEDS = `${EXT_API}/feeds`;

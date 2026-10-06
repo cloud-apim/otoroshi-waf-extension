@@ -50,7 +50,8 @@ export function ProtectionPage() {
         Resources.botPolicies.list(),
         Resources.wafConfigs.list(),
         Resources.malwareScanners.list(),
-      ]).then(([policies, bots, configs, scanners]) => ({ policies, bots, configs, scanners })),
+        Resources.apiContracts.list(),
+      ]).then(([policies, bots, configs, scanners, contracts]) => ({ policies, bots, configs, scanners, contracts })),
     []
   );
 
@@ -187,6 +188,16 @@ export function ProtectionPage() {
                   onChange={(v) => set({ traffic_sensitivity: v })}
                 />
               )}
+              {s.key === 'api_contract' && preset.api_contract && (
+                <Segmented
+                  options={[
+                    { value: 'monitor', label: 'Monitor' },
+                    { value: 'enforce', label: 'Enforce' },
+                  ]}
+                  value={preset.api_contract_mode}
+                  onChange={(v) => set({ api_contract_mode: v })}
+                />
+              )}
               {s.key === 'objects' && preset.objects && (
                 <Segmented
                   options={[
@@ -293,6 +304,39 @@ export function ProtectionPage() {
               </div>
             </div>
             <LinesInput value={preset.login_paths || []} onChange={(v) => set({ login_paths: v })} rows={3} disabled={!writable} />
+          </div>
+        </Card>
+      )}
+
+      {preset.api_contract && refs.data && (
+        <Card
+          style={{ marginTop: 18 }}
+          title="API contract"
+          description={
+            preset.api_contract_mode === 'enforce'
+              ? 'Enforce: a request outside the contract is refused, 404 for a path it does not declare, 405 for a method, 415 for a media type, 400 for a parameter or a body that does not match.'
+              : 'Monitor: what does not match the contract is reported, and goes through. Leave it here until the reports are only about callers you want refused.'
+          }
+        >
+          <div className="setting-row">
+            <div>
+              <b>Contract</b>
+              <div className="muted small">
+                One contract for every route of the workspace, or each route&apos;s own, named in its metadata under{' '}
+                <code>cloud-apim-api-contract</code>.
+              </div>
+            </div>
+            <div>
+              <Select
+                value={preset.api_contract_id || ''}
+                onChange={(v) => set({ api_contract_id: v || null })}
+                options={options(refs.data.contracts || [], "Each route's own, from its metadata")}
+                disabled={!writable}
+              />
+              <Link className="small" to="/contracts" style={{ marginTop: 6, display: 'inline-block' }}>
+                Manage API contracts
+              </Link>
+            </div>
           </div>
         </Card>
       )}

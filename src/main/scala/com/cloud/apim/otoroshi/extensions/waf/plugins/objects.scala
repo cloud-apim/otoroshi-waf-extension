@@ -242,7 +242,9 @@ class CloudApimObjectGuard extends NgRequestTransformer {
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val cfg     = config(ctx)
     val request = ctx.otoroshiRequest
-    (ThreatSupport.module, ObjectPaths.resolve(cfg.paths, cfg.autoDetect, ctx.request.method, ctx.request.path)) match {
+    // API-1: what the contract says the object is, when a contract matched the request first
+    val contract = ctx.attrs.get(CloudApimApiContract.TouchKey).flatMap(t => t.matched.objectId.map(ObjectRef(t.matched.operation.path, _)))
+    (ThreatSupport.module, ObjectPaths.resolve(cfg.paths, cfg.autoDetect, ctx.request.method, ctx.request.path, contract)) match {
       case (Some(mod), Some((ref, template))) =>
         val now      = System.currentTimeMillis()
         val identity = ThreatSupport.identityOf(ctx.request, ctx.attrs)

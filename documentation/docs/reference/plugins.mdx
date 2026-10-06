@@ -23,6 +23,7 @@ description: Every plugin the extension registers, and where each one is configu
 | Cloud APIM Threat Protection - Upload guard | `NgRequestTransformer` | A route. See [upload guard](../waf/uploads.mdx) |
 | Cloud APIM Threat Protection - Login guard | `NgRequestTransformer` | A route. See [login guard](../bots/login.mdx) |
 | Cloud APIM Threat Protection - Object guard | `NgRequestTransformer` | A route. See [object guard](../api/objects.mdx) |
+| Cloud APIM Threat Protection - API contract | `NgRequestTransformer` | A route. See [API contracts](../api/contracts.mdx) |
 | Cloud APIM Threat Protection - Error leakage guard | `NgRequestTransformer` | A route. See [error leakage](../response/error-leakage.mdx) |
 | Cloud APIM Threat Protection - Sensitive data guard | `NgRequestTransformer` | A route. See [sensitive data](../response/sensitive-data.mdx) |
 
@@ -38,13 +39,14 @@ The fabric plugins are position-sensitive:
 3. IP reputation                contribute reputation signals
 4. Fail2ban                     enforce its own bans; count failures on the way back out
 5. Traffic guard                score a surge away from the learned traffic
-6. Cloud APIM WAF               inspect the payload
-7. Upload guard                 judge every uploaded file by what it is
-8. Login guard                  score stuffing, spraying and attacks on an account; count failures on the way back
-9. Object guard                 count each consumer's objects, hold it to its budget; read the status on the way back
-10. Threat response             read the accumulated score, apply one tier
-11. Error leakage guard         on the way back, replace what leaks with a neutral error
-12. Sensitive data guard        then mask card numbers, IBANs, identifiers and secrets in place
+6. API contract                 check the request against the OpenAPI contract; the response too, when asked
+7. Cloud APIM WAF               inspect the payload
+8. Upload guard                 judge every uploaded file by what it is
+9. Login guard                  score stuffing, spraying and attacks on an account; count failures on the way back
+10. Object guard                count each consumer's objects, hold it to its budget; read the status on the way back
+11. Threat response             read the accumulated score, apply one tier
+12. Error leakage guard         on the way back, replace what leaks with a neutral error
+13. Sensitive data guard        then mask card numbers, IBANs, identifiers and secrets in place
 ```
 
 The response plugin must come **after** the WAF, or it reads a score the WAF has not contributed to
@@ -113,4 +115,5 @@ cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimUplo
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimLoginGuard
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimTrafficGuard
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimObjectGuard
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimApiContract
 ```

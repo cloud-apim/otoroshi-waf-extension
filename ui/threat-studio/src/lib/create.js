@@ -27,6 +27,7 @@ const RESOURCES = {
   'alert-rules': () => Resources.alertRules,
   'malware-scanners': () => Resources.malwareScanners,
   'rule-feeds': () => Resources.ruleFeeds,
+  'api-contracts': () => Resources.apiContracts,
 };
 
 /**

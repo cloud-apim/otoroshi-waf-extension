@@ -42,13 +42,14 @@ wrong. (The preset is missing from the list because this route already carries i
 | 3 | IP reputation — feeds, CrowdSec and ASN | access validation | `3.0` |
 | 4 | [Fail2ban](./fail2ban.mdx) *(off by default)* | access validation | `4.0` |
 | 5 | [Traffic guard](./traffic.mdx) *(off by default)* | access validation | `5.0` |
-| 6 | Cloud APIM WAF | request transformation | `1.0` |
-| 7 | [Upload guard](../waf/uploads.mdx) *(off by default)* | request transformation | `2.0` |
-| 8 | [Login guard](../bots/login.mdx) *(off by default)* | request and response transformation | `3.0` |
-| 9 | [Object guard](../api/objects.mdx) *(off by default)* | request and response transformation | `4.0` |
-| 10 | Threat response | request transformation | `900.0` |
-| 11 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
-| 12 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
+| 6 | [API contract](../api/contracts.mdx) *(off by default)* | request and response transformation | `0.5` |
+| 7 | Cloud APIM WAF | request transformation | `1.0` |
+| 8 | [Upload guard](../waf/uploads.mdx) *(off by default)* | request transformation | `2.0` |
+| 9 | [Login guard](../bots/login.mdx) *(off by default)* | request and response transformation | `3.0` |
+| 10 | [Object guard](../api/objects.mdx) *(off by default)* | request and response transformation | `4.0` |
+| 11 | Threat response | request transformation | `900.0` |
+| 12 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
+| 13 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
 
 The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
 rather than by the order slots happen to sit in on the route.
@@ -99,6 +100,9 @@ the preset carry it.
   "objects_mode": "alert",
   "objects_paths": [],
   "objects_budget": 0,
+  "api_contract": false,
+  "api_contract_id": null,
+  "api_contract_mode": "monitor",
   "include": [],
   "exclude": []
 }
@@ -131,6 +135,9 @@ the preset carry it.
 | `objects_mode` | `alert` | `alert` only reports enumeration, walks and surges of new objects; `score` puts them on the threat score too. |
 | `objects_paths` | `[]` | Object paths such as `/api/orders/{id}`. Empty means any segment shaped like an identifier. |
 | `objects_budget` | `0` | Distinct objects of one kind a consumer may read per hour, across the cluster, refused with a `429` past it. `0` is none. |
+| `api_contract` | `false` | Off by default. See [API contracts](../api/contracts.mdx). |
+| `api_contract_id` | `null` | The contract every route is checked against. `null`: each route's metadata names its own, under `cloud-apim-api-contract`. |
+| `api_contract_mode` | `monitor` | `monitor` reports what does not match the contract; `enforce` refuses it. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 
