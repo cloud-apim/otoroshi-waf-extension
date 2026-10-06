@@ -160,4 +160,15 @@ object MediaType {
 
   def matchesAny(patterns: Seq[String], contentType: String): Boolean =
     patterns.exists(p => matches(p, contentType))
+
+  /**
+   * Whether a media type is text a person or a program reads: where an error page, a JSON payload
+   * or a log line ends up.
+   *
+   * `text/event-stream` is left out. It is text, but a stream that may never end, and holding any of
+   * it back to read it stalls every event behind it.
+   */
+  def textual(mt: String): Boolean =
+    mt != "text/event-stream" && (mt.startsWith("text/") || mt.endsWith("/json") || mt.endsWith("+json") ||
+      mt.endsWith("/xml") || mt.endsWith("+xml") || mt == "application/javascript")
 }

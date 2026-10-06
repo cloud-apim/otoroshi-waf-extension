@@ -46,6 +46,13 @@ class LeakageSuite extends munit.FunSuite {
     assertEquals(family("<title>Whoops, looks like something went wrong.</title>"), Some("php"))
   }
 
+  test("server-sent events are not read unless asked for: holding them back stalls every event") {
+    import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimErrorLeakageConfig
+    assert(!CloudApimErrorLeakageConfig.default.inspects(Some("text/event-stream; charset=utf-8")))
+    assert(CloudApimErrorLeakageConfig.default.inspects(Some("text/html; charset=utf-8")))
+    assert(CloudApimErrorLeakageConfig(contentTypes = Seq("text/event-stream")).inspects(Some("text/event-stream")))
+  }
+
   test("an ordinary response that talks about errors is not a leak") {
     assertEquals(family("<html><body><h1>Oops</h1><p>An error occurred, please try again later.</p></body></html>"), None)
     assertEquals(family("""{"error":"not_found","message":"No thing with id 42"}""", "application/json"), None)

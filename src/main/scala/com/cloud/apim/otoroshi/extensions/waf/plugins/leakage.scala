@@ -42,9 +42,7 @@ final case class CloudApimErrorLeakageConfig(
   def inspects(contentType: Option[String]): Boolean = contentType.map(MediaType.of) match {
     case None                               => true
     case Some(mt) if contentTypes.nonEmpty  => MediaType.matchesAny(contentTypes, mt)
-    case Some(mt)                           =>
-      mt.startsWith("text/") || mt.endsWith("/json") || mt.endsWith("+json") || mt.endsWith("/xml") ||
-        mt.endsWith("+xml") || mt == "application/javascript"
+    case Some(mt)                           => MediaType.textual(mt)
   }
 }
 

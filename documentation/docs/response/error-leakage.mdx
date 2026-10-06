@@ -63,7 +63,7 @@ headers that described the original body (`Content-Length`, `Content-Encoding`, 
 | `mode` | `mask` | `mask` replaces a leaking response; `monitor` only reports it |
 | `body_limit` | 256 KiB | Bytes of the response read, decompressed when it is compressed. A leak past them is not seen |
 | `paranoia_level` | `1` | Which of the CRS leakage rules run, from 1 to 4 |
-| `content_types` | `[]` | The response types read. Empty means every textual type: `text/*`, JSON, XML, JavaScript, and responses with no type |
+| `content_types` | `[]` | The response types read. Empty means every textual type: `text/*`, JSON, XML, JavaScript, and responses with no type. Server-sent events (`text/event-stream`) are left out: reading them would hold every event back |
 
 Start in `monitor`: an API that documents its own errors, or a page that legitimately shows code,
 can match a signature. The events say what would have been masked, and on which route.
