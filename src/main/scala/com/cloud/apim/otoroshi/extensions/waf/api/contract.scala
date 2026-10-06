@@ -27,8 +27,8 @@ final case class Violation(kind: String, where: String, detail: String) {
   def json: JsValue = Json.obj("kind" -> kind, "where" -> where, "detail" -> detail)
 }
 
-/** A schema of the contract, compiled, and the types its values are read as. */
-final class ContractSchema(val types: Seq[String], val itemTypes: Seq[String], compiled: Option[Schema]) {
+/** A schema of the contract, compiled, the types its values are read as, and the form it was written in. */
+final class ContractSchema(val raw: JsValue, val types: Seq[String], val itemTypes: Seq[String], compiled: Option[Schema]) {
 
   /** What is wrong with a JSON document, at most `max` things. Never fails: a schema that cannot run checks nothing. */
   def check(json: String, max: Int = 5): Seq[String] = compiled match {
@@ -113,7 +113,10 @@ final case class ContractOperation(
     operationId: Option[String],
     params: Seq[ContractParam],
     body: Option[ContractBody],
-    responses: Seq[ContractResponse]
+    responses: Seq[ContractResponse],
+    // API-4: the credentials the contract asks for, as alternatives of scheme families (`apiKey`,
+    // `http:bearer`, `oauth2`…). None: it says nothing; an empty list: public on purpose
+    security: Option[Seq[Set[String]]] = None
 ) {
 
   val segments: Seq[String] = ContractPaths.split(path)
@@ -143,7 +146,8 @@ final case class ContractOperation(
     "operation_id" -> operationId,
     "parameters"   -> params.map(p => s"${p.in} ${p.name}${if (p.required) "" else "?"}"),
     "body"         -> body.map(b => Json.obj("required" -> b.required, "media" -> b.media.map(_.range))),
-    "responses"    -> responses.map(_.code)
+    "responses"    -> responses.map(_.code),
+    "security"     -> security.map(alternatives => JsArray(alternatives.map(a => JsArray(a.toSeq.sorted.map(JsString.apply)))))
   )
 }
 
@@ -180,7 +184,9 @@ final class CompiledContract(
     val version: String,
     val basePath: String,
     val operations: Seq[ContractOperation],
-    val warnings: Seq[String]
+    val warnings: Seq[String],
+    // follows a schema's local reference within the document, for what reads a schema by hand
+    val resolve: JsValue => JsValue = identity
 ) {
 
   private val byPath: Seq[(String, Seq[ContractOperation])] =
@@ -340,6 +346,19 @@ object ContractCompiler {
       }
     }
 
+  /** Follows local references within `doc`, a few levels deep at most; an unresolvable one is an empty schema. */
+  def resolver(doc: JsValue): JsValue => JsValue = {
+    def follow(node: JsValue, depth: Int): JsValue = node match {
+      case o: JsObject if depth < 16 =>
+        (o \ "$ref").asOpt[String] match {
+          case None      => o
+          case Some(ref) => pointer(doc, ref).map(follow(_, depth + 1)).getOrElse(JsObject.empty)
+        }
+      case other                     => other
+    }
+    follow(_, 0)
+  }
+
   /** The path of the first server, when it has one: what the contract's paths are relative to. */
   def serverPath(doc: JsObject): String =
     (doc \ "servers" \ 0 \ "url").asOpt[String].map(_.trim).filterNot(_.contains("{")).flatMap { url =>
@@ -384,12 +403,26 @@ object ContractCompiler {
       pending.size - 1
     }
 
+    // what each security scheme of the contract is, as the family a deployed plugin is compared with
+    private lazy val schemes: Map[String, String] =
+      (doc \ "components" \ "securitySchemes").asOpt[JsObject].map(_.value.toMap).getOrElse(Map.empty).map { case (name, raw) =>
+        val s = resolve(raw)
+        name -> ((s \ "type").asOpt[String].getOrElse("") match {
+          case "http" => s"http:${(s \ "scheme").asOpt[String].getOrElse("").toLowerCase}"
+          case other  => other
+        })
+      }
+
+    private def security(node: JsValue): Option[Seq[Set[String]]] =
+      node.asOpt[Seq[JsObject]].map(_.map(requirement => requirement.keys.toSet.map(name => schemes.getOrElse(name, name))))
+
     private def media(content: JsValue): Seq[(String, Option[Int])] =
       content.asOpt[JsObject].map(_.value.toSeq).getOrElse(Seq.empty).map { case (range, m) =>
         (MediaType.of(range), (resolve(m) \ "schema").toOption.map(schema))
       }
 
     def result(): CompiledContract = {
+      val securities = ListBuffer.empty[Option[Seq[Set[String]]]]
       val draft = ListBuffer.empty[(String, String, Option[String], Seq[(String, String, Boolean, Option[Int], Boolean)], Option[(Boolean, Seq[(String, Option[Int])])], Seq[(String, Seq[(String, Option[Int])])])]
       (doc \ "paths").asOpt[JsObject].map(_.value.toSeq).getOrElse(Seq.empty).foreach { case (path, rawItem) =>
         val item       = resolve(rawItem)
@@ -413,24 +446,26 @@ object ContractCompiler {
               (code, media((resolve(r) \ "content").getOrElse(JsObject.empty)))
             }
             draft += ((method.toUpperCase, path, (op \ "operationId").asOpt[String], params, body, responses))
+            securities += ((op \ "security").toOption.flatMap(security).orElse((doc \ "security").toOption.flatMap(security)))
           }
         }
       }
       val compiled = compileAll()
-      def at(i: Option[Int]): Option[ContractSchema] = i.map(n => new ContractSchema(types(n)._1, types(n)._2, compiled(n)))
-      val operations = draft.toSeq.map { case (method, path, operationId, params, body, responses) =>
+      def at(i: Option[Int]): Option[ContractSchema] = i.map(n => new ContractSchema(pending(n), types(n)._1, types(n)._2, compiled(n)))
+      val operations = draft.toSeq.zip(securities).map { case ((method, path, operationId, params, body, responses), security) =>
         ContractOperation(
           method = method,
           path = path,
           operationId = operationId,
           params = params.map { case (name, in, required, s, explode) => ContractParam(name, in, required, at(s), explode) },
           body = body.map { case (required, ms) => ContractBody(required, ms.map { case (range, s) => ContractMedia(range, at(s)) }) },
-          responses = responses.map { case (code, ms) => ContractResponse(code, ms.map { case (range, s) => ContractMedia(range, at(s)) }) }
+          responses = responses.map { case (code, ms) => ContractResponse(code, ms.map { case (range, s) => ContractMedia(range, at(s)) }) },
+          security = security
         )
       }
       if (operations.isEmpty) warnings += "the contract declares no operation: every request is outside it"
       val basePath = Option(basePathOverride.trim).filter(_.nonEmpty).map(p => ("/" + p.stripPrefix("/")).stripSuffix("/")).getOrElse(serverPath(doc))
-      new CompiledContract(version, basePath, operations, warnings.distinct.toSeq)
+      new CompiledContract(version, basePath, operations, warnings.distinct.toSeq, resolver(doc))
     }
 
     /**

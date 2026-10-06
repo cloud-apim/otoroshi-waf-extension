@@ -292,6 +292,15 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
   val apiContracts: com.cloud.apim.otoroshi.extensions.waf.api.ApiContracts =
     new com.cloud.apim.otoroshi.extensions.waf.api.ApiContracts()
 
+  /** API-2, API-3: what traffic the contracts see, counted here and merged across nodes and months. */
+  val apiInventory: com.cloud.apim.otoroshi.extensions.waf.api.ApiInventory =
+    new com.cloud.apim.otoroshi.extensions.waf.api.ApiInventory(
+      s"$keyPrefix:api:inventory",
+      nodeId,
+      sharedState,
+      configuration.getOptional[Int]("security.api.inventory.max-records").getOrElse(20000).max(100)
+    )
+
   /** The contract a route is checked against: the one named, or the one its metadata names. */
   def apiContractOf(named: Option[String], routeMetadata: Map[String, String]): Option[ApiContract] =
     named.filter(_.trim.nonEmpty).orElse(routeMetadata.get(ApiContract.RouteMetadataKey)).flatMap(states.apiContract).filter(_.enabled)
@@ -469,6 +478,8 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       // publishing after evicting, so a node never shares what it has already dropped
       board.publish()
       ticks += 1
+      // what the contracts saw, every half minute: months of it are read, so seconds do not matter
+      if (ticks % 3 == 0) apiInventory.publish()(using env.otoroshiExecutionContext).failed.foreach(e => logger.error("could not publish the API inventory", e))(using env.otoroshiExecutionContext)
       // the state hash only grows, and nothing else prunes it — but it is a slow leak, not a hot
       // one, so once every few minutes is plenty
       if (ticks % SecurityModule.pruneEvery == 0) board.pruneStates()
@@ -574,6 +585,12 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       path = s"$basePath/_scanner_test",
       wantsBody = true,
       handle = (_, _, _, body) => withJsonBody(body)(handleScannerTest)
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = s"$basePath/_api_report",
+      wantsBody = false,
+      handle = (_, request, _, _) => handleApiReport(request)
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -809,6 +826,31 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
         }(using env.otoroshiExecutionContext)
     }
   }
+
+  /**
+   * The API reports of a set of routes, every route when none is named: inventory, shadow and zombie
+   * endpoints, drift, and the auth posture matrix (API-2, API-3, API-4).
+   */
+  def handleApiReport(request: play.api.mvc.RequestHeader): Future[Result] = {
+    given ExecutionContext = env.otoroshiExecutionContext
+    given Env              = env
+    val routeIds   = request.getQueryString("route_ids").toSeq.flatMap(_.split(',')).map(_.trim).filter(_.nonEmpty).toSet
+    val zombieDays = request.getQueryString("zombie_days").flatMap(_.toIntOption).filter(_ > 0).getOrElse(90)
+    // what this node saw is published first, so a report asked right after traffic includes it
+    apiInventory.publish().recover { case _ => 0 }.flatMap(_ =>
+      com.cloud.apim.otoroshi.extensions.waf.api.ApiReport.json(this, routeIds, zombieDays).map(Results.Ok(_))
+    )
+  }
+
+  /** API-4 for a CI: the same report, asked with an admin api key. */
+  def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = Seq(
+    AdminExtensionAdminApiRoute(
+      method = "GET",
+      path = "/api/extensions/cloud-apim/waf/api/_report",
+      wantsBody = false,
+      handle = (_, request, _, _) => handleApiReport(request)
+    )
+  )
 
   /** Brings a contract's text in from where it is published, once, for the operator to store. */
   private def handleContractFetch(body: JsValue): Future[Result] = {

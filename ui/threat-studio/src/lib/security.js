@@ -30,6 +30,8 @@ export const Security = {
   scannerTest: (body) => api.post(`${SECURITY}/_scanner_test`, body),
   contractCheck: (body) => api.post(`${SECURITY}/_contract_check`, body),
   contractFetch: (body) => api.post(`${SECURITY}/_contract_fetch`, body),
+  apiReport: (routeIds, zombieDays) =>
+    api.get(`${SECURITY}/_api_report?route_ids=${encodeURIComponent((routeIds || []).join(','))}&zombie_days=${zombieDays || 90}`),
 };
 
 const FEEDS = `${EXT_API}/feeds`;

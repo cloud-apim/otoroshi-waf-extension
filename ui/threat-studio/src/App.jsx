@@ -30,6 +30,7 @@ import { AlertsPage } from './pages/Alerts';
 import { ScannersPage } from './pages/Scanners';
 import { RuleFeedsPage } from './pages/RuleFeeds';
 import { ApiContractsPage } from './pages/ApiContracts';
+import { ApiPage } from './pages/Api';
 
 const StudioContext = createContext(null);
 export const useStudio = () => useContext(StudioContext);
@@ -44,6 +45,7 @@ const WORKSPACE_PAGES = {
   routes: RoutesPage,
   scope: ScopePage,
   protection: ProtectionPage,
+  api: ApiPage,
   waf: WafPage,
   bots: BotsPage,
   reputation: ReputationPage,

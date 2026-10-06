@@ -157,6 +157,11 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
       max-keys = 20000
     }
 
+    api.inventory {
+      // how many operations, paths outside the contracts and drifts one node counts
+      max-records = 20000
+    }
+
     events {
       // also emit every decision and every alert as an OCSF Detection Finding, as its own event
       // type (CloudApimSecurityOcsf), for Security Lake, Sentinel and the other OCSF readers

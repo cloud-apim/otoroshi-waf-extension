@@ -101,9 +101,14 @@ template to declare and nothing to detect.
   "max_body_bytes": 1048576,
   "validate_responses": false,
   "unknown_path_weight": 20,
-  "violation_weight": 30
+  "violation_weight": 30,
+  "inventory": true,
+  "drift_sampling_seconds": 60
 }
 ```
+
+`inventory` and `drift_sampling_seconds` feed the [API reports](./reports.mdx): the operations
+used, the paths outside the contract, and how the traffic drifts from it.
 
 Without `contract`, the route names its own in its metadata, under `cloud-apim-api-contract`: one
 [preset](../fabric/preset.mdx) or [global preset](../fabric/global-preset.mdx) rule can then lay the

@@ -34,7 +34,10 @@ final case class CloudApimApiContractConfig(
     maxBodyBytes: Long = 1024L * 1024L,
     validateResponses: Boolean = false,
     unknownPathWeight: Int = 20,
-    violationWeight: Int = 30
+    violationWeight: Int = 30,
+    // API-2, API-3: count what the contract sees, and how often to compare a payload with its shape
+    inventory: Boolean = true,
+    driftSamplingSeconds: Long = 60L
 ) extends NgPluginConfig {
   override def json: JsValue = CloudApimApiContractConfig.format.writes(this)
   def enforces: Boolean      = mode == "enforce"
@@ -54,7 +57,9 @@ object CloudApimApiContractConfig {
       "max_body_bytes"              -> o.maxBodyBytes,
       "validate_responses"          -> o.validateResponses,
       "unknown_path_weight"         -> o.unknownPathWeight,
-      "violation_weight"            -> o.violationWeight
+      "violation_weight"            -> o.violationWeight,
+      "inventory"                   -> o.inventory,
+      "drift_sampling_seconds"      -> o.driftSamplingSeconds
     )
     override def reads(json: JsValue): JsResult[CloudApimApiContractConfig] = Try {
       val d = CloudApimApiContractConfig.default
@@ -67,7 +72,9 @@ object CloudApimApiContractConfig {
         maxBodyBytes = json.select("max_body_bytes").asOpt[Long].filter(_ > 0L).getOrElse(d.maxBodyBytes),
         validateResponses = json.select("validate_responses").asOpt[Boolean].getOrElse(d.validateResponses),
         unknownPathWeight = json.select("unknown_path_weight").asOpt[Int].filter(_ >= 0).getOrElse(d.unknownPathWeight),
-        violationWeight = json.select("violation_weight").asOpt[Int].filter(_ >= 0).getOrElse(d.violationWeight)
+        violationWeight = json.select("violation_weight").asOpt[Int].filter(_ >= 0).getOrElse(d.violationWeight),
+        inventory = json.select("inventory").asOpt[Boolean].getOrElse(d.inventory),
+        driftSamplingSeconds = json.select("drift_sampling_seconds").asOpt[Long].filter(_ >= 0L).getOrElse(d.driftSamplingSeconds)
       )
     } match {
       case Success(value) => JsSuccess(value)
@@ -77,7 +84,7 @@ object CloudApimApiContractConfig {
 
   val configFlow: Seq[String] = Seq(
     "contract", "mode", "expose_errors", "contribute", "reject_unknown_query_params", "max_body_bytes", "validate_responses",
-    "unknown_path_weight", "violation_weight"
+    "unknown_path_weight", "violation_weight", "inventory", "drift_sampling_seconds"
   )
 
   private def bool(label: String, help: String)   = Json.obj("type" -> "bool", "label" -> label, "props" -> Json.obj("help" -> help))
@@ -107,15 +114,19 @@ object CloudApimApiContractConfig {
     "max_body_bytes"              -> number("Body limit", "Bytes of a JSON body read to check it. A larger one does not match"),
     "validate_responses"          -> bool("Check responses", "Report a response whose status, media type or JSON body the contract does not declare. Never refused"),
     "unknown_path_weight"         -> number("Unknown path weight", "What a path or a method outside the contract contributes"),
-    "violation_weight"            -> number("Violation weight", "What a parameter or a body that does not match contributes")
+    "violation_weight"            -> number("Violation weight", "What a parameter or a body that does not match contributes"),
+    "inventory"                   -> bool("Inventory", "Count the operations used, the paths outside the contract and how traffic drifts from it, for the API reports"),
+    "drift_sampling_seconds"      -> number("Drift sampling", "Seconds between two payloads of an operation compared with their declared shape, on each node. 0 compares none")
   )
 }
 
 /** A request matched to its operation, carried to its response and to the object guard. */
-final case class ContractTouch(contractId: String, contract: CompiledContract, matched: ContractMatch)
+final case class ContractTouch(contractId: String, contract: CompiledContract, matched: ContractMatch, inventoryKey: Option[String] = None)
 
 object CloudApimApiContract {
   val TouchKey: TypedKey[ContractTouch] = TypedKey[ContractTouch]("cloud-apim.waf.api.contract")
+  // a request outside the contract, counted in the inventory: what the backend answers says whether it exists
+  val ShadowKey: TypedKey[String]       = TypedKey[String]("cloud-apim.waf.api.shadow")
 
   /**
    * Whether a request carries a body, by what it says about it rather than by its method: a `POST`
@@ -169,6 +180,28 @@ class CloudApimApiContract extends NgRequestTransformer {
   // a mismatch is reported once a minute per route, operation and kind; a broken contract once an hour
   private val reported = new TrieMap[String, Long]()
 
+  // API-3: when a payload of an operation was last compared with its shape, on this node
+  private val sampled = new TrieMap[String, Long]()
+
+  private def sample(cfg: CloudApimApiContractConfig, key: String, now: Long): Boolean =
+    cfg.inventory && cfg.driftSamplingSeconds > 0L && {
+      val due = sampled.get(key).forall(_ <= now)
+      if (due) {
+        sampled.put(key, now + cfg.driftSamplingSeconds * 1000L)
+        if (sampled.size > 10000) sampled.filterInPlace((_, until) => until > now)
+      }
+      due
+    }
+
+  /** A payload against its declared shape: what is there that the contract never mentions. */
+  private def drift(mod: SecurityModule, routeId: String, touch: ContractTouch, media: ContractMedia, text: String, direction: String, now: Long): Unit =
+    for {
+      schema <- media.schema
+      json   <- Try(Json.parse(text)).toOption
+    } ShapeDiff.diff(json, schema.raw, touch.contract.resolve).foreach { finding =>
+      mod.apiInventory.drift(routeId, touch.contractId, touch.matched.operation.method, touch.matched.operation.path, finding.copy(where = s"$direction ${finding.where}"), now)
+    }
+
   private def config(ctx: NgCachedConfigContext): CloudApimApiContractConfig =
     ctx.cachedConfig(internalName)(CloudApimApiContractConfig.format).getOrElse(CloudApimApiContractConfig.default)
 
@@ -199,11 +232,16 @@ class CloudApimApiContract extends NgRequestTransformer {
     ThreatSupport.module.flatMap(mod => compiled(mod, cfg, ctx.route).map(c => (mod, c))) match {
       case None                              => request.rightf
       case Some((mod, (contract, compiled))) =>
+        val now = System.currentTimeMillis()
         compiled.resolve(ctx.request.method, ctx.request.path) match {
           case Right(None)    => request.rightf
-          case Left(violation) => mismatch(mod, ctx, cfg, compiled, None, Seq(violation), None)
+          case Left(violation) =>
+            if (cfg.inventory) ctx.attrs.put(CloudApimApiContract.ShadowKey -> mod.apiInventory.shadow(ctx.route.id, ctx.request.method, ctx.request.path, now))
+            mismatch(mod, ctx, cfg, compiled, None, Seq(violation), None)
           case Right(Some(m)) =>
-            ctx.attrs.put(CloudApimApiContract.TouchKey -> ContractTouch(contract.id, compiled, m))
+            val counted = Option.when(cfg.inventory)(mod.apiInventory.operation(ctx.route.id, contract.id, m.operation.method, m.operation.path, now))
+            val touch   = ContractTouch(contract.id, compiled, m, counted)
+            ctx.attrs.put(CloudApimApiContract.TouchKey -> touch)
             val headers    = ctx.request.headers.toSimpleMap.map { case (k, v) => k.toLowerCase -> v }
             val parameters = compiled.checkParameters(m, ctx.request.queryString, headers, cfg.rejectUnknownQueryParams)
             compiled.bodyMedia(m, request.contentType, CloudApimApiContract.hasBody(ctx.request.headers.get("Content-Length"), ctx.request.headers.get("Transfer-Encoding"), request.contentType)) match {
@@ -212,11 +250,15 @@ class CloudApimApiContract extends NgRequestTransformer {
               case Right(Some(media)) =>
                 BodyReader.prefix(request.body, cfg.maxBodyBytes).flatMap { prefix =>
                   val (bytes, truncated) = RequestBodies.readResponse(prefix, request.headers)
+                  val text               = bytes.utf8String
                   val body               =
                     if (truncated) Seq(Violation("body_too_large", "body", s"over ${cfg.maxBodyBytes} bytes, it cannot be checked"))
-                    else compiled.checkBody(media, bytes.utf8String)
-                  if (parameters.isEmpty && body.isEmpty) Right(request.copy(body = prefix.resume)).vfuture
-                  else mismatch(mod, ctx, cfg, compiled, Some(m), parameters ++ body, Some(prefix))
+                    else compiled.checkBody(media, text)
+                  if (parameters.isEmpty && body.isEmpty) {
+                    if (!truncated && sample(cfg, s"${ctx.route.id}|${m.operation.method} ${m.operation.path}|request", now))
+                      drift(mod, ctx.route.id, touch, media, text, "request", now)
+                    Right(request.copy(body = prefix.resume)).vfuture
+                  } else mismatch(mod, ctx, cfg, compiled, Some(m), parameters ++ body, Some(prefix))
                 }
             }
         }
@@ -266,6 +308,8 @@ class CloudApimApiContract extends NgRequestTransformer {
       )
     if (!cfg.enforces) Right(prefix.fold(ctx.otoroshiRequest)(p => ctx.otoroshiRequest.copy(body = p.resume))).vfuture
     else {
+      // refused here: the inventory counts it as such, the backend never answered it
+      ctx.attrs.get(CloudApimApiContract.ShadowKey).orElse(ctx.attrs.get(CloudApimApiContract.TouchKey).flatMap(_.inventoryKey)).foreach(mod.apiInventory.status(_, 0))
       prefix.foreach(_.drain())
       val status = first.status
       val allow  = if (status == 405) Seq("Allow" -> compiled.allowed(ctx.request.path).mkString(", ")) else Seq.empty
@@ -284,28 +328,41 @@ class CloudApimApiContract extends NgRequestTransformer {
   )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val response = ctx.otoroshiResponse
     val cfg      = config(ctx)
+    val now      = System.currentTimeMillis()
+    ThreatSupport.module.foreach(mod => ctx.attrs.get(CloudApimApiContract.ShadowKey).foreach(mod.apiInventory.status(_, response.status)))
     (ThreatSupport.module, ctx.attrs.get(CloudApimApiContract.TouchKey)) match {
-      case (Some(mod), Some(touch)) if cfg.validateResponses =>
+      case (Some(mod), Some(touch)) if cfg.validateResponses || cfg.inventory =>
+        touch.inventoryKey.foreach(mod.apiInventory.status(_, response.status))
+        val op          = touch.matched.operation
         val headers     = response.headers
         val contentType = headers.collectFirst { case (k, v) if k.equalsIgnoreCase("Content-Type") => v }
         val length      = headers.collectFirst { case (k, v) if k.equalsIgnoreCase("Content-Length") => v }.flatMap(_.trim.toLongOption)
         val hasBody     = ResponseBody.hasBody(ctx.request.method, response.status, length)
         touch.contract.responseMedia(touch.matched, response.status, contentType, hasBody) match {
-          case Left(violation)    =>
-            reportResponse(mod, ctx, touch, Seq(violation))
+          case Left(violation)                                                   =>
+            if (cfg.validateResponses) reportResponse(mod, ctx, touch, Seq(violation))
+            if (cfg.inventory)
+              mod.apiInventory.drift(ctx.route.id, touch.contractId, op.method, op.path, DriftFinding(violation.kind, s"response ${response.status}", violation.detail), now)
             response.rightf
-          case Right(None)        => response.rightf
-          case Right(Some(media)) =>
-            BodyReader.prefix(response.body, cfg.maxBodyBytes).map { prefix =>
-              val (bytes, truncated) = RequestBodies.readResponse(prefix, headers)
-              if (!truncated) {
-                val violations = touch.contract.checkResponseBody(touch.matched, response.status, media, bytes.utf8String)
-                if (violations.nonEmpty) reportResponse(mod, ctx, touch, violations)
+          case Right(None)                                                       => response.rightf
+          case Right(Some(media))                                                =>
+            val compare = sample(cfg, s"${ctx.route.id}|${op.method} ${op.path}|response ${response.status}", now)
+            if (!cfg.validateResponses && !compare) response.rightf
+            else
+              BodyReader.prefix(response.body, cfg.maxBodyBytes).map { prefix =>
+                val (bytes, truncated) = RequestBodies.readResponse(prefix, headers)
+                if (!truncated) {
+                  val text = bytes.utf8String
+                  if (cfg.validateResponses) {
+                    val violations = touch.contract.checkResponseBody(touch.matched, response.status, media, text)
+                    if (violations.nonEmpty) reportResponse(mod, ctx, touch, violations)
+                  }
+                  if (compare) drift(mod, ctx.route.id, touch, media, text, s"response ${response.status}", now)
+                }
+                Right(response.copy(body = prefix.resume))
               }
-              Right(response.copy(body = prefix.resume))
-            }
         }
-      case _                                                 => response.rightf
+      case _                                                                     => response.rightf
     }
   }
 

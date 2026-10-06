@@ -287,7 +287,7 @@ class CloudApimObjectGuard extends NgRequestTransformer {
       ref: ObjectRef,
       sighting: ObjectSighting,
       now: Long
-  )(using env: Env): Unit = {
+  ): Unit = {
     val seen = Seq(
       sighting.surge.map { r =>
         (
@@ -332,7 +332,7 @@ class CloudApimObjectGuard extends NgRequestTransformer {
       refused: Boolean,
       facts: JsObject,
       now: Long
-  )(using env: Env): Unit = {
+  ): Unit = {
     val at = s"$key|$pattern"
     if (reported.get(at).forall(_ < now)) {
       reported.put(at, now + 60000L)

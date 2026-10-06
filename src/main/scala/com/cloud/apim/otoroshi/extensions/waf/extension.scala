@@ -711,6 +711,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     )
   )
 
+  override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = security.adminApiRoutes()
+
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(
       method = "POST",

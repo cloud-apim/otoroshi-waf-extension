@@ -18,6 +18,7 @@ export const WORKSPACE_PAGES = [
   { id: 'routes', label: 'Routes', icon: 'route' },
   { id: 'scope', label: 'Scope', icon: 'target' },
   { id: 'protection', label: 'Protection', icon: 'sliders' },
+  { id: 'api', label: 'API', icon: 'file' },
   { id: 'waf', label: 'WAF', icon: 'shield' },
   { id: 'bots', label: 'Bots', icon: 'ghost' },
   { id: 'reputation', label: 'IP reputation', icon: 'globe' },

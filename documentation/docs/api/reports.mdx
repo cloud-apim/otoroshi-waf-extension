@@ -1,0 +1,92 @@
+---
+sidebar_position: 2
+title: API reports
+description: Shadow and zombie endpoints, contract drift, and which credentials apply to which endpoint.
+---
+
+# API reports
+
+Once routes are checked against their [API contracts](./contracts.mdx), three questions get an
+answer that no single request gives: which endpoints exist that nobody documented, which documented
+ones nobody calls any more, and how the traffic departs from what the contract says. A fourth is
+answered from configuration alone: which credential each endpoint actually asks for.
+
+The four come out of one report, for a workspace in **Threat Studio** (the **API** page of a
+workspace), or for any set of routes from the admin API.
+
+## The inventory
+
+The contract plugin counts what it sees, with `inventory` on (the default): each operation of the
+contract with its calls and the statuses its backend answered, and each path outside the contract,
+its identifiers folded into `{id}` (`/legacy/42/export` is `/legacy/{id}/export`). Each node counts
+in memory and publishes what changed every half minute to a hash of its own in the shared store,
+kept six months; a report merges every node's. The number of records is bounded per node
+(`security.api.inventory.max-records`, 20 000), and paths outside the contract to 200 per route —
+past that, a scanner walking random paths fills one *other paths* bucket rather than the store.
+
+### Shadow endpoints
+
+A path outside the contract that the backend **answered with a 2xx** is an endpoint that exists
+and that nobody documented: undocumented, unreviewed, usually unsecured. One answered 404 is mostly
+a probe. In `monitor` mode the request reaches the backend, which is what tells the two apart; in
+`enforce` mode it is refused, and counted as such.
+
+### Zombie operations
+
+An operation of the contract nobody called for `zombie_days` (90 by default) is a **zombie**:
+deprecated in practice, still reachable. An operation can only be called a zombie on a route
+observed for at least that long; before that it is **unused**.
+
+## Drift
+
+With `drift_sampling_seconds` (60), a payload of each operation is compared with its declared
+shape once in that many seconds on each node — a request body, and each response status:
+
+| Drift | What |
+|---|---|
+| `undeclared_field` | A field the schema does not declare, where it declares its properties: `response 200 $.items[].internalCost` |
+| `type_mismatch` | A value of another type than declared: a string where an integer is declared |
+| `undeclared_status` | A status the operation declares neither exactly, nor by class, nor as `default` |
+| `undeclared_media_type` | A media type the response does not declare for that status |
+
+Compositions are read generously — the properties of every member of `allOf`, `oneOf` and `anyOf`
+count as declared — so a payload is never reported for matching one branch rather than another. A
+field whose name is one a response should think twice about carrying (`password`, `ssn`,
+`card_number`, `apiKey`, `refreshToken`…) is flagged **sensitive**: the day a backend quietly starts
+returning one is a documentation defect and a disclosure incident at once. It pairs with the
+[sensitive data guard](../response/sensitive-data.mdx), which masks what it recognises by value.
+
+## Credentials
+
+The **auth posture** reads each route's plugin chain: the plugins that refuse a request without a
+credential (api keys, authentication modules, JWT and OIDC verifiers, biscuits, client certificates,
+HMAC and HTTP signatures, basic auth), and the paths they are scoped to with `include` and
+`exclude`. An api key plugin that is not mandatory checks nothing. Each operation of the contract is
+then compared with the security requirements the contract declares for it:
+
+| Severity | Finding | When |
+|---|---|---|
+| high | `unauthenticated` | The contract asks for a credential, nothing on the route checks one for this endpoint |
+| medium | `scheme_mismatch` | Something checks a credential, never one of the kinds the contract asks for: an api key where it declares OpenID Connect |
+| low | `no_credential` | Nothing checks a credential, and the contract says nothing about it — or there is no contract |
+| info | `public` | Nothing checks a credential, as the contract says (`security: []`) |
+| info | `undeclared_auth` | Something checks a credential on an endpoint the contract says is public |
+
+It is a configuration audit, not a runtime control: a credential checked by a global plugin is not
+seen.
+
+## From a CI
+
+The same report is served by the admin API, for an admin api key:
+
+```bash
+curl -s -u "$CLIENT_ID:$CLIENT_SECRET" -H 'Host: otoroshi-api.oto.tools' \
+  'https://otoroshi.example.com/api/extensions/cloud-apim/waf/api/_report?route_ids=route_orders'
+```
+
+`route_ids` is a comma-separated list, every route when absent; `zombie_days` sets the threshold.
+A pipeline failing on any unauthenticated endpoint is one `jq` away:
+
+```bash
+… | jq -e '.summary.auth.high == 0'
+```
