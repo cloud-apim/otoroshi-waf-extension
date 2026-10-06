@@ -19,17 +19,23 @@ final case class ThreatTier(
     action: String,
     tarpitMillis: Long = 3000L,
     banForSeconds: Long = 3600L,
-    status: Int = 403
+    status: Int = 403,
+    // BEH-4: a throttle tier lets the caller make this many requests per window, and refuses the rest
+    throttleQuota: Long = 20L,
+    throttleWindowSeconds: Long = 10L
 ) {
-  def resolvedAction: ThreatAction = ThreatAction.parse(action).getOrElse(ThreatAction.Log)
-  def tarpit: FiniteDuration       = tarpitMillis.max(0L).millis
-  def banFor: FiniteDuration       = banForSeconds.max(1L).seconds
+  def resolvedAction: ThreatAction  = ThreatAction.parse(action).getOrElse(ThreatAction.Log)
+  def tarpit: FiniteDuration        = tarpitMillis.max(0L).millis
+  def banFor: FiniteDuration        = banForSeconds.max(1L).seconds
+  def throttleWindow: FiniteDuration = throttleWindowSeconds.max(1L).seconds
   def json: JsValue = Json.obj(
-    "min_score"       -> minScore,
-    "action"          -> action,
-    "tarpit_millis"   -> tarpitMillis,
-    "ban_for_seconds" -> banForSeconds,
-    "status"          -> status
+    "min_score"               -> minScore,
+    "action"                  -> action,
+    "tarpit_millis"           -> tarpitMillis,
+    "ban_for_seconds"         -> banForSeconds,
+    "status"                  -> status,
+    "throttle_quota"          -> throttleQuota,
+    "throttle_window_seconds" -> throttleWindowSeconds
   )
 }
 
@@ -39,7 +45,9 @@ object ThreatTier {
     action = (json \ "action").asOpt[String].getOrElse("log"),
     tarpitMillis = (json \ "tarpit_millis").asOpt[Long].getOrElse(3000L),
     banForSeconds = (json \ "ban_for_seconds").asOpt[Long].getOrElse(3600L),
-    status = (json \ "status").asOpt[Int].getOrElse(403)
+    status = (json \ "status").asOpt[Int].getOrElse(403),
+    throttleQuota = (json \ "throttle_quota").asOpt[Long].getOrElse(20L),
+    throttleWindowSeconds = (json \ "throttle_window_seconds").asOpt[Long].getOrElse(10L)
   )
 
   /** Log early, slow down in the middle, ban only at the top. */

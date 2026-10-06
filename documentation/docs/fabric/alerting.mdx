@@ -25,8 +25,8 @@ An **alert rule** (`AlertRule`) says when to tell someone, and where.
 | `ban` | A [ban](./bans.mdx) is issued, by anything: a policy, the ledger, fail2ban, a honeypot, an operator | the banned identity |
 | `burst` | A route sees `burst_threshold` decisions within `burst_window_seconds` | the route |
 
-`categories` (`threat`, `honeypot`, `fail2ban`, `challenge`, `ban`, `upload`, `login`, `leakage`,
-`sensitive_data`) and `routes` (ids or names) narrow what an incident or burst rule covers; empty
+`categories` (`threat`, `honeypot`, `fail2ban`, `challenge`, `ban`, `traffic`, `upload`, `login`,
+`leakage`, `sensitive_data`) and `routes` (ids or names) narrow what an incident or burst rule covers; empty
 means everything. `enforced_only`, on by default, keeps dry runs and monitoring from paging anyone.
 
 After an alert, its key is quiet for `cooldown_seconds` (900 by default, never less than 10): an

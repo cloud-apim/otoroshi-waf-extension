@@ -262,14 +262,41 @@ class ThreatDecisionSuite extends munit.FunSuite {
     assert(!ThreatDecision(ThreatAction.Deny, 95, Some(2), dryRun = true, "").enforced)
     assert(!ThreatDecision(ThreatAction.Log, 95, Some(0), dryRun = false, "").enforced)
     assert(!ThreatDecision(ThreatAction.Tarpit, 95, Some(1), dryRun = false, "").enforced)
+    assert(!ThreatDecision(ThreatAction.Throttle, 60, Some(1), dryRun = false, "").enforced, "under its quota a throttle lets through")
+    assert(ThreatDecision(ThreatAction.Throttle, 60, Some(1), dryRun = false, "", throttled = true).enforced)
+    assert(!ThreatDecision(ThreatAction.Throttle, 60, Some(1), dryRun = true, "", throttled = true).enforced)
   }
 
   test("actions parse case-insensitively and reject nonsense") {
     assertEquals(ThreatAction.parse("BAN"), Some(ThreatAction.Ban))
     assertEquals(ThreatAction.parse(" tarpit "), Some(ThreatAction.Tarpit))
     assertEquals(ThreatAction.parse("CHALLENGE"), Some(ThreatAction.Challenge))
-    assertEquals(ThreatAction.parse("throttle"), None, "throttle has no module behind it yet")
+    assertEquals(ThreatAction.parse("Throttle"), Some(ThreatAction.Throttle))
     assertEquals(ThreatAction.parse("obliterate"), None)
+  }
+}
+
+class ThrottleSuite extends munit.FunSuite {
+
+  private given ExecutionContext = ExecutionContext.global
+  private def await[A](f: Future[A]): A = Await.result(f, 5.seconds)
+
+  test("a caller goes through up to the quota, is refused past it, and starts again in the next window") {
+    val counters = new ThrottleCounters("throttle", new InMemorySharedStateStore())
+    val alice    = IdentityRef("ip", "1.2.3.4")
+    val counts   = (1 to 6).map(i => await(counters.hit("p1", alice, 5, 10.seconds, now = 20000L + i)))
+    assertEquals(counts.map(_.exceeded), Seq(false, false, false, false, false, true))
+    assertEquals(counts.last.retryAfterMillis, 9994L)
+    assert(!await(counters.hit("p1", alice, 5, 10.seconds, now = 30001L)).exceeded, "a new window")
+    assert(!await(counters.hit("p1", IdentityRef("ip", "5.6.7.8"), 5, 10.seconds, now = 20010L)).exceeded, "another caller")
+    assert(!await(counters.hit("p2", alice, 5, 10.seconds, now = 20010L)).exceeded, "another policy")
+  }
+
+  test("a tier's throttle settings survive a round trip, with defaults when absent") {
+    val tier = ThreatTier(minScore = 40, action = "throttle", throttleQuota = 7L, throttleWindowSeconds = 30L)
+    assertEquals(ThreatTier.read(tier.json), tier)
+    val bare = ThreatTier.read(Json.obj("min_score" -> 40, "action" -> "throttle"))
+    assertEquals((bare.throttleQuota, bare.throttleWindowSeconds, bare.resolvedAction), (20L, 10L, ThreatAction.Throttle))
   }
 }
 

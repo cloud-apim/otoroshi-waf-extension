@@ -1,0 +1,93 @@
+---
+sidebar_position: 9
+title: Traffic guard
+description: Learning each route's usual traffic, and scoring a surge away from it.
+---
+
+# Traffic guard
+
+Otoroshi's throttling plugins enforce fixed limits well, and a fixed limit has to be set for the
+worst normal day. A flood that stays under it goes through; a launch that goes over it gets
+throttled. Nothing notices that traffic has *changed*.
+
+The **Traffic guard** (`CloudApimTrafficGuard`) learns what each route usually receives, and turns a
+departure from it into a signal on the [threat score](./policies.mdx). The threat response decides
+what that does, as the policy's tiers say: a challenge, a [throttle](./policies.mdx#throttling), a
+tarpit, a refusal, a ban. When the surge
+stops, its signal stops, and so does the response: escalation and de-escalation are the same thing.
+
+## What it watches
+
+Four dimensions, each learned on its own for every route:
+
+| Dimension | Key | Signal | Escalates |
+|---|---|---|---|
+| The route | all its callers together | `traffic:route_surge` | never |
+| A source | each client address | `traffic:source_surge` | yes |
+| An api key | each consumer | `traffic:consumer_surge` | yes |
+| A network | each ASN, when an [ASN database](../reputation/asn.mdx) is loaded | `traffic:asn_surge` | yes |
+
+A **surge** is a bucket of `bucket_seconds` carrying more than `surge_factor` times what the
+dimension usually carries, and more than its floor. The floor keeps a quiet key from surging on a
+handful of requests: ten requests against a usual one is a factor of ten and nobody's attack.
+
+A surging source, key or network contributes its weight, 20 more past twice its threshold and 40
+more past four times. A surge of the **whole route** contributes the same weight to every caller and
+never more: it can put everyone behind a challenge or a throttle, it never bans everyone. With a
+challenge tier in the policy, a distributed flood gets every caller challenged, real users solve it
+and go on, and what does not run a challenge stops. With a throttle tier, every caller is held to
+its quota until the surge passes, and a throttled request is never charged to the ledger.
+
+## How the baseline is learned
+
+Each finished bucket teaches the baseline, an average over about `learning_buckets` of them that
+weighs the recent ones more, unless that bucket was itself a surge: a baseline that learned the
+attack would call it normal after a few minutes. Nothing is judged before `warmup_buckets` have
+been seen, and quiet decays the baseline, so traffic coming back after a night is not compared to
+the afternoon.
+
+Each surge is also reported once a minute per key as a `CloudApimSecurityEvent` of category
+`traffic`, with the count, the baseline and the threshold.
+
+:::note Per node
+Counts are kept on each node, in memory: sharing them would cost a round trip to the shared state on
+every request. A load balancer spreads a flood in the same proportions as normal traffic, so a ratio
+to the baseline means the same on one node as on twelve; floors, though, are per node. The number of
+keys tracked is bounded (`security.traffic.max-keys`, 200 000), and keys idle for an hour are
+forgotten.
+:::
+
+## Configuration
+
+```json
+{
+  "route": true,
+  "source": true,
+  "consumer": true,
+  "asn": true,
+  "surge_factor": 3.0,
+  "bucket_seconds": 10,
+  "learning_buckets": 60,
+  "warmup_buckets": 6,
+  "route_floor_rps": 20,
+  "source_floor_rps": 5,
+  "consumer_floor_rps": 10,
+  "asn_floor_rps": 20,
+  "route_weight": 40,
+  "source_weight": 40,
+  "consumer_weight": 40,
+  "asn_weight": 30
+}
+```
+
+Floors are requests per second on one node. With the defaults, a baseline is learned over about ten
+minutes, and judged after one.
+
+## Laying it down
+
+On a route, add the plugin, or switch `traffic` on in the [preset](./preset.mdx) or a
+[global preset](./global-preset.mdx) rule, with `traffic_sensitivity`: `low`, `medium` or `high` for a
+surge factor of 5, 3 or 2. It runs with the access validators, before anything reads a body. In
+**Threat Studio**, it is the **Traffic guard** section of a workspace's protection. It is off by
+default: a baseline means nothing until it has seen traffic, and a route's first minutes are spent
+learning.

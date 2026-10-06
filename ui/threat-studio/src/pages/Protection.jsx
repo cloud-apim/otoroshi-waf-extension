@@ -175,6 +175,17 @@ export function ProtectionPage() {
                   onChange={(v) => set({ error_leakage_mode: v })}
                 />
               )}
+              {s.key === 'traffic' && preset.traffic && (
+                <Segmented
+                  options={[
+                    { value: 'low', label: 'Low' },
+                    { value: 'medium', label: 'Medium' },
+                    { value: 'high', label: 'High' },
+                  ]}
+                  value={preset.traffic_sensitivity}
+                  onChange={(v) => set({ traffic_sensitivity: v })}
+                />
+              )}
               {s.key === 'uploads' && preset.uploads && (
                 <Segmented
                   options={[

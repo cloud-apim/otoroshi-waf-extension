@@ -167,13 +167,15 @@ Any MaxMind DB file, raw, gzipped or in a tar.gz. See [Geolocation](../reputatio
 | Field | Type | Default |
 |---|---|---|
 | `min_score` | number | — |
-| `action` | `log` \| `tarpit` \| `challenge` \| `deny` \| `ban` | `log` |
+| `action` | `log` \| `challenge` \| `throttle` \| `tarpit` \| `deny` \| `ban` | `log` |
 | `tarpit_millis` | number | `3000` |
 | `ban_for_seconds` | number | `3600` |
 | `status` | number | `403` |
+| `throttle_quota` | number | `20` — requests a `throttle` tier lets through per window |
+| `throttle_window_seconds` | number | `10` |
 
-An unrecognised action degrades to `log`, never to `deny`. There is deliberately no `throttle`: an
-action with no module behind it would be a tier that silently does nothing.
+An unrecognised action degrades to `log`, never to `deny`. An action is accepted only once something
+implements it: one with no module behind it would be a tier that silently does nothing.
 
 ## BotPolicy
 

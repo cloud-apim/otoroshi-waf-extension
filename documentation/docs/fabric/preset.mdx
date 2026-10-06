@@ -41,12 +41,13 @@ wrong. (The preset is missing from the list because this route already carries i
 | 2 | Bot guard | access validation | `2.0` |
 | 3 | IP reputation — feeds, CrowdSec and ASN | access validation | `3.0` |
 | 4 | [Fail2ban](./fail2ban.mdx) *(off by default)* | access validation | `4.0` |
-| 5 | Cloud APIM WAF | request transformation | `1.0` |
-| 6 | [Upload guard](../waf/uploads.mdx) *(off by default)* | request transformation | `2.0` |
-| 7 | [Login guard](../bots/login.mdx) *(off by default)* | request and response transformation | `3.0` |
-| 8 | Threat response | request transformation | `900.0` |
-| 9 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
-| 10 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
+| 5 | [Traffic guard](./traffic.mdx) *(off by default)* | access validation | `5.0` |
+| 6 | Cloud APIM WAF | request transformation | `1.0` |
+| 7 | [Upload guard](../waf/uploads.mdx) *(off by default)* | request transformation | `2.0` |
+| 8 | [Login guard](../bots/login.mdx) *(off by default)* | request and response transformation | `3.0` |
+| 9 | Threat response | request transformation | `900.0` |
+| 10 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
+| 11 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
 
 The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
 rather than by the order slots happen to sit in on the route.
@@ -91,6 +92,8 @@ the preset carry it.
   "uploads_scan_failure_action": "reject",
   "login": false,
   "login_paths": [],
+  "traffic": false,
+  "traffic_sensitivity": "medium",
   "include": [],
   "exclude": []
 }
@@ -117,6 +120,8 @@ the preset carry it.
 | `uploads_scan_failure_action` | `reject` | A scan that cannot be made refuses the upload, or `allow` lets it through unscanned. |
 | `login` | `false` | Off by default: a route without a login endpoint has nothing to count. See [login guard](../bots/login.mdx). |
 | `login_paths` | `[]` | The login endpoints, exact or ending in `*`. Empty means every POST of the routes. |
+| `traffic` | `false` | Off by default: a baseline needs traffic to learn first. See [traffic guard](./traffic.mdx). |
+| `traffic_sensitivity` | `medium` | How far from usual traffic a surge starts: 5 times for `low`, 3 for `medium`, 2 for `high`. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 

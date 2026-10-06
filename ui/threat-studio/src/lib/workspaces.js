@@ -36,6 +36,8 @@ export const PRESET_DEFAULTS = {
   uploads_scan_failure_action: 'reject',
   login: false,
   login_paths: [],
+  traffic: false,
+  traffic_sensitivity: 'medium',
   include: [],
   exclude: [],
 };
@@ -46,6 +48,7 @@ export const SECTIONS = [
   { key: 'bots', label: 'Bot guard', help: 'Identify crawlers and verify the ones that publish a method' },
   { key: 'reputation', label: 'IP reputation', help: 'Score the caller against every enabled feed, CrowdSec bouncer and ASN database' },
   { key: 'fail2ban', label: 'Fail2ban', help: 'Ban callers that keep producing failed responses — the one detector your own clients can trip' },
+  { key: 'traffic', label: 'Traffic guard', help: 'Learn the usual traffic of each route, source, api key and network, and score a surge away from it' },
   { key: 'waf', label: 'WAF', help: 'Run the rule engine. Needs a WAF config to expand at all.' },
   { key: 'uploads', label: 'Upload guard', help: 'Refuse uploaded files by what they are: disguised scripts and executables, polyglots, archive bombs and zip slips' },
   { key: 'login', label: 'Login guard', help: 'Score credential stuffing, password spraying and likely account takeovers on the login endpoints' },

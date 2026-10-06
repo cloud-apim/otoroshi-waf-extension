@@ -196,7 +196,7 @@ function Decisions({ d }) {
         <Block d={d} name="outcome" title="Enforced versus observed" description="The dry-run gap as a trend. Arming moves one band into the other and leaves the total where it was.">
           {(r) => <AreaChart series={seriesOf(r)} bucket={bucketOf(r)} stacked format={fmtInt} height={220} />}
         </Block>
-        <Block d={d} name="actions" title="Actions over time" description="The graded response as it moves: log, tarpit, challenge, deny, ban.">
+        <Block d={d} name="actions" title="Actions over time" description="The graded response as it moves: log, challenge, throttle, tarpit, deny, ban.">
           {(r) => <StackedBars series={seriesOf(r)} bucket={bucketOf(r)} format={fmtInt} height={220} />}
         </Block>
         <Block d={d} name="byAction" title="Decisions by action">

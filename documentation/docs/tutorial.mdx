@@ -131,9 +131,9 @@ A new policy arrives with sensible defaults and `dry_run: true`. Keep it.
 | `waf_block_weight` | What a WAF block is worth on the score |
 | `challenge_provider` | Only needed if a tier uses `challenge` — [step 5](#step-5--the-challenge-provider-optional) |
 
-Available actions: `log`, `tarpit`, `challenge`, `deny`, `ban`. There is deliberately **no
-`throttle`** — an action that has nothing behind it would be a tier that silently does nothing, so
-the entity refuses it until the module exists.
+Available actions: `log`, `challenge`, `throttle`, `tarpit`, `deny`, `ban`. `throttle` lets the
+caller go on at a quota per window and answers `429` past it; see
+[throttling](./fabric/policies.mdx#throttling).
 
 Our `/internal/*` traffic comes from `10.0.0.0/8`, hence the exemption. Do this now rather than
 after a self-inflicted incident.
@@ -629,7 +629,6 @@ almost always one of the traps below.
 | A ban does not apply on other nodes | `distributed: no` — go back to step 0 |
 | Verified Googlebot is being denied | `verified_bypass` is off |
 | A `challenge` tier does nothing | No `challenge_provider` on the policy |
-| A tier with `throttle` is rejected | There is no throttle module yet, so the action does not exist |
 | Everything from one office gets banned | `ban_identity` is `ip` behind a shared NAT — use `auto` |
 
 ## What you end up with

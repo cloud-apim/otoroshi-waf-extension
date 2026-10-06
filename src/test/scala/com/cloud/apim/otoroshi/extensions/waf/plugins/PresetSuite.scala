@@ -64,7 +64,7 @@ class PresetSuite extends munit.FunSuite {
   }
 
   test("every emitted slot carries an index, or the ordering guarantee is void") {
-    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true, login = true)).foreach { i =>
+    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true, login = true, traffic = true)).foreach { i =>
       val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined || p.transformResponse.isDefined)
       assert(indexed, s"${i.plugin} was emitted without a plugin index")
     }
@@ -134,6 +134,8 @@ class PresetSuite extends munit.FunSuite {
       uploadsScanFailureAction = "allow",
       login = true,
       loginPaths = Seq("/login", "/api/auth/*"),
+      traffic = true,
+      trafficSensitivity = "high",
       include = Seq("/a"),
       exclude = Seq("/b")
     )
@@ -205,6 +207,14 @@ class PresetSuite extends munit.FunSuite {
     val guard = armed.find(_.plugin == NgPluginHelper.pluginId[CloudApimLoginGuard]).get
     assert(guard.pluginIndex.exists(_.transformResponse.isDefined), "the guard counts failures on the way back")
     assertEquals((guard.config.raw \ "login_paths").as[Seq[String]], Seq("/login"))
+  }
+
+  test("the traffic guard is off by default, validates access, and its sensitivity sets the surge factor") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.traffic, false)
+    assertEquals(names(chain(full)).contains("CloudApimTrafficGuard"), false)
+    val guard = chain(full.copy(traffic = true, trafficSensitivity = "high")).find(_.plugin == NgPluginHelper.pluginId[CloudApimTrafficGuard]).get
+    assert(guard.pluginIndex.exists(_.validateAccess.isDefined))
+    assertEquals((guard.config.raw \ "surge_factor").as[Double], 2.0)
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {

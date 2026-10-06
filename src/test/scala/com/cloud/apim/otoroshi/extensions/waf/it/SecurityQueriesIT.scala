@@ -347,7 +347,7 @@ class SecurityQueriesIT extends munit.FunSuite {
 
   test("the action series carries every tier, including the ones nothing reached") {
     val series = (exec(SecurityQueries.ActionsOverTime).data \ "series").as[Seq[JsObject]]
-    assertEquals(series.map(x => (x \ "name").as[String]), Seq("log", "tarpit", "challenge", "deny", "ban", "mask"))
+    assertEquals(series.map(x => (x \ "name").as[String]), Seq("log", "challenge", "throttle", "tarpit", "deny", "ban", "mask"))
     val byName = series.map(x => (x \ "name").as[String] -> (x \ "points").as[Seq[JsObject]].map(p => (p \ "value").as[Long]).sum).toMap
     assertEquals(byName("deny"), 2L)
     assertEquals(byName("tarpit"), 0L, "a tier nothing reached is a flat line, not a missing series")

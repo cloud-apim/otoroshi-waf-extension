@@ -53,12 +53,24 @@ still recorded — that record is what tuning reads.
 | `deny` | Refuse this request with `status` |
 | `ban` | Refuse it **and** ban the caller for `ban_for_seconds` |
 | `challenge` | Ask the caller to prove something before proceeding. See [challenges](../bots/challenge.mdx) |
+| `throttle` | Let the caller make `throttle_quota` requests per `throttle_window_seconds`, and refuse the rest with `429` and `Retry-After` |
 
-:::caution `throttle` is not available
-It appears in the roadmap and has no module behind it yet. It is deliberately absent from the action
-list rather than accepted and ignored, which would let you configure a tier that silently does
-nothing.
-:::
+## Throttling
+
+A `throttle` tier is for a caller suspicious enough to slow down, not enough to refuse: it goes on at
+`throttle_quota` requests every `throttle_window_seconds` (20 per 10 seconds by default), counted
+across the cluster, and past that gets a `429` with a `Retry-After` saying when the window ends.
+It is counted only while the caller's score holds it at the tier, so once whatever raised the
+score stops, the throttle stops with it: nothing to lift.
+
+```json
+{ "min_score": 40, "action": "throttle", "throttle_quota": 20, "throttle_window_seconds": 10 }
+```
+
+A throttled request is reported with `decision.throttled` and counts as enforced, and is **not**
+charged to the ledger: the [traffic guard](./traffic.mdx) scores a whole route's surge on every
+caller, which a throttle tier answers well and a ban never should. If the shared store cannot be
+reached, the request goes through.
 
 ## Refusing slowly
 

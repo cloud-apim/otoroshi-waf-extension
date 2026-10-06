@@ -147,6 +147,11 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
       enabled = true
     }
 
+    traffic {
+      // how many route, source, api key and network baselines one node learns at once
+      max-keys = 200000
+    }
+
     events {
       // also emit every decision and every alert as an OCSF Detection Finding, as its own event
       // type (CloudApimSecurityOcsf), for Security Lake, Sentinel and the other OCSF readers

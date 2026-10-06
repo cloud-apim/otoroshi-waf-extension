@@ -36,6 +36,9 @@ final case class CloudApimSecuritySuitePresetConfig(
     // BEH-3: off by default, a route without a login endpoint has nothing for it to count
     login: Boolean = false,
     loginPaths: Seq[String] = Seq.empty,
+    // BEH-4: off by default, a baseline needs traffic to learn before it means anything
+    traffic: Boolean = false,
+    trafficSensitivity: String = "medium",
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -74,6 +77,8 @@ object CloudApimSecuritySuitePresetConfig {
       "uploads_scan_failure_action" -> o.uploadsScanFailureAction,
       "login"           -> o.login,
       "login_paths"     -> o.loginPaths,
+      "traffic"         -> o.traffic,
+      "traffic_sensitivity" -> o.trafficSensitivity,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -103,6 +108,8 @@ object CloudApimSecuritySuitePresetConfig {
           json.select("uploads_scan_failure_action").asOpt[String].map(_.trim.toLowerCase).filter(Set("reject", "allow")).getOrElse("reject"),
         login = json.select("login").asOpt[Boolean].getOrElse(false),
         loginPaths = json.select("login_paths").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty),
+        traffic = json.select("traffic").asOpt[Boolean].getOrElse(false),
+        trafficSensitivity = json.select("traffic_sensitivity").asOpt[String].map(_.trim.toLowerCase).filter(Set("low", "medium", "high")).getOrElse("medium"),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -136,6 +143,8 @@ object CloudApimSecuritySuitePresetConfig {
     "uploads_scan_failure_action",
     "login",
     "login_paths",
+    "traffic",
+    "traffic_sensitivity",
     "include",
     "exclude"
   )
@@ -304,6 +313,23 @@ object CloudApimSecuritySuitePresetConfig {
       "label" -> "Login paths",
       "props" -> Json.obj("help" -> "Exact paths, or prefixes ending in *. Empty means every POST of the routes")
     ),
+    "traffic"         -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "Traffic guard",
+      "props" -> Json.obj("help" -> "Learn the routes' usual traffic and score a surge away from it, per route, source, api key and network")
+    ),
+    "traffic_sensitivity" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Traffic sensitivity",
+      "props" -> Json.obj(
+        "help"    -> "How far from usual traffic a surge starts: 5 times for low, 3 for medium, 2 for high",
+        "options" -> Json.arr(
+          Json.obj("label" -> "Low", "value" -> "low"),
+          Json.obj("label" -> "Medium", "value" -> "medium"),
+          Json.obj("label" -> "High", "value" -> "high")
+        )
+      )
+    ),
     "include"         -> Json.obj(
       "type"  -> "array",
       "label" -> "Apply on paths",
@@ -347,7 +373,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
   override def core: Boolean                               = true
   override def name: String                                = "Cloud APIM Threat Protection - Preset"
   override def description: Option[String]                 =
-    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF, upload guard, login guard, threat response, error leakage guard and sensitive data guard — in the right order".some
+    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, traffic guard, WAF, upload guard, login guard, threat response, error leakage guard and sensitive data guard — in the right order".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimSecuritySuitePresetConfig.default.some
 
   override def noJsForm: Boolean              = true
@@ -425,6 +451,16 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
+    // with the access validators, before anything reads a body: a flood is seen at its cheapest
+    val traffic = Option.when(config.traffic) {
+      slot(
+        NgPluginHelper.pluginId[CloudApimTrafficGuard],
+        CloudApimTrafficGuardConfig(surgeFactor = CloudApimTrafficGuardConfig.surgeFactorOf(config.trafficSensitivity)).json.asObject,
+        PluginIndex(validateAccess = 5.0.some),
+        config
+      )
+    }
+
     // after the WAF, which reads the form fields, and before the response, which reads what it found
     val uploads = Option.when(config.uploads) {
       slot(
@@ -480,6 +516,6 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    Seq(gate, bots, reputation, fail2ban, waf, uploads, login, response, leakage, sensitive).flatten
+    Seq(gate, bots, reputation, fail2ban, traffic, waf, uploads, login, response, leakage, sensitive).flatten
   }
 }

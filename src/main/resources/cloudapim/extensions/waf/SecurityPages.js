@@ -14,6 +14,7 @@ function securityCall(path, body) {
 
 const THREAT_ACTIONS = [
   { value: 'log', label: 'Log — record only' },
+  { value: 'throttle', label: 'Throttle — a quota per window, refused past it' },
   { value: 'tarpit', label: 'Tarpit — answer slowly' },
   { value: 'deny', label: 'Deny — refuse this request' },
   { value: 'ban', label: 'Ban — refuse this caller for a while' },
@@ -27,7 +28,7 @@ class ThreatTiersEditor extends Component {
 
   add = () => {
     const tiers = (this.props.value || []).slice();
-    tiers.push({ min_score: 50, action: 'log', tarpit_millis: 3000, ban_for_seconds: 3600, status: 403 });
+    tiers.push({ min_score: 50, action: 'log', tarpit_millis: 3000, ban_for_seconds: 3600, status: 403, throttle_quota: 20, throttle_window_seconds: 10 });
     this.props.onChange(tiers);
   };
 
@@ -70,6 +71,8 @@ class ThreatTiersEditor extends Component {
               THREAT_ACTIONS.map((a) => React.createElement('option', { key: a.value, value: a.value }, a.label))
             )
           ),
+          action === 'throttle' ? num('throttle_quota', 'requests', 90) : null,
+          action === 'throttle' ? num('throttle_window_seconds', 'per (s)', 90) : null,
           action === 'tarpit' ? num('tarpit_millis', 'delay (ms)') : null,
           action === 'ban' ? num('ban_for_seconds', 'ban for (s)') : null,
           action === 'deny' || action === 'ban' ? num('status', 'status', 90) : null,
@@ -1550,7 +1553,7 @@ class AlertRulesPage extends Component {
     min_score: { type: 'number', props: { label: 'Min. score', help: 'Incident: the highest score of the incident' } },
     min_count: { type: 'number', props: { label: 'Min. decisions', help: 'Incident: how many decisions it folds' } },
     enforced_only: { type: 'bool', props: { label: 'Enforced only', help: 'Incident and burst: count only what was enforced' } },
-    categories: { type: 'array', props: { label: 'Categories', help: 'threat, honeypot, fail2ban, challenge, ban, upload, login, leakage, sensitive_data. Empty means every one' } },
+    categories: { type: 'array', props: { label: 'Categories', help: 'threat, honeypot, fail2ban, challenge, ban, traffic, upload, login, leakage, sensitive_data. Empty means every one' } },
     routes: { type: 'array', props: { label: 'Routes', help: 'Route ids or names. Empty means every route' } },
     burst_threshold: { type: 'number', props: { label: 'Burst threshold', help: 'Burst: decisions on one route' } },
     burst_window_seconds: { type: 'number', props: { label: 'Burst window', suffix: 'seconds' } },

@@ -22,12 +22,15 @@ object ThreatAction {
   case object Log    extends ThreatAction { val name = "log"    }
   case object Tarpit    extends ThreatAction { val name = "tarpit" }
   case object Challenge extends ThreatAction { val name = "challenge" }
+  // BEH-4: a quota per window for the caller, refused past it. Lets the first requests through, so
+  // it does not deny as such: a decision says when it refused one
+  case object Throttle  extends ThreatAction { val name = "throttle" }
   case object Deny   extends ThreatAction { val name = "deny";  override def denies = true }
   case object Ban    extends ThreatAction { val name = "ban";   override def denies = true }
   // DLP-3: a response whose leak was replaced by a neutral error. Not a tier action, so not in `all`
   case object Mask   extends ThreatAction { val name = "mask";  override def denies = true }
 
-  val all: Seq[ThreatAction] = Seq(Allow, Log, Challenge, Tarpit, Deny, Ban)
+  val all: Seq[ThreatAction] = Seq(Allow, Log, Challenge, Throttle, Tarpit, Deny, Ban)
 
   def parse(raw: String): Option[ThreatAction] =
     all.find(_.name.equalsIgnoreCase(raw.trim))
@@ -40,10 +43,12 @@ final case class ThreatDecision(
     dryRun: Boolean,
     reason: String,
     // BEH-5: how long the request was held before the action took effect, 0 when it was not
-    heldMillis: Long = 0L
+    heldMillis: Long = 0L,
+    // BEH-4: a throttle tier refused this request, the caller being past its quota
+    throttled: Boolean = false
 ) {
   /** In dry-run nothing is enforced, so the decision is recorded and the request proceeds. */
-  def enforced: Boolean = !dryRun && action.denies
+  def enforced: Boolean = !dryRun && (action.denies || throttled)
   def json: JsValue = Json.obj(
     "action"   -> action.name,
     "score"    -> score,
@@ -52,7 +57,7 @@ final case class ThreatDecision(
     "enforced" -> enforced,
     "reason"   -> reason,
     "held_ms"  -> heldMillis
-  )
+  ) ++ (if (action == ThreatAction.Throttle) Json.obj("throttled" -> throttled) else Json.obj())
 }
 
 /**

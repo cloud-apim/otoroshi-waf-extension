@@ -362,7 +362,7 @@ object SecurityQueries {
   object ActionsOverTime extends AnalyticsQuery {
     val id                               = "cloudapim_security_actions_over_time"
     val name                             = "Actions over time"
-    val description                      = "The graded response as it moves: log, tarpit, challenge, deny, ban, and masked leaks."
+    val description                      = "The graded response as it moves: log, challenge, throttle, tarpit, deny, ban, and masked leaks."
     val shape                            = AnalyticsShape.Timeseries
     val defaultWidget                    = "area"
     override val params: Seq[QueryParam] = plainParams
@@ -373,7 +373,7 @@ object SecurityQueries {
       multiSeries(
         table(s),
         b,
-        Seq("log", "tarpit", "challenge", "deny", "ban", "mask").map(a => a -> s"action = '$a'")
+        Seq("log", "challenge", "throttle", "tarpit", "deny", "ban", "mask").map(a => a -> s"action = '$a'")
       )(f, p, pool)
   }
 

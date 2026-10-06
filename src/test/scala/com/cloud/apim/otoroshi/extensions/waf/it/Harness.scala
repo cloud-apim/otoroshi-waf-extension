@@ -70,6 +70,7 @@ object Gateway {
     )
     oto.startAndStopOnShutdown()
     waitUntilHealthy(oto)
+    liftAddressQuota(oto)
     oto
   }
 
@@ -90,6 +91,24 @@ object Gateway {
     if (!healthy) throw new RuntimeException(s"otoroshi did not become healthy on port $port")
     // the router syncs on a tick; a route created before it has run would not be matched yet
     Thread.sleep(2000L)
+  }
+
+  /**
+   * A first install allows 500 calls per address every ten seconds, and every suite calls from
+   * 127.0.0.1, admin api included: the suites that send bursts would get the others refused by the
+   * gateway's own throttling, which none of them is about.
+   */
+  private def liftAddressQuota(oto: Otoroshi): Unit = {
+    val patch = Json.arr(Json.obj("op" -> "replace", "path" -> "/perIpThrottlingQuota", "value" -> 100000000L))
+    val res   = Await.result(
+      oto.ws
+        .url(s"http://127.0.0.1:$port/api/globalconfig")
+        .withHttpHeaders("Host" -> "otoroshi-api.oto.tools", "Content-Type" -> "application/json")
+        .withAuth("admin-api-apikey-id", "admin-api-apikey-secret", WSAuthScheme.BASIC)
+        .patch(Json.stringify(patch)),
+      10.seconds
+    )
+    if (res.status > 299) throw new RuntimeException(s"could not lift the per address quota: ${res.status} ${res.body}")
   }
 
   // -----------------------------------------------------------------------------------------------

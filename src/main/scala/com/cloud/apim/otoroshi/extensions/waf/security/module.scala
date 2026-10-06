@@ -232,6 +232,7 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     evidence = ref => incidents.byKey(ref.key).toSeq.flatMap(_.timeline)
   )
   val fail2ban: Fail2BanCounter     = new Fail2BanCounter(s"$keyPrefix:fail2ban", sharedState, bans, logger)
+  val throttles: ThrottleCounters   = new ThrottleCounters(s"$keyPrefix:throttle", sharedState)
   val board: IncidentBoard          =
     new IncidentBoard(keyPrefix, sharedState, nodeId, incidents, bans, allowlist, logger)
   val challenges: ChallengeService  = new ChallengeService(
@@ -265,6 +266,12 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     enabled = () => alertsEnabled
   )
   bans.onIssued = alerts.banned
+
+  /** BEH-4: each route's, source's, api key's and network's usual traffic, learned on this node. */
+  val traffic: com.cloud.apim.otoroshi.extensions.waf.traffic.TrafficBaselines =
+    new com.cloud.apim.otoroshi.extensions.waf.traffic.TrafficBaselines(
+      configuration.getOptional[Int]("security.traffic.max-keys").getOrElse(200000).max(1000)
+    )
 
   /** BEH-3: failed logins, counted cluster-wide, accounts keyed by an HMAC rather than stored. */
   val logins: com.cloud.apim.otoroshi.extensions.waf.login.LoginCounters =
@@ -425,6 +432,8 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       allowlist.refresh()
       bans.refresh()
       incidents.evict()
+      // a key nobody sent anything on for an hour has nothing left worth learning
+      traffic.sweep(System.currentTimeMillis(), 3600L * 1000L)
       // publishing after evicting, so a node never shares what it has already dropped
       board.publish()
       ticks += 1

@@ -185,10 +185,6 @@ class CloudApimThreatGate extends NgAccessValidator {
  *
  * Runs as a request transformer so it sits **after** the detectors: reputation contributes during
  * access validation, and the WAF during request transformation. Place it last in the chain.
- *
- * Deliberately absent: `challenge` and `throttle`. Both appear in the roadmap and neither has a
- * module behind it yet, so offering them would let someone configure a tier that silently does
- * nothing.
  */
 class CloudApimThreatResponse extends NgRequestTransformer {
 
@@ -199,7 +195,7 @@ class CloudApimThreatResponse extends NgRequestTransformer {
   override def core: Boolean                               = true
   override def name: String                                = "Cloud APIM Threat Protection - Threat response"
   override def description: Option[String]                 =
-    "Reads the accumulated threat score and applies one graded action: log, tarpit, deny or ban".some
+    "Reads the accumulated threat score and applies one graded action: log, challenge, throttle, tarpit, deny or ban".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimThreatConfig.default.some
 
   override def isTransformRequestAsync: Boolean = true
@@ -374,12 +370,64 @@ class CloudApimThreatResponse extends NgRequestTransformer {
       message = decision.reason,
       // only enforced denials feed the cross-request memory: a dry run must not accumulate towards
       // a ban it was explicitly told not to issue. The ledger charges what the policy judged, not the
-      // raw sum, so a re-weighted or decisive WAF block accrues at its decided value
-      ledgerWeight = if (decision.enforced) decision.score else 0
+      // raw sum, so a re-weighted or decisive WAF block accrues at its decided value. A throttled
+      // request is not charged: a whole route's surge throttles everyone, and must never ban them
+      ledgerWeight = if (decision.enforced && decision.action.denies) decision.score else 0
     )
   }
 
   private def apply(
+      mod: SecurityModule,
+      ctx: NgTransformerRequestContext,
+      identity: ClientIdentity,
+      score: ThreatScore,
+      decision: ThreatDecision,
+      tier: ThreatTier,
+      policy: ThreatPolicy
+  )(using env: Env, ec: ExecutionContext): Future[Either[Result, NgPluginHttpRequest]] = {
+    if (decision.action == ThreatAction.Throttle) throttle(mod, ctx, identity, score, decision, tier, policy)
+    else holdOrRefuse(mod, ctx, identity, score, decision, tier, policy)
+  }
+
+  /**
+   * BEH-4: the caller may go on at the tier's quota per window, and is refused with a 429 past it.
+   * Counted only while its score holds it here, so once whatever raised it stops, so does this.
+   */
+  private def throttle(
+      mod: SecurityModule,
+      ctx: NgTransformerRequestContext,
+      identity: ClientIdentity,
+      score: ThreatScore,
+      decision: ThreatDecision,
+      tier: ThreatTier,
+      policy: ThreatPolicy
+  )(using env: Env, ec: ExecutionContext): Future[Either[Result, NgPluginHttpRequest]] = {
+    if (policy.dryRun) {
+      record(mod, ctx, identity, score, decision, policy)
+      ctx.otoroshiRequest.rightf
+    } else {
+      val caller = policy.banRef(identity).getOrElse(IdentityRef(IdentityRef.Ip, identity.ip))
+      mod.throttles.hit(policy.id, caller, tier.throttleQuota, tier.throttleWindow).transformWith {
+        case Success(count) if count.exceeded =>
+          record(
+            mod, ctx, identity, score,
+            decision.copy(
+              throttled = true,
+              reason = s"${decision.reason}, past ${count.quota} requests in ${tier.throttleWindow.toSeconds}s"
+            ),
+            policy
+          )
+          val retryAfter = math.max(1L, (count.retryAfterMillis + 999L) / 1000L)
+          ThreatSupport.denyT(429, ctx).map(r => Left(r.withHeaders("Retry-After" -> retryAfter.toString)))
+        case _                                =>
+          // under the quota, or the shared store unreachable: a throttle is never worth an outage
+          record(mod, ctx, identity, score, decision, policy)
+          ctx.otoroshiRequest.rightf
+      }
+    }
+  }
+
+  private def holdOrRefuse(
       mod: SecurityModule,
       ctx: NgTransformerRequestContext,
       identity: ClientIdentity,

@@ -44,6 +44,7 @@ const CATEGORIES = [
   { value: 'sensitive_data', label: 'Sensitive data' },
   { value: 'upload', label: 'Upload' },
   { value: 'login', label: 'Login' },
+  { value: 'traffic', label: 'Traffic' },
 ];
 
 const ACTIONS = [
@@ -51,6 +52,7 @@ const ACTIONS = [
   { value: 'log', label: 'Log' },
   { value: 'tarpit', label: 'Tarpit' },
   { value: 'challenge', label: 'Challenge' },
+  { value: 'throttle', label: 'Throttle' },
   { value: 'deny', label: 'Deny' },
   { value: 'ban', label: 'Ban' },
   { value: 'mask', label: 'Mask' },

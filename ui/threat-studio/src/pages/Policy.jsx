@@ -68,7 +68,7 @@ export function PolicyPage() {
 
   return (
     <div className="content wide">
-      <PageHeader title="Threat policy" description="Where the accumulated score becomes an action: log, tarpit, challenge, deny, ban." />
+      <PageHeader title="Threat policy" description="Where the accumulated score becomes an action: log, challenge, throttle, tarpit, deny, ban." />
 
       <Card style={{ marginBottom: 18 }}>
         {!current ? (
@@ -129,7 +129,7 @@ export function PolicyPage() {
           {!reach.hasDeny ? (
             <p className="muted small" style={{ marginTop: 12 }}>
               <Badge kind="warning">no denying tier</Badge> Nothing here denies or bans, so no verdict can refuse a
-              request — only log, tarpit or challenge. Add a deny or ban tier for a block to be able to stop anything.
+              request — only log, challenge, tarpit, or throttle past its quota. Add a deny or ban tier for a block to be able to stop anything.
             </p>
           ) : reach.block && !DENYING.has(reach.block.action) ? (
             <p className="muted small" style={{ marginTop: 12 }}>
