@@ -25,6 +25,7 @@ const RESOURCES = {
   'asn-databases': () => Resources.asnDatabases,
   'geo-databases': () => Resources.geoDatabases,
   'alert-rules': () => Resources.alertRules,
+  'malware-scanners': () => Resources.malwareScanners,
 };
 
 /**

@@ -4,7 +4,10 @@ import com.cloud.apim.otoroshi.extensions.waf.body.MediaType
 import org.apache.pekko.util.ByteString
 import play.api.libs.json.{JsValue, Json}
 
+import java.nio.channels.FileChannel
+import java.nio.file.{Files, Path, StandardOpenOption}
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
 
 /**
@@ -22,7 +25,23 @@ final case class UploadPolicy(
     checkMismatch: Boolean = true,
     maxFiles: Int = 100,
     maxFileSize: Long = 0L,
-    archives: ArchiveLimits = ArchiveLimits()
+    archives: ArchiveLimits = ArchiveLimits(),
+    scanning: Option[ScanSettings] = None
+)
+
+/**
+ * How files are handed to a malware scanner (WAF-5).
+ *
+ * `scan` looks at a file spooled to disk. A file past `maxFileSize` is not sent, a scanner refuses
+ * what is larger than it accepts; it counts as a scan that failed, as does a scanner that times out
+ * or cannot be reached, and `failureRejects` decides whether that refuses the upload.
+ */
+final case class ScanSettings(
+    scan: Path => Future[ScanVerdict],
+    maxFileSize: Long,
+    failureRejects: Boolean,
+    // set when no scanner can be reached at all: nothing is spooled, every file fails with this
+    unavailable: Option[String] = None
 )
 
 object UploadPolicy {
@@ -73,6 +92,7 @@ final class UploadScanner(boundary: String, policy: UploadPolicy) {
   private var part: Option[PartInspector] = None
   private var count                       = 0
   private val seen                        = ArrayBuffer.empty[UploadedFile]
+  private val scans                       = ArrayBuffer.empty[(Option[String], String, Future[ScanVerdict])]
   @volatile private var found: Option[UploadViolation] = None
 
   /** The first reason to refuse the upload, once there is one. Nothing more is read after it. */
@@ -88,6 +108,30 @@ final class UploadScanner(boundary: String, policy: UploadPolicy) {
 
   /** Refuses the upload for a reason found outside the body's structure, its encoding for one. */
   def fail(v: UploadViolation): Unit = if (found.isEmpty) found = Some(v)
+
+  private[upload] def scanning(field: Option[String], filename: String, verdict: Future[ScanVerdict]): Unit =
+    scans += ((field, filename, verdict))
+
+  /** Whether any file was handed to a malware scanner. */
+  def scanned: Boolean = scans.nonEmpty
+
+  /**
+   * What the malware scanner said, once it has said it about every file: the first one it found
+   * malware in, or a scan that could not be made when that refuses the upload.
+   */
+  def scanVerdict()(using ec: ExecutionContext): Future[Option[UploadViolation]] = {
+    val rejectsFailures = policy.scanning.exists(_.failureRejects)
+    Future.sequence(scans.toSeq.map { case (field, file, verdict) => verdict.map(v => (field, file, v)) }).map { results =>
+      results
+        .collectFirst { case (field, file, ScanVerdict.Infected(threat)) =>
+          UploadViolation(UploadReason.Malware, s"the scanner found $threat", field, Some(file))
+        }
+        .orElse(results.collectFirst {
+          case (field, file, ScanVerdict.Failed(reason)) if rejectsFailures =>
+            UploadViolation(UploadReason.ScanFailed, s"the file could not be scanned: $reason", field, Some(file))
+        })
+    }
+  }
 
   private def malformed(detail: String): Unit = fail(UploadViolation(UploadReason.Malformed, detail))
 
@@ -292,10 +336,59 @@ private[upload] final class PartInspector(
 
   private def fail(reason: UploadReason, detail: String): Unit = scanner.fail(UploadViolation(reason, detail, field, Some(raw)))
 
+  // WAF-5: the file as it arrives, for the malware scanner to read once it has all of it
+  private var spool: Option[(Path, FileChannel)] = None
+  private var unspooled                          = false
+
   def file: UploadedFile = UploadedFile(field, raw, declared, detected, size)
+
+  private def toSpool(bytes: ByteString): Unit = policy.scanning.filter(_.unavailable.isEmpty).foreach { settings =>
+    if (!unspooled) {
+      if (size > settings.maxFileSize) {
+        // past what the scanner accepts, nothing is sent and nothing more is kept
+        unspooled = true
+        dropSpool()
+      } else {
+        val (_, channel) = spool.getOrElse {
+          val path = Files.createTempFile("cloud-apim-upload-", ".scan")
+          val ch   = FileChannel.open(path, StandardOpenOption.WRITE)
+          spool = Some((path, ch))
+          (path, ch)
+        }
+        val buffer = bytes.asByteBuffer
+        while (buffer.hasRemaining) channel.write(buffer)
+      }
+    }
+  }
+
+  private def dropSpool(): Unit = {
+    spool.foreach { case (path, channel) =>
+      Try(channel.close())
+      Try(Files.deleteIfExists(path))
+    }
+    spool = None
+  }
+
+  /** Hands the spooled file to the scanner, which deletes it once it has answered. */
+  private def scan(): Unit = policy.scanning.foreach { settings =>
+    if (settings.unavailable.isDefined) scanner.scanning(field, raw, Future.successful(ScanVerdict.Failed(settings.unavailable.get)))
+    else if (unspooled) scanner.scanning(field, raw, Future.successful(ScanVerdict.Failed(s"larger than ${settings.maxFileSize} bytes, not scanned")))
+    else
+      spool.foreach { case (path, channel) =>
+        Try(channel.close())
+        spool = None
+        // a scanner that cannot be reached is a failed scan, never a failed upload of its own
+        val verdict = Try(settings.scan(path))
+          .fold(e => Future.successful(ScanVerdict.failure(e)), identity)
+          .recover { case e => ScanVerdict.failure(e) }(using ExecutionContext.parasitic)
+        verdict.onComplete(_ => Try(Files.deleteIfExists(path)))(using ExecutionContext.parasitic)
+        scanner.scanning(field, raw, verdict)
+      }
+  }
 
   def feed(bytes: ByteString): Unit = if (!scanner.halted && bytes.nonEmpty) {
     size += bytes.size
+    toSpool(bytes)
     if (policy.maxFileSize > 0L && size > policy.maxFileSize) fail(UploadReason.FileTooLarge, s"larger than ${policy.maxFileSize} bytes")
     else if (classified) archive.foreach(_.feed(bytes))
     else {
@@ -306,10 +399,16 @@ private[upload] final class PartInspector(
 
   def end(): Unit = {
     if (!scanner.halted && !classified) classify()
-    if (!scanner.halted) archive.foreach(_.finish()) else close()
+    if (!scanner.halted) {
+      archive.foreach(_.finish())
+      scan()
+    } else close()
   }
 
-  def close(): Unit = archive.foreach(_.close())
+  def close(): Unit = {
+    archive.foreach(_.close())
+    dropSpool()
+  }
 
   private def classify(): Unit = {
     classified = true

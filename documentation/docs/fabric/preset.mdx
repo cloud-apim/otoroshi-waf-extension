@@ -86,6 +86,8 @@ the preset carry it.
   "uploads": false,
   "uploads_mode": "enforce",
   "uploads_allowed_extensions": [],
+  "uploads_scanner": null,
+  "uploads_scan_failure_action": "reject",
   "include": [],
   "exclude": []
 }
@@ -108,6 +110,8 @@ the preset carry it.
 | `uploads` | `false` | Off by default: a route that takes no upload has nothing for it to judge. See [upload guard](../waf/uploads.mdx). |
 | `uploads_mode` | `enforce` | `monitor` reports what would be refused and lets every upload through. |
 | `uploads_allowed_extensions` | `[]` | When not empty, the only file extensions accepted, without the dot. |
+| `uploads_scanner` | *(empty)* | A [malware scanner](../waf/uploads.mdx#malware-scanning) every uploaded file also goes to. |
+| `uploads_scan_failure_action` | `reject` | A scan that cannot be made refuses the upload, or `allow` lets it through unscanned. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 

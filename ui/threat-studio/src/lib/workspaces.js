@@ -32,6 +32,8 @@ export const PRESET_DEFAULTS = {
   uploads: false,
   uploads_mode: 'enforce',
   uploads_allowed_extensions: [],
+  uploads_scanner: null,
+  uploads_scan_failure_action: 'reject',
   include: [],
   exclude: [],
 };

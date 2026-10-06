@@ -1613,6 +1613,100 @@ class AlertRulesPage extends Component {
   }
 }
 
+class MalwareScannerTest extends Component {
+  state = { result: null, busy: false };
+  send = () => {
+    this.setState({ busy: true, result: null });
+    securityCall('/_scanner_test', { scanner: this.props.rawValue }).then((r) => this.setState({ busy: false, result: r }));
+  };
+  describe = (v) => (!v ? '-' : v.verdict === 'infected' ? 'infected (' + v.threat + ')' : v.verdict === 'failed' ? 'failed: ' + v.reason : v.verdict);
+  render() {
+    const r = this.state.result;
+    return React.createElement(
+      'div',
+      { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Test'),
+      React.createElement(
+        'div',
+        { className: 'col-sm-10' },
+        suiteNotice('scantest', 'info', 'Sends the EICAR test file, which must come back infected, and a plain file, which must come back clean. The scanner as it is in this form, saved or not.'),
+        React.createElement(
+          'button',
+          { className: 'btn btn-sm btn-success', type: 'button', onClick: this.send, disabled: this.state.busy },
+          React.createElement('i', { className: 'fas fa-vial' }, null),
+          this.state.busy ? ' Scanning...' : ' Test with EICAR'
+        ),
+        r
+          ? suiteNotice(
+              'scanresult',
+              r.done ? 'success' : 'danger',
+              r.error ? r.error : (r.done ? 'Working. ' : 'Not working. ') + 'EICAR: ' + this.describe(r.eicar) + ' — a plain file: ' + this.describe(r.clean)
+            )
+          : null
+      )
+    );
+  }
+}
+
+class MalwareScannersPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    kind: {
+      type: 'select',
+      props: { label: 'Protocol', possibleValues: [{ label: 'clamd (ClamAV)', value: 'clamd' }, { label: 'ICAP', value: 'icap' }] },
+    },
+    host: { type: 'string', props: { label: 'Host' } },
+    port: { type: 'number', props: { label: 'Port', help: '3310 for clamd, 1344 for ICAP' } },
+    service: { type: 'string', props: { label: 'ICAP service', help: 'ICAP only: the path after the host, for instance avscan' } },
+    icap_mode: {
+      type: 'select',
+      props: { label: 'ICAP method', possibleValues: [{ label: 'RESPMOD', value: 'respmod' }, { label: 'REQMOD', value: 'reqmod' }] },
+    },
+    timeout_millis: { type: 'number', props: { label: 'Timeout', suffix: 'ms' } },
+    max_file_size: { type: 'number', props: { label: 'Max file size', suffix: 'bytes', help: "Keep it under what the scanner accepts: clamd's StreamMaxLength is 25 MB by default" } },
+    test: { type: MalwareScannerTest, props: {} },
+  };
+  columns = [
+    { title: 'Name', filterId: 'name', content: (i) => i.name },
+    { title: 'Enabled', content: (i) => (i.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Protocol', content: (i) => i.kind, style: { width: 90 } },
+    { title: 'At', content: (i) => i.host + ':' + i.port },
+  ];
+  formFlow = [
+    '_loc', 'id', 'name', 'description', '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<Scanner', 'enabled', 'kind', 'host', 'port', 'service', 'icap_mode', 'timeout_millis', 'max_file_size', 'test',
+  ];
+  componentDidMount() { this.props.setTitle('Malware scanners'); }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'malware-scanners');
+  render() {
+    return React.createElement(Table, {
+      parentProps: this.props,
+      selfUrl: 'extensions/cloud-apim/waf/scanners',
+      defaultTitle: 'All malware scanners',
+      defaultValue: () => ({
+        id: 'malware-scanner_' + uuid(), name: 'ClamAV', description: 'The local clamd, over its TCP socket',
+        tags: [], metadata: {}, enabled: true, kind: 'clamd', host: '127.0.0.1', port: 3310, service: 'avscan',
+        icap_mode: 'respmod', timeout_millis: 30000, max_file_size: 26214400,
+      }),
+      itemName: 'Malware scanner',
+      formSchema: this.formSchema, formFlow: this.formFlow, columns: this.columns,
+      stayAfterSave: true,
+      fetchItems: () => this.client.findAll(),
+      updateItem: this.client.update, deleteItem: this.client.delete, createItem: this.client.create,
+      navigateTo: (i) => { window.location = `/bo/dashboard/extensions/cloud-apim/waf/scanners/edit/${i.id}`; },
+      itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/scanners/edit/${i.id}`,
+      showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
+      kubernetesKind: 'waf.extensions.cloud-apim.com/MalwareScanner',
+    }, null);
+  }
+}
+
 const SecurityFeatures = [
   {
     title: 'Threat policies',
@@ -1647,6 +1741,14 @@ const SecurityFeatures = [
     icon: () => 'fa-bug',
   },
   {
+    title: 'Malware scanners',
+    description: 'clamd or ICAP antivirus for uploaded files',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/scanners',
+    display: () => true,
+    icon: () => 'fa-virus-slash',
+  },
+  {
     title: 'Alert rules',
     description: 'One message per attack, to Slack, Teams, PagerDuty or a webhook',
     absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
@@ -1670,6 +1772,7 @@ const SecuritySidebarItems = [
   { title: 'Challenge presets', text: 'Vendor presets', path: 'extensions/cloud-apim/waf/challengepresets', icon: 'store' },
   { title: 'Bot policies', text: 'Crawlers and AI agents', path: 'extensions/cloud-apim/waf/botpolicies', icon: 'robot' },
   { title: 'Honeypots', text: 'Paths and canary tokens', path: 'extensions/cloud-apim/waf/honeypots', icon: 'bug' },
+  { title: 'Malware scanners', text: 'clamd and ICAP', path: 'extensions/cloud-apim/waf/scanners', icon: 'virus-slash' },
   { title: 'Alert rules', text: 'Slack, Teams, PagerDuty', path: 'extensions/cloud-apim/waf/alerts', icon: 'bell' },
   { title: 'Bans & incidents', text: 'Live security state', path: 'extensions/cloud-apim/waf/security', icon: 'gavel' },
 ];
@@ -1708,6 +1811,7 @@ const SecurityRoutes = [
   ...suiteEntityRoutes('botpolicies', BotPoliciesPage),
   ...suiteEntityRoutes('honeypots', HoneypotPoliciesPage),
   ...suiteEntityRoutes('alerts', AlertRulesPage),
+  ...suiteEntityRoutes('scanners', MalwareScannersPage),
   {
     path: '/extensions/cloud-apim/waf/threatpolicies/:taction/:titem',
     component: (props) => React.createElement(ThreatPoliciesPage, props, null),

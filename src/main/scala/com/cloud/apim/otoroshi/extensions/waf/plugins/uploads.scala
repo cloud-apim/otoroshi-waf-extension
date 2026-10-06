@@ -38,11 +38,16 @@ final case class CloudApimUploadGuardConfig(
     archiveMaxRatio: Long = 100L,
     unreadableArchiveAction: String = "reject",
     checkArchiveEntryExtensions: Boolean = false,
-    bodyLimit: Long = 1024L * 1024L
+    bodyLimit: Long = 1024L * 1024L,
+    // WAF-5: the malware scanner files go to, and what a scan that cannot be made does
+    scanner: Option[String] = None,
+    scanFailureAction: String = "reject"
 ) extends NgPluginConfig {
   override def json: JsValue = CloudApimUploadGuardConfig.format.writes(this)
 
   def enforces: Boolean = !mode.trim.equalsIgnoreCase("monitor")
+
+  def rejectsScanFailures: Boolean = !scanFailureAction.trim.equalsIgnoreCase("allow")
 
   private def normalised(exts: Seq[String]): Set[String] = exts.map(_.trim.stripPrefix(".").toLowerCase).filter(_.nonEmpty).toSet
 
@@ -91,7 +96,9 @@ object CloudApimUploadGuardConfig {
       "archive_max_ratio"              -> o.archiveMaxRatio,
       "unreadable_archive_action"      -> o.unreadableArchiveAction,
       "check_archive_entry_extensions" -> o.checkArchiveEntryExtensions,
-      "body_limit"                     -> o.bodyLimit
+      "body_limit"                     -> o.bodyLimit,
+      "scanner"                        -> o.scanner,
+      "scan_failure_action"            -> o.scanFailureAction
     )
     override def reads(json: JsValue): JsResult[CloudApimUploadGuardConfig] = Try {
       val d = CloudApimUploadGuardConfig.default
@@ -111,7 +118,10 @@ object CloudApimUploadGuardConfig {
         unreadableArchiveAction =
           json.select("unreadable_archive_action").asOpt[String].map(_.trim.toLowerCase).filter(Set("reject", "allow")).getOrElse("reject"),
         checkArchiveEntryExtensions = json.select("check_archive_entry_extensions").asOpt[Boolean].getOrElse(d.checkArchiveEntryExtensions),
-        bodyLimit = json.select("body_limit").asOpt[Long].filter(_ > 0L).getOrElse(d.bodyLimit)
+        bodyLimit = json.select("body_limit").asOpt[Long].filter(_ > 0L).getOrElse(d.bodyLimit),
+        scanner = json.select("scanner").asOpt[String].map(_.trim).filter(_.nonEmpty),
+        scanFailureAction =
+          json.select("scan_failure_action").asOpt[String].map(_.trim.toLowerCase).filter(Set("reject", "allow")).getOrElse("reject")
       )
     } match {
       case Success(value) => JsSuccess(value)
@@ -134,6 +144,8 @@ object CloudApimUploadGuardConfig {
     "archive_max_ratio",
     "unreadable_archive_action",
     "check_archive_entry_extensions",
+    "scanner",
+    "scan_failure_action",
     "body_limit"
   )
 
@@ -184,6 +196,23 @@ object CloudApimUploadGuardConfig {
       "type"  -> "bool",
       "label" -> "Check archive entry extensions",
       "props" -> Json.obj("help" -> "Hold the names inside archives to the denied extensions too. Entries escaping their directory are always refused")
+    ),
+    "scanner"                        -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Malware scanner",
+      "props" -> Json.obj(
+        "help"               -> "Every uploaded file also goes to this antivirus. Empty means no malware scan",
+        "optionsFrom"        -> "/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/malware-scanners",
+        "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id")
+      )
+    ),
+    "scan_failure_action"            -> Json.obj(
+      "type"  -> "select",
+      "label" -> "When a scan fails",
+      "props" -> Json.obj(
+        "help"    -> "A scanner down, timing out, or a file too large for it: refuse the upload, or let it through unscanned",
+        "options" -> Json.arr(Json.obj("label" -> "Reject", "value" -> "reject"), Json.obj("label" -> "Allow", "value" -> "allow"))
+      )
     ),
     "body_limit"                     -> number("Status decision limit", "Bytes read before the upload is forwarded. Past them a refusal cuts the upload", Some("bytes"))
   )
@@ -242,7 +271,7 @@ class CloudApimUploadGuard extends NgRequestTransformer {
                 case BodyEncoding.Decodable(c) => Some(c)
                 case _                         => None
               }
-              val scanner = new UploadScanner(boundary, config.policy)
+              val scanner = new UploadScanner(boundary, config.policy.copy(scanning = scanSettings(config)))
               val reader  = new UploadReader(coding, scanner)
               BodyReader.prefix(request.body, config.bodyLimit).flatMap { prefix =>
                 Try {
@@ -258,6 +287,12 @@ class CloudApimUploadGuard extends NgRequestTransformer {
                       case Some(v)                  =>
                         reader.close()
                         refuse(ctx, config, v, request, Some(scanner), () => prefix.drain(), Some(prefix.resume))
+                      case None if !prefix.truncated && scanner.scanned =>
+                        // the whole upload is in hand: the scanner answers before anything is forwarded
+                        scanner.scanVerdict().flatMap {
+                          case Some(v) => refuse(ctx, config, v, request, Some(scanner), () => prefix.drain(), Some(prefix.resume))
+                          case None    => Right(request.copy(body = prefix.resume)).vfuture
+                        }
                       case None if !prefix.truncated =>
                         if (scanner.fileCount > 0) logger.debug(s"${scanner.fileCount} uploaded files accepted on ${ctx.route.id}")
                         Right(request.copy(body = prefix.resume)).vfuture
@@ -277,34 +312,64 @@ class CloudApimUploadGuard extends NgRequestTransformer {
    * that revealed it is forwarded: the backend gets a broken body rather than the file.
    */
   private def tail(ctx: NgTransformerRequestContext, config: CloudApimUploadGuardConfig, reader: UploadReader, scanner: UploadScanner)(using
-      env: Env
+      env: Env,
+      ec: ExecutionContext
   ): Flow[ByteString, ByteString, ?] = {
     var reported = false
-    def check(): Unit = scanner.violation.foreach { v =>
+    def refuseIf(violation: Option[UploadViolation]): Unit = violation.foreach { v =>
       if (!reported) {
         reported = true
         report(ctx, config, v, Some(scanner), cut = true)
       }
       if (config.enforces) throw new UploadRefusedException(v.reason.name)
     }
-    Flow[ByteString]
-      .statefulMap(() => ())(
-        { (state, chunk) =>
+    def check(): Unit = refuseIf(scanner.violation)
+    // WAF-5: the scanner answers once a file is whole, so the last chunk waits for it: the backend
+    // never receives a complete upload the scanner has not cleared
+    val holds = config.scanner.isDefined
+    val last  = scala.concurrent.Promise[Option[ByteString]]()
+    val reading = Flow[ByteString]
+      .statefulMap(() => Option.empty[ByteString])(
+        { (held, chunk) =>
           if (!scanner.halted) reader.feed(chunk)
           check()
-          (state, chunk)
+          if (holds) (Some(chunk), held.toList) else (None, chunk :: Nil)
         },
-        { _ =>
+        { held =>
           if (!scanner.halted) reader.finish()
           check()
+          last.trySuccess(held)
           None
         }
       )
+      .mapConcat(identity)
+    val ending: org.apache.pekko.stream.scaladsl.Source[ByteString, ?] =
+      org.apache.pekko.stream.scaladsl.Source.futureSource(last.future.flatMap { held =>
+        val verdict = if (scanner.scanned) scanner.scanVerdict() else Future.successful(None)
+        verdict.map { v =>
+          refuseIf(v)
+          org.apache.pekko.stream.scaladsl.Source(held.toList)
+        }
+      })
+    reading
+      .concat(ending)
       .watchTermination() { (mat, done) =>
         done.onComplete(_ => reader.close())(ExecutionContext.parasitic)
         mat
       }
   }
+
+  /** The malware scanner of this route, if it has one, as the scanner reads it. */
+  private def scanSettings(config: CloudApimUploadGuardConfig)(using env: Env, ec: ExecutionContext, mat: Materializer): Option[ScanSettings] =
+    config.scanner.map { ref =>
+      ThreatSupport.module.flatMap(_.states.malwareScanner(ref)).filter(_.enabled) match {
+        case Some(s) =>
+          val client = s.client(using env.otoroshiActorSystem)
+          ScanSettings(path => client.scan(path), s.maxFileSize, config.rejectsScanFailures)
+        case None    =>
+          ScanSettings(_ => Future.successful(ScanVerdict.Failed("unused")), 0L, config.rejectsScanFailures, Some(s"the malware scanner $ref does not exist or is disabled"))
+      }
+    }
 
   private def refuse(
       ctx: NgTransformerRequestContext,
@@ -319,8 +384,15 @@ class CloudApimUploadGuard extends NgRequestTransformer {
     if (config.enforces) {
       drain()
       Left(
-        Results
-          .Status(v.reason.status)(Json.obj("error" -> "upload_refused", "reason" -> v.reason.name, "detail" -> v.detail, "reference" -> ctx.snowflake))
+        Results.Status(v.reason.status)(
+          Json.obj(
+            "error"     -> "upload_refused",
+            "reason"    -> v.reason.name,
+            // why a scan failed names the scanner's address: that is for the event, not the caller
+            "detail"    -> (if (v.reason == UploadReason.ScanFailed) "the file could not be scanned" else v.detail),
+            "reference" -> ctx.snowflake
+          )
+        )
       ).vfuture
     } else Right(resume.fold(request)(body => request.copy(body = body))).vfuture
   }

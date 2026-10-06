@@ -33,6 +33,9 @@ object UploadReason {
   case object FileTooLarge        extends UploadReason("file_too_large", 413, 10)
   case object Malformed           extends UploadReason("malformed_multipart", 400, 30)
   case object UndecodableBody     extends UploadReason("undecodable_body", 415, 10)
+  // WAF-5: what a malware scanner found, and a scan that could not be made when that refuses
+  case object Malware             extends UploadReason("malware", 403, 100)
+  case object ScanFailed          extends UploadReason("scan_failed", 503, 0)
 }
 
 /** One refused upload: why, in which field and file, and what was seen. */

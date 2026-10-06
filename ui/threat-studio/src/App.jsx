@@ -27,6 +27,7 @@ import { PreRoutingPage } from './pages/PreRouting';
 import { RulesetsPage } from './pages/Rulesets';
 import { ClusterPage } from './pages/Cluster';
 import { AlertsPage } from './pages/Alerts';
+import { ScannersPage } from './pages/Scanners';
 
 const StudioContext = createContext(null);
 export const useStudio = () => useContext(StudioContext);
@@ -58,6 +59,7 @@ const GLOBAL_PAGES = {
   prerouting: PreRoutingPage,
   rulesets: RulesetsPage,
   alerts: AlertsPage,
+  scanners: ScannersPage,
   cluster: ClusterPage,
 };
 

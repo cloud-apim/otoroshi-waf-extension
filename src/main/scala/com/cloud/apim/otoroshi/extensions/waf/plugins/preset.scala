@@ -30,6 +30,9 @@ final case class CloudApimSecuritySuitePresetConfig(
     uploads: Boolean = false,
     uploadsMode: String = "enforce",
     uploadsAllowedExtensions: Seq[String] = Seq.empty,
+    // WAF-5: a malware scanner for the uploads, and whether a scan that cannot be made refuses them
+    uploadsScanner: Option[String] = None,
+    uploadsScanFailureAction: String = "reject",
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -64,6 +67,8 @@ object CloudApimSecuritySuitePresetConfig {
       "uploads"         -> o.uploads,
       "uploads_mode"    -> o.uploadsMode,
       "uploads_allowed_extensions" -> o.uploadsAllowedExtensions,
+      "uploads_scanner" -> o.uploadsScanner,
+      "uploads_scan_failure_action" -> o.uploadsScanFailureAction,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -88,6 +93,9 @@ object CloudApimSecuritySuitePresetConfig {
         uploads = json.select("uploads").asOpt[Boolean].getOrElse(false),
         uploadsMode = CloudApimUploadGuardConfig.modeOf(json.select("uploads_mode").asOpt[String]),
         uploadsAllowedExtensions = json.select("uploads_allowed_extensions").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty),
+        uploadsScanner = refOf(json, "uploads_scanner"),
+        uploadsScanFailureAction =
+          json.select("uploads_scan_failure_action").asOpt[String].map(_.trim.toLowerCase).filter(Set("reject", "allow")).getOrElse("reject"),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -117,6 +125,8 @@ object CloudApimSecuritySuitePresetConfig {
     "uploads",
     "uploads_mode",
     "uploads_allowed_extensions",
+    "uploads_scanner",
+    "uploads_scan_failure_action",
     "include",
     "exclude"
   )
@@ -258,6 +268,23 @@ object CloudApimSecuritySuitePresetConfig {
       "label" -> "Allowed upload extensions",
       "props" -> Json.obj("help" -> "When not empty, the only file extensions accepted, without the dot")
     ),
+    "uploads_scanner" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Upload malware scanner",
+      "props" -> Json.obj(
+        "help"               -> "Every uploaded file also goes to this antivirus. Empty means no malware scan",
+        "optionsFrom"        -> "/bo/api/proxy/apis/waf.extensions.cloud-apim.com/v1/malware-scanners",
+        "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id")
+      )
+    ),
+    "uploads_scan_failure_action" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "When an upload scan fails",
+      "props" -> Json.obj(
+        "help"    -> "A scanner down, timing out, or a file too large for it: refuse the upload, or let it through unscanned",
+        "options" -> Json.arr(Json.obj("label" -> "Reject", "value" -> "reject"), Json.obj("label" -> "Allow", "value" -> "allow"))
+      )
+    ),
     "include"         -> Json.obj(
       "type"  -> "array",
       "label" -> "Apply on paths",
@@ -383,7 +410,12 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
     val uploads = Option.when(config.uploads) {
       slot(
         NgPluginHelper.pluginId[CloudApimUploadGuard],
-        CloudApimUploadGuardConfig(mode = config.uploadsMode, allowedExtensions = config.uploadsAllowedExtensions).json.asObject,
+        CloudApimUploadGuardConfig(
+          mode = config.uploadsMode,
+          allowedExtensions = config.uploadsAllowedExtensions,
+          scanner = config.uploadsScanner,
+          scanFailureAction = config.uploadsScanFailureAction
+        ).json.asObject,
         PluginIndex(transformRequest = 2.0.some),
         config
       )

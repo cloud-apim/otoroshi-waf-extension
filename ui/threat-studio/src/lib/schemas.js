@@ -580,6 +580,47 @@ export const SCHEMAS = {
     ],
   },
 
+  /* ------------------------------------------------------------------ malware scanner */
+  'malware-scanners': {
+    resource: () => Resources.malwareScanners,
+    label: 'Malware scanner',
+    create: [
+      { key: 'name', label: 'Name', type: 'text', placeholder: 'ClamAV' },
+      {
+        key: 'kind',
+        label: 'Protocol',
+        type: 'select',
+        options: [
+          { value: 'clamd', label: 'clamd — ClamAV over its TCP socket' },
+          { value: 'icap', label: 'ICAP — what most enterprise antivirus products expose' },
+        ],
+      },
+      { key: 'host', label: 'Host', type: 'text', placeholder: '127.0.0.1' },
+    ],
+    sections: [
+      { title: 'Identity', fields: common },
+      {
+        title: 'Scanner',
+        description: 'Check it with the test button of the list: EICAR must come back infected and a plain file clean.',
+        fields: [
+          { key: 'kind', label: 'Protocol', type: 'select', options: ['clamd', 'icap'].map((v) => ({ value: v, label: v })) },
+          { key: 'host', label: 'Host', type: 'text' },
+          { key: 'port', label: 'Port', type: 'number', help: '3310 for clamd, 1344 for ICAP' },
+          { key: 'service', label: 'ICAP service', type: 'text', when: (v) => v.kind === 'icap', help: 'The path after the host, for instance avscan' },
+          {
+            key: 'icap_mode',
+            label: 'ICAP method',
+            type: 'select',
+            when: (v) => v.kind === 'icap',
+            options: ['respmod', 'reqmod'].map((v) => ({ value: v, label: v.toUpperCase() })),
+          },
+          { key: 'timeout_millis', label: 'Timeout (ms)', type: 'number', help: 'A scan past it is a failed scan' },
+          { key: 'max_file_size', label: 'Max file size', type: 'number', help: "Bytes. Keep it under what the scanner accepts: clamd's StreamMaxLength is 25 MB by default" },
+        ],
+      },
+    ],
+  },
+
   /* ------------------------------------------------------------------ crowdsec */
   'crowdsec-bouncers': {
     resource: () => Resources.crowdsecBouncers,

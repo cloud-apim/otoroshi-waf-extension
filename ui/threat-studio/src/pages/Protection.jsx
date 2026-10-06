@@ -44,9 +44,12 @@ export function ProtectionPage() {
 
   const refs = useAsync(
     () =>
-      Promise.all([Resources.threatPolicies.list(), Resources.botPolicies.list(), Resources.wafConfigs.list()]).then(
-        ([policies, bots, configs]) => ({ policies, bots, configs })
-      ),
+      Promise.all([
+        Resources.threatPolicies.list(),
+        Resources.botPolicies.list(),
+        Resources.wafConfigs.list(),
+        Resources.malwareScanners.list(),
+      ]).then(([policies, bots, configs, scanners]) => ({ policies, bots, configs, scanners })),
     []
   );
 
@@ -217,6 +220,39 @@ export function ProtectionPage() {
               disabled={!writable}
             />
           </div>
+          <div className="setting-row top">
+            <div>
+              <b>Malware scanner</b>
+              <div className="muted small">Every uploaded file also goes to this antivirus, and the upload waits for its answer.</div>
+            </div>
+            <div>
+              <Select
+                value={preset.uploads_scanner || ''}
+                onChange={(v) => set({ uploads_scanner: v || null })}
+                options={options(refs.data.scanners || [], 'None — no malware scan')}
+                disabled={!writable}
+              />
+              <Link className="small" to="/scanners" style={{ marginTop: 6, display: 'inline-block' }}>
+                Manage malware scanners
+              </Link>
+            </div>
+          </div>
+          {preset.uploads_scanner && (
+            <div className="setting-row">
+              <div>
+                <b>When a scan fails</b>
+                <div className="muted small">The scanner down, timing out, or a file too large for it.</div>
+              </div>
+              <Segmented
+                options={[
+                  { value: 'reject', label: 'Reject the upload' },
+                  { value: 'allow', label: 'Let it through' },
+                ]}
+                value={preset.uploads_scan_failure_action}
+                onChange={(v) => set({ uploads_scan_failure_action: v })}
+              />
+            </div>
+          )}
         </Card>
       )}
 

@@ -281,6 +281,23 @@ See [honeypots](../bots/honeypots.mdx).
 
 See [alerting](../fabric/alerting.mdx).
 
+## MalwareScanner
+
+`malware-scanners` · `waf.extensions.cloud-apim.com/MalwareScanner`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `kind` | `clamd` \| `icap` | `clamd` |
+| `host` | string | `127.0.0.1` |
+| `port` | number | `3310` for clamd, `1344` for ICAP |
+| `service` | string | `avscan` — ICAP only |
+| `icap_mode` | `respmod` \| `reqmod` | `respmod` |
+| `timeout_millis` | number | `30000` |
+| `max_file_size` | number | `26214400` — keep it under what the scanner accepts |
+
+See [malware scanning](../waf/uploads.mdx#malware-scanning).
+
 :::tip Secrets
 `headers` on a feed, `api_key` / `push_password` on a bouncer, and an alert rule's channel `url`,
 `routing_key` and `headers`, all go through Otoroshi's secret filling. Use vault references rather than literal values.

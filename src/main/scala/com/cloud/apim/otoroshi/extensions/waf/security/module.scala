@@ -73,6 +73,8 @@ class SecurityDatastores(env: Env, extensionId: AdminExtensionId) {
     new KvHoneypotPolicyDatastore(extensionId, env.datastores.redis, env)
   val alertRuleDatastore: AlertRuleDatastore =
     new KvAlertRuleDatastore(extensionId, env.datastores.redis, env)
+  val malwareScannerDatastore: MalwareScannerDatastore =
+    new KvMalwareScannerDatastore(extensionId, env.datastores.redis, env)
 }
 
 class SecurityState {
@@ -81,6 +83,13 @@ class SecurityState {
   private val _bots       = new UnboundedTrieMap[String, BotPolicy]()
   private val _honeypots  = new UnboundedTrieMap[String, HoneypotPolicy]()
   private val _alerts     = new UnboundedTrieMap[String, AlertRule]()
+  private val _scanners   = new UnboundedTrieMap[String, MalwareScanner]()
+
+  def malwareScanner(id: String): Option[MalwareScanner] = _scanners.get(id)
+  def allMalwareScanners(): Seq[MalwareScanner]         = _scanners.values.toSeq
+  def updateMalwareScanners(values: Seq[MalwareScanner]): Unit = {
+    _scanners.addAll(values.map(v => (v.id, v))).remAll(_scanners.keySet.toSeq.diff(values.map(_.id)))
+  }
 
   def alertRule(id: String): Option[AlertRule] = _alerts.get(id)
   def allAlertRules(): Seq[AlertRule]         = _alerts.values.toSeq
@@ -374,8 +383,10 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       bots       <- datastores.botPolicyDatastore.findAllAndFillSecrets()
       honeypots  <- datastores.honeypotPolicyDatastore.findAllAndFillSecrets()
       alertRules <- datastores.alertRuleDatastore.findAllAndFillSecrets()
+      scanners   <- datastores.malwareScannerDatastore.findAllAndFillSecrets()
     } yield {
       states.updateAlertRules(alertRules)
+      states.updateMalwareScanners(scanners)
       states.updateThreatPolicies(policies)
       states.updateChallengeProviders(challenges)
       states.updateBotPolicies(bots)
@@ -389,7 +400,8 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     AdminExtensionEntity(ChallengeProvider.resource(env, datastores, states)),
     AdminExtensionEntity(BotPolicy.resource(env, datastores, states)),
     AdminExtensionEntity(HoneypotPolicy.resource(env, datastores, states)),
-    AdminExtensionEntity(AlertRule.resource(env, datastores, states))
+    AdminExtensionEntity(AlertRule.resource(env, datastores, states)),
+    AdminExtensionEntity(MalwareScanner.resource(env, datastores, states))
   )
 
   private def tick(): Unit = {
@@ -500,6 +512,12 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
   // -----------------------------------------------------------------------------------------------
 
   def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = s"$basePath/_scanner_test",
+      wantsBody = true,
+      handle = (_, _, _, body) => withJsonBody(body)(handleScannerTest)
+    ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
       path = s"$basePath/_alert_test",
@@ -664,6 +682,41 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       case Some(r) =>
         alerts.send(r, alerts.testAlert(r)).map { delivery =>
           Results.Ok(Json.obj("done" -> (delivery.ok || r.channel.kind == "event"), "channel" -> r.channel.kind, "delivery" -> delivery.json))
+        }
+    }
+  }
+
+  /**
+   * Checks a malware scanner end to end: the EICAR test file must come back infected, and a plain
+   * text file clean. A scanner that answers "clean" to EICAR is reachable and useless, which is
+   * exactly what checking only the connection would miss.
+   */
+  private def handleScannerTest(body: JsValue): Future[Result] = {
+    import com.cloud.apim.otoroshi.extensions.waf.upload.{MalwareScanners, ScanVerdict}
+    val scanner = (body \ "scanner").asOpt[JsObject].flatMap(json => MalwareScanner.format.reads(json).asOpt)
+      .orElse((body \ "id").asOpt[String].flatMap(states.malwareScanner))
+    def verdictJson(v: ScanVerdict): JsValue = v match {
+      case ScanVerdict.Clean            => Json.obj("verdict" -> "clean")
+      case ScanVerdict.Infected(threat) => Json.obj("verdict" -> "infected", "threat" -> threat)
+      case ScanVerdict.Failed(reason)   => Json.obj("verdict" -> "failed", "reason" -> reason)
+    }
+    def scanBytes(s: MalwareScanner, bytes: org.apache.pekko.util.ByteString): Future[ScanVerdict] = {
+      val path = java.nio.file.Files.createTempFile("cloud-apim-scanner-test-", ".bin")
+      java.nio.file.Files.write(path, bytes.toArray)
+      s.client(using env.otoroshiActorSystem)
+        .scan(path)
+        .recover { case e => ScanVerdict.failure(e) }
+        .andThen { case _ => java.nio.file.Files.deleteIfExists(path) }
+    }
+    scanner match {
+      case None    => Results.Ok(Json.obj("done" -> false, "error" -> "no scanner to test")).vfuture
+      case Some(s) =>
+        for {
+          eicar <- scanBytes(s, MalwareScanners.eicar)
+          clean <- scanBytes(s, org.apache.pekko.util.ByteString("nothing to see here\n"))
+        } yield {
+          val works = eicar.isInstanceOf[ScanVerdict.Infected] && clean == ScanVerdict.Clean
+          Results.Ok(Json.obj("done" -> works, "eicar" -> verdictJson(eicar), "clean" -> verdictJson(clean)))
         }
     }
   }

@@ -130,6 +130,8 @@ class PresetSuite extends munit.FunSuite {
       uploads = true,
       uploadsMode = "monitor",
       uploadsAllowedExtensions = Seq("png", "pdf"),
+      uploadsScanner = Some("malware-scanner_1"),
+      uploadsScanFailureAction = "allow",
       include = Seq("/a"),
       exclude = Seq("/b")
     )
@@ -181,13 +183,15 @@ class PresetSuite extends munit.FunSuite {
   test("the upload guard is off by default, and runs between the WAF and the response once switched on") {
     assertEquals(CloudApimSecuritySuitePresetConfig.default.uploads, false)
     assertEquals(names(chain(full)).contains("CloudApimUploadGuard"), false)
-    val armed     = chain(full.copy(uploads = true, uploadsMode = "monitor", uploadsAllowedExtensions = Seq("png")))
+    val armed     = chain(full.copy(uploads = true, uploadsMode = "monitor", uploadsAllowedExtensions = Seq("png"), uploadsScanner = Some("ms_1")))
     val transform = armed.flatMap(i => i.pluginIndex.flatMap(_.transformRequest).map(i.plugin -> _)).toMap
     val guard     = transform(NgPluginHelper.pluginId[CloudApimUploadGuard])
     assert(transform(NgPluginHelper.pluginId[CloudApimWaf]) < guard && guard < transform(NgPluginHelper.pluginId[CloudApimThreatResponse]))
     val config = armed.find(_.plugin == NgPluginHelper.pluginId[CloudApimUploadGuard]).get.config.raw
     assertEquals((config \ "mode").as[String], "monitor")
     assertEquals((config \ "allowed_extensions").as[Seq[String]], Seq("png"))
+    assertEquals((config \ "scanner").as[String], "ms_1")
+    assertEquals((config \ "scan_failure_action").as[String], "reject")
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {

@@ -33,6 +33,8 @@ streams to the backend, and refuses what it finds disguised. Form fields are lef
 | An archive nothing here can read: encrypted, an unknown compression method, 7z, rar, xz, zstd, bzip2 | `unreadable_archive` | `415` |
 | Too many files, or a file too large | `too_many_files`, `file_too_large` | `413` |
 | A body that is not valid multipart | `malformed_multipart` | `400` |
+| The [malware scanner](#malware-scanning) found something | `malware` | `403` |
+| The malware scanner could not scan a file, and the route refuses that | `scan_failed` | `503` |
 
 ### Names
 
@@ -70,6 +72,48 @@ Entry names are always checked for zip slip. Holding them to the denied extensio
 switch (`check_archive_entry_extensions`), off by default: a project archive full of `.sh` and `.php`
 files is ordinary on a code-hosting API.
 
+## Malware scanning
+
+The checks above find files pretending to be something else. An antivirus finds files that are
+exactly what they claim and still malicious, and a procurement checklist usually asks for one. A
+**malware scanner** (`MalwareScanner`) is an antivirus the guard hands every uploaded file to:
+
+| `kind` | Protocol | Port |
+|---|---|---|
+| `clamd` | ClamAV's `INSTREAM`, on its TCP socket | `3310` |
+| `icap` | ICAP (RFC 3507), `RESPMOD` or `REQMOD`, at `service`: what most enterprise antivirus products expose | `1344` |
+
+Each file is spooled to a temporary file as it streams by, and handed to the scanner once it is
+whole; the file is deleted once the scanner has answered. A file larger than the scanner's
+`max_file_size` (25 MiB by default, clamd's own `StreamMaxLength`) is not sent.
+
+The scanner answers once a file is whole, so the upload waits for it. Within the first
+`body_limit` bytes, the answer comes before anything is forwarded, and malware is refused with a
+`403`. Past them, the upload streams to the backend as usual but its **last chunk is held** until
+every file has been scanned: a clean upload then completes, an infected one is cut, and the backend
+never receives a complete upload the scanner has not cleared.
+
+A scan that cannot be made (the scanner down, timing out, a file too large for it) is decided by
+the route: `scan_failure_action: "reject"`, the default, refuses the upload with a `503`;
+`"allow"` lets it through unscanned. The caller is only told the file could not be scanned; why,
+and the scanner's address, are in the event.
+
+**Test with EICAR**, from the scanner's form in the backoffice or its row in Threat Studio, sends
+the EICAR test file, which must come back infected, and a plain file, which must come back clean.
+A scanner that answers "clean" to EICAR is reachable and useless, which checking the connection
+alone would miss.
+
+```json
+{
+  "name": "ClamAV",
+  "kind": "clamd",
+  "host": "clamav.internal",
+  "port": 3310,
+  "timeout_millis": 30000,
+  "max_file_size": 26214400
+}
+```
+
 ## Before and after the head
 
 The guard reads the first `body_limit` bytes (1 MiB) before anything is forwarded. A file refused
@@ -105,7 +149,9 @@ guard; a body in an encoding it cannot read is refused (`undecodable_body`, `415
   "archive_max_ratio": 100,
   "unreadable_archive_action": "reject",
   "check_archive_entry_extensions": false,
-  "body_limit": 1048576
+  "body_limit": 1048576,
+  "scanner": null,
+  "scan_failure_action": "reject"
 }
 ```
 
@@ -125,6 +171,8 @@ guard; a body in an encoding it cannot read is refused (`undecodable_body`, `415
 | `unreadable_archive_action` | `reject` | `allow` lets through what cannot be looked into |
 | `check_archive_entry_extensions` | `false` | Hold archive entry names to the denied extensions too |
 | `body_limit` | 1 MiB | Bytes read before the upload is forwarded |
+| `scanner` | *(empty)* | The id of a [malware scanner](#malware-scanning). Empty means no malware scan |
+| `scan_failure_action` | `reject` | A scan that cannot be made refuses the upload (`503`), or `allow` lets it through unscanned |
 
 :::tip Name the files a route takes
 Most routes that take uploads take one or two kinds of file. `allowed_extensions: ["png", "jpg"]`
@@ -136,9 +184,10 @@ everything dangerous.
 
 On a route, add the plugin, or switch `uploads` on in the [preset](../fabric/preset.mdx) or in a
 [global preset](../fabric/global-preset.mdx) rule, with `uploads_mode` and
-`uploads_allowed_extensions`. It runs after the WAF and before the threat response. In **Threat
-Studio**, it is the **Upload guard** section of a workspace's protection, with its allowed
-extensions. It is off by default: a route that takes no upload has nothing for it to judge.
+`uploads_allowed_extensions`, and `uploads_scanner` and `uploads_scan_failure_action` for the
+malware scan. It runs after the WAF and before the threat response. In **Threat Studio**, it is the
+**Upload guard** section of a workspace's protection, with its allowed extensions and its malware
+scanner; scanners themselves are on the **Malware scanners** page. It is off by default: a route that takes no upload has nothing for it to judge.
 
 ## What it reports
 

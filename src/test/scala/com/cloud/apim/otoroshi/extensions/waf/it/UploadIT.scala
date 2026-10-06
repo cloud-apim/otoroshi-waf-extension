@@ -3,11 +3,15 @@ package com.cloud.apim.otoroshi.extensions.waf.it
 import org.apache.pekko.util.ByteString
 import otoroshi.next.models.{NgPluginInstance, NgPluginInstanceConfig, NgRoute}
 import otoroshi.next.plugins.api.NgPluginHelper
+import com.cloud.apim.otoroshi.extensions.waf.upload.MalwareScanners
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.{CloudApimSecuritySuitePreset, CloudApimUploadGuard}
 import play.api.libs.json.{JsObject, Json}
 
-import java.io.ByteArrayOutputStream
+import java.io.{ByteArrayOutputStream, DataInputStream}
+import java.net.{InetAddress, ServerSocket}
 import java.util.zip.{ZipEntry, ZipOutputStream}
+import scala.concurrent.Await
 import scala.concurrent.duration.*
 import scala.util.Try
 
@@ -129,5 +133,102 @@ class UploadIT extends munit.FunSuite {
     withRoute("waf4-preset-off", Seq(preset(false))) { (route, _) =>
       assertEquals(upload(route, pdf).status, 200)
     }
+  }
+
+  // ---------------------------------------------------------------- WAF-5
+
+  private def ext = Gateway.instance.env.adminExtensions.extension[CloudApimWafExtension].get
+
+  /** A clamd that reads INSTREAM and finds EICAR, as the real one does. */
+  private final class FakeClamd {
+    val server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress)
+    private val thread = new Thread(() => {
+      while (!server.isClosed) {
+        try {
+          val socket = server.accept()
+          val in     = new DataInputStream(socket.getInputStream)
+          while (in.read() > 0) ()
+          val content = new ByteArrayOutputStream()
+          var size    = in.readInt()
+          while (size > 0) {
+            val chunk = new Array[Byte](size)
+            in.readFully(chunk)
+            content.write(chunk)
+            size = in.readInt()
+          }
+          val found = ByteString(content.toByteArray).containsSlice(MalwareScanners.eicar)
+          socket.getOutputStream.write((if (found) "stream: Eicar-Test-Signature FOUND\u0000" else "stream: OK\u0000").getBytes("US-ASCII"))
+          socket.getOutputStream.flush()
+          socket.close()
+        } catch { case _: Throwable => () }
+      }
+    })
+    thread.setDaemon(true)
+    thread.start()
+    def port: Int    = server.getLocalPort
+    def stop(): Unit = server.close()
+  }
+
+  private def scanner(id: String, port: Int): String = {
+    val res = Gateway.post(
+      "/apis/waf.extensions.cloud-apim.com/v1/malware-scanners",
+      Json.obj("id" -> id, "name" -> id, "kind" -> "clamd", "host" -> "127.0.0.1", "port" -> port, "timeout_millis" -> 3000)
+    )
+    assert(res.status < 300, res.body)
+    Await.result(ext.security.syncStates(), 30.seconds)
+    id
+  }
+
+  test("WAF-5: malware in the head is refused before anything is forwarded, a clean upload goes through") {
+    val clamd = new FakeClamd()
+    val id    = scanner(s"malware-scanner_it_${System.nanoTime()}", clamd.port)
+    try {
+      withRoute("waf5-head", Seq(guard(Json.obj("scanner" -> id)))) { (route, backend) =>
+        val infected = upload(route, multipart("readme.txt" -> MalwareScanners.eicar))
+        assertEquals(infected.status, 403)
+        assertEquals((infected.json \ "reason").as[String], "malware")
+        assertEquals(backend.calls.get(), 0L)
+        val clean = multipart("notes.txt" -> ByteString("hello"))
+        assertEquals(upload(route, clean).status, 200)
+        assertEquals(backend.received.get(), clean.size.toLong)
+      }
+    } finally {
+      clamd.stop(); Gateway.delete(s"/apis/waf.extensions.cloud-apim.com/v1/malware-scanners/$id")
+    }
+  }
+
+  test("WAF-5: past the head the last chunk waits for the scanner, and malware cuts the upload") {
+    val clamd = new FakeClamd()
+    val id    = scanner(s"malware-scanner_it_${System.nanoTime()}", clamd.port)
+    try {
+      withRoute("waf5-tail", Seq(guard(Json.obj("scanner" -> id, "body_limit" -> 1024)))) { (route, backend) =>
+        val big   = png ++ ByteString(Array.fill(300 * 1024)(5.toByte))
+        val clean = multipart("big.png" -> big)
+        assertEquals(upload(route, clean).status, 200)
+        assertEquals(backend.received.get(), clean.size.toLong, "a clean upload arrives whole once scanned")
+        val infected = multipart("big.png" -> big, "readme.txt" -> MalwareScanners.eicar)
+        val res      = Try(upload(route, infected))
+        assert(res.fold(_ => true, r => r.status >= 400), s"the upload went through: ${res.map(_.status)}")
+        assertEquals(backend.received.get(), clean.size.toLong, "the backend received part of an infected upload as if whole")
+      }
+    } finally {
+      clamd.stop(); Gateway.delete(s"/apis/waf.extensions.cloud-apim.com/v1/malware-scanners/$id")
+    }
+  }
+
+  test("WAF-5: a scanner that cannot be reached refuses the upload, or lets it through, as the route says") {
+    val nobody = new ServerSocket(0); val port = nobody.getLocalPort; nobody.close()
+    val id     = scanner(s"malware-scanner_it_${System.nanoTime()}", port)
+    try {
+      withRoute("waf5-down", Seq(guard(Json.obj("scanner" -> id)))) { (route, backend) =>
+        val res = upload(route, multipart("notes.txt" -> ByteString("hello")))
+        assertEquals(res.status, 503)
+        assertEquals((res.json \ "reason").as[String], "scan_failed")
+        assertEquals((res.json \ "detail").as[String], "the file could not be scanned", "the scanner's address stays in the event")
+      }
+      withRoute("waf5-down-open", Seq(guard(Json.obj("scanner" -> id, "scan_failure_action" -> "allow")))) { (route, _) =>
+        assertEquals(upload(route, multipart("notes.txt" -> ByteString("hello"))).status, 200)
+      }
+    } finally Gateway.delete(s"/apis/waf.extensions.cloud-apim.com/v1/malware-scanners/$id")
   }
 }
