@@ -64,7 +64,7 @@ class PresetSuite extends munit.FunSuite {
   }
 
   test("every emitted slot carries an index, or the ordering guarantee is void") {
-    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true, login = true, traffic = true)).foreach { i =>
+    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true, login = true, traffic = true, objects = true)).foreach { i =>
       val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined || p.transformResponse.isDefined)
       assert(indexed, s"${i.plugin} was emitted without a plugin index")
     }
@@ -136,6 +136,10 @@ class PresetSuite extends munit.FunSuite {
       loginPaths = Seq("/login", "/api/auth/*"),
       traffic = true,
       trafficSensitivity = "high",
+      objects = true,
+      objectsMode = "score",
+      objectsPaths = Seq("/api/orders/{id}"),
+      objectsBudget = 500L,
       include = Seq("/a"),
       exclude = Seq("/b")
     )
@@ -215,6 +219,24 @@ class PresetSuite extends munit.FunSuite {
     val guard = chain(full.copy(traffic = true, trafficSensitivity = "high")).find(_.plugin == NgPluginHelper.pluginId[CloudApimTrafficGuard]).get
     assert(guard.pluginIndex.exists(_.validateAccess.isDefined))
     assertEquals((guard.config.raw \ "surge_factor").as[Double], 2.0)
+  }
+
+  test("the object guard is off by default, sits between the login guard and the response, and reads the status") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.objects, false)
+    assertEquals(names(chain(full)).contains("CloudApimObjectGuard"), false)
+    val armed     = chain(full.copy(login = true, objects = true))
+    val transform = armed.flatMap(i => i.pluginIndex.flatMap(_.transformRequest).map(i.plugin -> _)).toMap
+    assert(transform(NgPluginHelper.pluginId[CloudApimLoginGuard]) < transform(NgPluginHelper.pluginId[CloudApimObjectGuard]))
+    assert(transform(NgPluginHelper.pluginId[CloudApimObjectGuard]) < transform(NgPluginHelper.pluginId[CloudApimThreatResponse]))
+    val guard     = armed.find(_.plugin == NgPluginHelper.pluginId[CloudApimObjectGuard]).get
+    assert(guard.pluginIndex.exists(_.transformResponse.isDefined), "the guard reads what the backend answered")
+    val alert     = CloudApimObjectGuardConfig.format.reads(guard.config.raw).get
+    assertEquals((alert.contribute, alert.autoDetect, alert.budget), (false, true, 0L), "alert only, identifiers detected, no budget")
+    val declared  = chain(full.copy(objects = true, objectsMode = "score", objectsPaths = Seq("/api/orders/{id}"), objectsBudget = 500L))
+      .find(_.plugin == NgPluginHelper.pluginId[CloudApimObjectGuard])
+      .map(i => CloudApimObjectGuardConfig.format.reads(i.config.raw).get)
+      .get
+    assertEquals((declared.contribute, declared.autoDetect, declared.budget, declared.paths.map(_.path)), (true, false, 500L, Seq("/api/orders/{id}")))
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {

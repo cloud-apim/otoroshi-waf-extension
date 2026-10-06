@@ -273,6 +273,16 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       configuration.getOptional[Int]("security.traffic.max-keys").getOrElse(200000).max(1000)
     )
 
+  /** BEH-1: which objects each consumer touches and what the backend answered, on this node. */
+  val objects: com.cloud.apim.otoroshi.extensions.waf.objects.ObjectWatches =
+    new com.cloud.apim.otoroshi.extensions.waf.objects.ObjectWatches(
+      configuration.getOptional[Int]("security.objects.max-keys").getOrElse(20000).max(100)
+    )
+
+  /** BEH-2: the distinct objects each consumer read per window, cluster-wide. */
+  val objectBudgets: com.cloud.apim.otoroshi.extensions.waf.objects.ObjectBudgets =
+    new com.cloud.apim.otoroshi.extensions.waf.objects.ObjectBudgets(s"$keyPrefix:objects", sharedState)
+
   /** BEH-3: failed logins, counted cluster-wide, accounts keyed by an HMAC rather than stored. */
   val logins: com.cloud.apim.otoroshi.extensions.waf.login.LoginCounters =
     new com.cloud.apim.otoroshi.extensions.waf.login.LoginCounters(s"$keyPrefix:login", sharedState, env.otoroshiSecret)
@@ -434,6 +444,7 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       incidents.evict()
       // a key nobody sent anything on for an hour has nothing left worth learning
       traffic.sweep(System.currentTimeMillis(), 3600L * 1000L)
+      objects.sweep(System.currentTimeMillis(), 3600L * 1000L)
       // publishing after evicting, so a node never shares what it has already dropped
       board.publish()
       ticks += 1

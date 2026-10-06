@@ -26,7 +26,7 @@ An **alert rule** (`AlertRule`) says when to tell someone, and where.
 | `burst` | A route sees `burst_threshold` decisions within `burst_window_seconds` | the route |
 
 `categories` (`threat`, `honeypot`, `fail2ban`, `challenge`, `ban`, `traffic`, `upload`, `login`,
-`leakage`, `sensitive_data`) and `routes` (ids or names) narrow what an incident or burst rule covers; empty
+`objects`, `leakage`, `sensitive_data`) and `routes` (ids or names) narrow what an incident or burst rule covers; empty
 means everything. `enforced_only`, on by default, keeps dry runs and monitoring from paging anyone.
 
 After an alert, its key is quiet for `cooldown_seconds` (900 by default, never less than 10): an

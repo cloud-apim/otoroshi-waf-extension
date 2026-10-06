@@ -152,6 +152,11 @@ otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {
       max-keys = 200000
     }
 
+    objects {
+      // how many consumers and kinds of object one node watches at once, a few kilobytes each
+      max-keys = 20000
+    }
+
     events {
       // also emit every decision and every alert as an OCSF Detection Finding, as its own event
       // type (CloudApimSecurityOcsf), for Security Lake, Sentinel and the other OCSF readers

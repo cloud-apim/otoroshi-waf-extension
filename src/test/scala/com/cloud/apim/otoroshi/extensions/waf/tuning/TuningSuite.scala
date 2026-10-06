@@ -334,6 +334,10 @@ class FakeSharedStore extends com.cloud.apim.otoroshi.extensions.waf.security.Sh
   override def incrBy(key: String, by: Long)                            = Future.successful(by)
   override def pexpire(key: String, millis: Long)                       = Future.successful(())
   override def keys(pattern: String)                                    = Future.successful(values.keys.toSeq)
+  private val sets = scala.collection.mutable.Map.empty[String, scala.collection.mutable.Set[String]]
+  override def sadd(key: String, member: String)                        = Future.successful(sets.getOrElseUpdate(key, scala.collection.mutable.Set.empty).add(member))
+  override def sismember(key: String, member: String)                   = Future.successful(sets.get(key).exists(_.contains(member)))
+  override def srem(key: String, member: String)                        = { sets.get(key).foreach(_.remove(member)); Future.successful(()) }
 }
 
 class StoreSuite extends munit.FunSuite {

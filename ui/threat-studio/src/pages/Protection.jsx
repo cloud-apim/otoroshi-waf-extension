@@ -8,6 +8,7 @@ import {
   Field,
   LinesInput,
   Loading,
+  NumberInput,
   PageHeader,
   Segmented,
   Select,
@@ -186,6 +187,16 @@ export function ProtectionPage() {
                   onChange={(v) => set({ traffic_sensitivity: v })}
                 />
               )}
+              {s.key === 'objects' && preset.objects && (
+                <Segmented
+                  options={[
+                    { value: 'alert', label: 'Alert only' },
+                    { value: 'score', label: 'Score' },
+                  ]}
+                  value={preset.objects_mode}
+                  onChange={(v) => set({ objects_mode: v })}
+                />
+              )}
               {s.key === 'uploads' && preset.uploads && (
                 <Segmented
                   options={[
@@ -282,6 +293,46 @@ export function ProtectionPage() {
               </div>
             </div>
             <LinesInput value={preset.login_paths || []} onChange={(v) => set({ login_paths: v })} rows={3} disabled={!writable} />
+          </div>
+        </Card>
+      )}
+
+      {preset.objects && (
+        <Card
+          style={{ marginTop: 18 }}
+          title="Object guard"
+          description={
+            preset.objects_mode === 'score'
+              ? 'A surge of new objects, a walk through identifiers and mostly refused object requests become signals on the threat score, per consumer: the threat policy decides what that does.'
+              : 'Alert only: a surge of new objects, a walk through identifiers and mostly refused object requests are reported per consumer, and change nothing. The budget below refuses either way.'
+          }
+        >
+          <div className="setting-row top">
+            <div>
+              <b>Object paths</b>
+              <div className="muted small">
+                One per line, such as <code>/api/orders/{'{id}'}</code>: each <code>{'{name}'}</code> is a segment of the identifier.
+                Empty means any segment shaped like one: a number, a UUID, an ObjectId, a ULID.
+              </div>
+            </div>
+            <LinesInput value={preset.objects_paths || []} onChange={(v) => set({ objects_paths: v })} rows={3} disabled={!writable} />
+          </div>
+          <div className="setting-row">
+            <div>
+              <b>Budget per hour</b>
+              <div className="muted small">
+                Distinct objects of one kind a consumer may read in an hour, across the cluster. Past it a new object gets a 429, what was
+                already read stays readable. 0 is no budget.
+              </div>
+            </div>
+            <NumberInput
+              value={preset.objects_budget || 0}
+              allowEmpty={false}
+              min={0}
+              style={{ width: 120 }}
+              onChange={(v) => set({ objects_budget: Math.max(0, Math.floor(v || 0)) })}
+              disabled={!writable}
+            />
           </div>
         </Card>
       )}

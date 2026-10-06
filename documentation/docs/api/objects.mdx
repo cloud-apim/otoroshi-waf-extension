@@ -1,0 +1,118 @@
+---
+sidebar_position: 1
+title: Object guard
+description: Enumeration and walks through object identifiers per consumer, and a budget of distinct objects.
+---
+
+# Object guard
+
+Broken object level authorisation is the first risk of the OWASP API Security Top 10, and no single
+request shows it. `GET /api/orders/41207` is a perfectly ordinary request; forty thousand of them,
+in order, from a consumer that usually reads eleven orders an hour, is someone walking your
+database. A scraper that keeps under your rate limit and reads the whole catalogue over a week is
+the same story told slower: a rate limit counts requests, and what leaves is objects.
+
+The **Object guard** (`CloudApimObjectGuard`) counts objects, per consumer and per kind of object.
+A consumer is its api key, else its user, else its address.
+
+## What an object is
+
+From the path alone, since the route's OpenAPI contract is not read yet:
+
+- **Declared paths**, `paths`: templates such as `/api/orders/{id}`, where each `{name}` is one
+  segment of the identifier and a trailing `*` matches anything after. The kind of object is the
+  template's `name`, or the template itself.
+- **Detected identifiers**, `auto_detect`: any segment shaped like one, a number, a UUID, a
+  MongoDB ObjectId or a ULID. `/users/42/orders/7` is an object of kind `/users/{id}/orders/{id}`,
+  identified by `42/7`.
+
+Declared paths are tried first. Preflight requests are never objects.
+
+```json
+{
+  "paths": [
+    "/api/orders/{id}",
+    { "path": "/api/customers/{id}", "name": "customer", "methods": ["GET"], "budget": 200 }
+  ],
+  "auto_detect": false
+}
+```
+
+## What it watches
+
+| Pattern | What it is | Signal |
+|---|---|---|
+| Surge | Objects the consumer had not read lately, past `surge_factor` times its usual pace and past `surge_floor` per bucket. Before its pace is learned, past `warmup_ceiling` | `objects:surge` |
+| Walk | `sequential_min` numbered objects read within `sequential_window_seconds` whose identifiers sit a median of `sequential_max_gap` or less apart | `objects:sequential` |
+| Enumeration | At least `enumeration_min` object requests in a window answered with one of the `denied_statuses` (401, 403, 404), and at least `enumeration_ratio` of them | `objects:enumeration` |
+
+The pace of new objects is learned the way the [traffic guard](../fabric/traffic.mdx) learns traffic:
+in buckets, averaged, a surge never learned. Each pattern is reported as a `CloudApimSecurityEvent`
+of category `objects` once a minute per consumer, kind and pattern, and the [alert
+rules](../fabric/alerting.mdx) can pick it up.
+
+**By default nothing more happens.** A behavioural detector nobody has measured yet should not
+refuse anyone, so the guard starts by reporting. With `contribute`, each pattern also becomes a
+signal on the [threat score](../fabric/policies.mdx), weighed by `surge_weight`, `sequential_weight`
+and `enumeration_weight`, and the threat policy decides what that does.
+
+:::note Per node
+The patterns are counted on each node, in memory, like the traffic guard: no round trip per
+request, and a consumer spread over nodes shows each of them the same proportions. A walk is seen
+on identifiers a few apart, which covers a consumer spread over a few nodes but not over twelve.
+Each consumer and kind keeps a few kilobytes of hashes, not identifiers; at most
+`security.objects.max-keys` (20 000) are tracked, and those idle for an hour are forgotten.
+:::
+
+A consumer that legitimately reads new records as they are created, one id after another, looks
+like a walk. Exempt it in the threat policy, or declare the paths that matter instead of detecting
+every identifier.
+
+## The budget
+
+`budget` caps the **distinct objects** of one kind a consumer may read per `budget_window_seconds`,
+across the cluster. Reading again what was already read costs nothing. A new object past the budget
+gets a `429` with a `Retry-After` saying when the window ends, or is only reported with
+`budget_action: "log"`, and is not counted, so asking for it again is refused again. A declared path
+can carry its own `budget`.
+
+The budget is counted in the shared store: a set of what each consumer read, which never holds more
+than the budget, and its size. If the store cannot be reached, the request goes through.
+
+## Configuration
+
+```json
+{
+  "paths": [],
+  "auto_detect": true,
+  "contribute": false,
+  "budget": 0,
+  "budget_window_seconds": 3600,
+  "budget_action": "block",
+  "surge_factor": 5.0,
+  "surge_floor": 30,
+  "warmup_ceiling": 150,
+  "bucket_seconds": 60,
+  "learning_buckets": 60,
+  "warmup_buckets": 10,
+  "sequential_min": 30,
+  "sequential_window_seconds": 600,
+  "sequential_max_gap": 3,
+  "enumeration_min": 20,
+  "enumeration_ratio": 0.5,
+  "enumeration_window_seconds": 300,
+  "denied_statuses": [401, 403, 404],
+  "surge_weight": 40,
+  "sequential_weight": 50,
+  "enumeration_weight": 50
+}
+```
+
+## Laying it down
+
+It reads the consumer's api key, so it runs as a request transformer, after the login guard and
+before the threat response; on the way back it only reads the status. In the
+[preset](../fabric/preset.mdx) or a [global preset](../fabric/global-preset.mdx) rule, switch `objects`
+on, with `objects_mode` (`alert` or `score`), `objects_paths` (empty detects identifiers) and
+`objects_budget`, distinct objects per hour. In **Threat Studio**, it is the **Object guard** section
+of a workspace's protection. It is off by default.

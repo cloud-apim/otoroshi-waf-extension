@@ -45,9 +45,10 @@ wrong. (The preset is missing from the list because this route already carries i
 | 6 | Cloud APIM WAF | request transformation | `1.0` |
 | 7 | [Upload guard](../waf/uploads.mdx) *(off by default)* | request transformation | `2.0` |
 | 8 | [Login guard](../bots/login.mdx) *(off by default)* | request and response transformation | `3.0` |
-| 9 | Threat response | request transformation | `900.0` |
-| 10 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
-| 11 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
+| 9 | [Object guard](../api/objects.mdx) *(off by default)* | request and response transformation | `4.0` |
+| 10 | Threat response | request transformation | `900.0` |
+| 11 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
+| 12 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
 
 The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
 rather than by the order slots happen to sit in on the route.
@@ -94,6 +95,10 @@ the preset carry it.
   "login_paths": [],
   "traffic": false,
   "traffic_sensitivity": "medium",
+  "objects": false,
+  "objects_mode": "alert",
+  "objects_paths": [],
+  "objects_budget": 0,
   "include": [],
   "exclude": []
 }
@@ -122,6 +127,10 @@ the preset carry it.
 | `login_paths` | `[]` | The login endpoints, exact or ending in `*`. Empty means every POST of the routes. |
 | `traffic` | `false` | Off by default: a baseline needs traffic to learn first. See [traffic guard](./traffic.mdx). |
 | `traffic_sensitivity` | `medium` | How far from usual traffic a surge starts: 5 times for `low`, 3 for `medium`, 2 for `high`. |
+| `objects` | `false` | Off by default. See [object guard](../api/objects.mdx). |
+| `objects_mode` | `alert` | `alert` only reports enumeration, walks and surges of new objects; `score` puts them on the threat score too. |
+| `objects_paths` | `[]` | Object paths such as `/api/orders/{id}`. Empty means any segment shaped like an identifier. |
+| `objects_budget` | `0` | Distinct objects of one kind a consumer may read per hour, across the cluster, refused with a `429` past it. `0` is none. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 

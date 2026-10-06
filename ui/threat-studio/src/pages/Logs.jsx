@@ -45,6 +45,7 @@ const CATEGORIES = [
   { value: 'upload', label: 'Upload' },
   { value: 'login', label: 'Login' },
   { value: 'traffic', label: 'Traffic' },
+  { value: 'objects', label: 'Objects' },
 ];
 
 const ACTIONS = [

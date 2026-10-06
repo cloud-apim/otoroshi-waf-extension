@@ -53,9 +53,10 @@ final class TrafficBaselines(maxKeys: Int = 200000) {
    * Counts one request for `key` at `now`, and says where its traffic stands.
    *
    * `floor` is the least a bucket must carry to be a surge, whatever the baseline: ten requests
-   * against a baseline of one is a factor of ten and nobody's attack.
+   * against a baseline of one is a factor of ten and nobody's attack. `ceiling` is what a bucket
+   * may carry during warm-up: past it, it is a surge already, and is not learned either.
    */
-  def observe(key: String, now: Long, settings: TrafficSettings, floor: Double): Option[TrafficReading] = {
+  def observe(key: String, now: Long, settings: TrafficSettings, floor: Double, ceiling: Double = Double.MaxValue): Option[TrafficReading] = {
     val bucket = now / settings.bucketMillis
     val kt     = keys.get(key) match {
       case Some(existing)                => Some(existing)
@@ -67,10 +68,11 @@ final class TrafficBaselines(maxKeys: Int = 200000) {
         if (bucket != t.bucket) roll(t, bucket, settings, floor)
         t.count += 1
         t.lastSeen = now
-        val threshold = math.max(t.baseline * settings.surgeFactor, floor)
+        val threshold =
+          if (t.learned >= settings.warmupBuckets) math.max(t.baseline * settings.surgeFactor, floor) else ceiling
         val reading   = TrafficReading(t.count, t.baseline, threshold, t.learned)
-        if (t.learned >= settings.warmupBuckets && reading.surging) t.surged = true
-        if (t.learned >= settings.warmupBuckets) reading else reading.copy(threshold = Double.MaxValue)
+        if (reading.surging) t.surged = true
+        reading
       }
     }
   }

@@ -8,7 +8,7 @@ import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
 
 /**
- * The whole shared-state surface of the fabric, in eight verbs.
+ * The whole shared-state surface of the fabric, in a dozen verbs.
  *
  * `RedisLike` carries about forty methods, most of them about service descriptors and apikeys.
  * Depending on this instead keeps the ban store and the ledger honest about what they actually
@@ -24,6 +24,10 @@ trait SharedStateStore {
   def incrBy(key: String, by: Long): Future[Long]
   def pexpire(key: String, millis: Long): Future[Unit]
   def keys(pattern: String): Future[Seq[String]]
+  // BEH-2: which objects a consumer has already read in a window. True when the member is new
+  def sadd(key: String, member: String): Future[Boolean]
+  def sismember(key: String, member: String): Future[Boolean]
+  def srem(key: String, member: String): Future[Unit]
 }
 
 /** Production implementation, over whichever RedisLike the module resolved. */
@@ -50,6 +54,17 @@ class RedisSharedStateStore(redis: () => RedisLike)(using ec: ExecutionContext) 
   override def pexpire(key: String, millis: Long): Future[Unit] = redis().pexpire(key, millis).map(_ => ())
 
   override def keys(pattern: String): Future[Seq[String]] = redis().keys(pattern)
+
+  // asked first rather than read from SADD's count: the in-memory datastore answers how many members
+  // were sent, not how many were added. Two first reads at once may both be new, which costs one
+  override def sadd(key: String, member: String): Future[Boolean] =
+    redis().sismember(key, member).flatMap { seen =>
+      if (seen) false.vfuture else redis().sadd(key, member).map(_ => true)
+    }
+
+  override def sismember(key: String, member: String): Future[Boolean] = redis().sismember(key, member)
+
+  override def srem(key: String, member: String): Future[Unit] = redis().srem(key, member).map(_ => ())
 }
 
 /**
@@ -62,11 +77,12 @@ class InMemorySharedStateStore extends SharedStateStore {
 
   private val values  = new TrieMap[String, String]()
   private val hashes  = new TrieMap[String, TrieMap[String, String]]()
+  private val sets    = new TrieMap[String, TrieMap[String, Unit]]()
   private val expiries = new TrieMap[String, Long]()
 
   private def alive(key: String): Boolean = expiries.get(key) match {
     case Some(at) if at <= System.currentTimeMillis() =>
-      values.remove(key); hashes.remove(key); expiries.remove(key); false
+      values.remove(key); hashes.remove(key); sets.remove(key); expiries.remove(key); false
     case _                                            => true
   }
 
@@ -90,7 +106,7 @@ class InMemorySharedStateStore extends SharedStateStore {
   }
 
   override def del(key: String): Future[Unit] = {
-    values.remove(key); hashes.remove(key); expiries.remove(key)
+    values.remove(key); hashes.remove(key); sets.remove(key); expiries.remove(key)
     ().vfuture
   }
 
@@ -110,6 +126,19 @@ class InMemorySharedStateStore extends SharedStateStore {
 
   override def keys(pattern: String): Future[Seq[String]] = {
     val regex = ("^" + java.util.regex.Pattern.quote(pattern).replace("*", "\\E.*\\Q") + "$").r
-    (values.keys ++ hashes.keys).filter(alive).filter(k => regex.findFirstIn(k).isDefined).toSeq.vfuture
+    (values.keys ++ hashes.keys ++ sets.keys).filter(alive).filter(k => regex.findFirstIn(k).isDefined).toSeq.vfuture
+  }
+
+  override def sadd(key: String, member: String): Future[Boolean] = {
+    alive(key)
+    sets.getOrElseUpdate(key, new TrieMap[String, Unit]()).put(member, ()).isEmpty.vfuture
+  }
+
+  override def sismember(key: String, member: String): Future[Boolean] =
+    (alive(key) && sets.get(key).exists(_.contains(member))).vfuture
+
+  override def srem(key: String, member: String): Future[Unit] = {
+    sets.get(key).foreach(_.remove(member))
+    ().vfuture
   }
 }

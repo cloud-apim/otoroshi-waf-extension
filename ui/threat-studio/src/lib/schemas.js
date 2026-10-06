@@ -558,7 +558,7 @@ export const SCHEMAS = {
             type: 'lines',
             rows: 2,
             when: (v) => v.trigger !== 'ban',
-            help: 'threat, honeypot, fail2ban, challenge, ban, traffic, upload, login, leakage, sensitive_data. Empty means every one',
+            help: 'threat, honeypot, fail2ban, challenge, ban, traffic, upload, login, objects, leakage, sensitive_data. Empty means every one',
           },
           { key: 'routes', label: 'Routes', type: 'lines', rows: 2, when: (v) => v.trigger !== 'ban', help: 'Route ids or names. Empty means every route' },
           { key: 'cooldown_seconds', label: 'Cooldown (s)', type: 'number', help: 'One alert per attacker, ban or route within it, for the whole cluster' },

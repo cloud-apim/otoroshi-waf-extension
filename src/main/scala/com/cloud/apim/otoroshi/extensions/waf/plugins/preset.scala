@@ -1,5 +1,6 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins
 
+import com.cloud.apim.otoroshi.extensions.waf.objects.ObjectTemplate
 import otoroshi.next.models.{NgPluginInstance, NgPluginInstanceConfig, PluginIndex}
 import otoroshi.next.plugins.api.*
 import otoroshi.utils.syntax.implicits.*
@@ -39,6 +40,11 @@ final case class CloudApimSecuritySuitePresetConfig(
     // BEH-4: off by default, a baseline needs traffic to learn before it means anything
     traffic: Boolean = false,
     trafficSensitivity: String = "medium",
+    // BEH-1, BEH-2: off by default, and only reporting once on: a consumer's pace is learned first
+    objects: Boolean = false,
+    objectsMode: String = "alert",
+    objectsPaths: Seq[String] = Seq.empty,
+    objectsBudget: Long = 0L,
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -79,6 +85,10 @@ object CloudApimSecuritySuitePresetConfig {
       "login_paths"     -> o.loginPaths,
       "traffic"         -> o.traffic,
       "traffic_sensitivity" -> o.trafficSensitivity,
+      "objects"         -> o.objects,
+      "objects_mode"    -> o.objectsMode,
+      "objects_paths"   -> o.objectsPaths,
+      "objects_budget"  -> o.objectsBudget,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -110,6 +120,10 @@ object CloudApimSecuritySuitePresetConfig {
         loginPaths = json.select("login_paths").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty),
         traffic = json.select("traffic").asOpt[Boolean].getOrElse(false),
         trafficSensitivity = json.select("traffic_sensitivity").asOpt[String].map(_.trim.toLowerCase).filter(Set("low", "medium", "high")).getOrElse("medium"),
+        objects = json.select("objects").asOpt[Boolean].getOrElse(false),
+        objectsMode = json.select("objects_mode").asOpt[String].map(_.trim.toLowerCase).filter(Set("alert", "score")).getOrElse("alert"),
+        objectsPaths = json.select("objects_paths").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty),
+        objectsBudget = json.select("objects_budget").asOpt[Long].filter(_ >= 0L).getOrElse(0L),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -145,6 +159,10 @@ object CloudApimSecuritySuitePresetConfig {
     "login_paths",
     "traffic",
     "traffic_sensitivity",
+    "objects",
+    "objects_mode",
+    "objects_paths",
+    "objects_budget",
     "include",
     "exclude"
   )
@@ -330,6 +348,29 @@ object CloudApimSecuritySuitePresetConfig {
         )
       )
     ),
+    "objects"         -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "Object guard",
+      "props" -> Json.obj("help" -> "Watch each consumer's objects for enumeration and walks through identifiers, and budget the distinct objects it reads")
+    ),
+    "objects_mode"    -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Object guard mode",
+      "props" -> Json.obj(
+        "help"    -> "Only report what is seen, or score it on the threat bus as well",
+        "options" -> Json.arr(Json.obj("label" -> "Alert only", "value" -> "alert"), Json.obj("label" -> "Score", "value" -> "score"))
+      )
+    ),
+    "objects_paths"   -> Json.obj(
+      "type"  -> "array",
+      "label" -> "Object paths",
+      "props" -> Json.obj("help" -> "Templates such as /api/orders/{id}. Empty means any path segment shaped like an identifier")
+    ),
+    "objects_budget"  -> Json.obj(
+      "type"  -> "number",
+      "label" -> "Object budget",
+      "props" -> Json.obj("help" -> "Distinct objects of one kind a consumer may read per hour, across the cluster, refused past it. 0 is none")
+    ),
     "include"         -> Json.obj(
       "type"  -> "array",
       "label" -> "Apply on paths",
@@ -373,7 +414,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
   override def core: Boolean                               = true
   override def name: String                                = "Cloud APIM Threat Protection - Preset"
   override def description: Option[String]                 =
-    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, traffic guard, WAF, upload guard, login guard, threat response, error leakage guard and sensitive data guard — in the right order".some
+    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, traffic guard, WAF, upload guard, login guard, object guard, threat response, error leakage guard and sensitive data guard — in the right order".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimSecuritySuitePresetConfig.default.some
 
   override def noJsForm: Boolean              = true
@@ -486,6 +527,22 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
+    // after the login guard, and before the response, which reads what it contributes. On the way
+    // back it only reads the status
+    val objects = Option.when(config.objects) {
+      slot(
+        NgPluginHelper.pluginId[CloudApimObjectGuard],
+        CloudApimObjectGuardConfig(
+          paths = config.objectsPaths.map(ObjectTemplate(_)),
+          autoDetect = config.objectsPaths.isEmpty,
+          contribute = config.objectsMode == "score",
+          budget = config.objectsBudget
+        ).json.asObject,
+        PluginIndex(transformRequest = 4.0.some, transformResponse = 4.0.some),
+        config
+      )
+    }
+
     // far to the right of anything that could still contribute a signal
     val response = Option.when(config.response) {
       slot(
@@ -516,6 +573,6 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    Seq(gate, bots, reputation, fail2ban, traffic, waf, uploads, login, response, leakage, sensitive).flatten
+    Seq(gate, bots, reputation, fail2ban, traffic, waf, uploads, login, objects, response, leakage, sensitive).flatten
   }
 }
