@@ -67,8 +67,8 @@ object LeakageDetector {
     ((preamble +: extraRules +: crsFiles.map(f => resource(s"crs/rules/$f"))) :+ "SecRuleRemoveById 950100").mkString("\n")
   }
 
-  // the data files under the names the rules use, see CrsPreset
-  private lazy val files: Map[String, String] = com.cloud.apim.otoroshi.extensions.waf.rules.CrsPreset.embedded.files
+  // keyed by their path in the jar; the engine finds them under the bare names the rules use
+  private lazy val files: Map[String, String] = com.cloud.apim.seclang.scaladsl.coreruleset.EmbeddedCRSPreset.embedded.files
 
   private val engines = new TrieMap[Int, SecLangEngine]()
 

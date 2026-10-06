@@ -15,7 +15,7 @@ import com.cloud.apim.seclang.scaladsl.SecLang
 class EngineSanitySuite extends munit.FunSuite {
 
   private val factory = SecLang.factory(
-    Map("crs" -> com.cloud.apim.otoroshi.extensions.waf.rules.CrsPreset.embedded),
+    Map("crs" -> com.cloud.apim.seclang.scaladsl.coreruleset.EmbeddedCRSPreset.embedded),
     SecLangEngineConfig.default,
     DefaultNoCacheSecLangIntegration.default
   )
@@ -44,7 +44,7 @@ class EngineSanitySuite extends munit.FunSuite {
     run(extra, arg).events.flatMap(_.ruleId).contains(942100)
 
   // the embedded preset keys its data files by their path in the jar, its rules name them bare: until
-  // that was reconciled, no CRS rule reading a data file ever fired
+  // seclang-engine 2.5.1 found them under both, no CRS rule reading a data file ever fired
   test("a CRS rule reading a data file fires: a scanner's user agent is seen") {
     val scan = RequestContext(
       method = "GET",

@@ -6,6 +6,7 @@ import com.cloud.apim.otoroshi.extensions.waf.security.SecurityModule
 import com.cloud.apim.seclang.impl.utils.StatusCodes
 import com.cloud.apim.seclang.model.*
 import com.cloud.apim.seclang.scaladsl.SecLang
+import com.cloud.apim.seclang.scaladsl.coreruleset.EmbeddedCRSPreset
 import com.github.blemale.scaffeine.Scaffeine
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
@@ -194,7 +195,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     () => security.sharedStateDistributed
   )
   private val logger = Logger("cloud-apim-waf-extension")
-  private val presets: Map[String, SecLangPreset] = Map("crs" -> com.cloud.apim.otoroshi.extensions.waf.rules.CrsPreset.embedded)
+  private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
   private val integration = new CloudApimWafIntegration(
     env,
