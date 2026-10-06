@@ -114,6 +114,10 @@ an hour and checks nothing: a broken contract never refuses traffic.
 
 The plugin runs as a request transformer before the WAF, so what does not match the contract never
 reaches the rule engine; on the way back, before the guards that rewrite a response. In the preset,
-switch `api_contract` on, with `api_contract_id` and `api_contract_mode`. In **Threat Studio**,
-contracts live on the **API contracts** page, where a contract's operations can be listed, and a
-workspace's protection has an **API contract** section.
+switch `api_contract` on, with `api_contract_id` and `api_contract_mode`.
+
+In **Threat Studio**, contracts live on the **API contracts** page, which lists each contract's
+operations and what uses it: the workspaces pointing at it, and the routes naming it. A workspace
+links to one in **Protection → API contract**: either one contract for every route it claims, or
+*each route's own*, chosen there route by route — that choice is saved on the route itself, as its
+`cloud-apim-api-contract` metadata, so it follows the route wherever it is governed from.

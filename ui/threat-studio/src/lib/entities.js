@@ -69,7 +69,9 @@ export const Resources = {
     const params = new URLSearchParams({ in_mem: inMem() });
     Object.entries(filters).forEach(([k, v]) => params.append(`filter.${k}`, String(v)));
     return api.get(`/bo/api/proxy/apis/proxy.otoroshi.io/v1/routes?${params.toString()}`).then((r) => (Array.isArray(r) ? r : []));
-  } },
+  },
+  // a JSON patch on one route: the studio only ever touches a metadata entry of its own
+  patch: (id, ops) => written(api.patch(`/bo/api/proxy/apis/proxy.otoroshi.io/v1/routes/${encodeURIComponent(id)}`, ops)) },
 };
 
 /** The entities of a kind that were created for a workspace. */

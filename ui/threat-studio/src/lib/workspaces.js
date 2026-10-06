@@ -49,6 +49,16 @@ export const PRESET_DEFAULTS = {
   exclude: [],
 };
 
+/** Where a route names its own API contract, for a workspace that leaves it to each route. */
+export const CONTRACT_META = 'cloud-apim-api-contract';
+
+/** Sets or clears the contract a route names in its metadata. */
+export function routeContractOps(route, contractId) {
+  const has = !!(route.metadata || {})[CONTRACT_META];
+  if (contractId) return [{ op: has ? 'replace' : 'add', path: `/metadata/${CONTRACT_META}`, value: contractId }];
+  return has ? [{ op: 'remove', path: `/metadata/${CONTRACT_META}` }] : [];
+}
+
 /** The sections a preset expands into, in the order they run. */
 export const SECTIONS = [
   { key: 'gate', label: 'Threat gate', help: 'Refuse callers that are already banned, before anything else runs' },

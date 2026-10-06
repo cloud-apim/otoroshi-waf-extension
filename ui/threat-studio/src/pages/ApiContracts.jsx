@@ -1,10 +1,13 @@
 import { useState } from 'react';
+import { useStudio } from '../App';
 import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
 import { Badge, Card, PageHeader, TextInput, useAsync, useToast } from '../components/ui';
 import { createEntity, seedFor } from '../lib/create';
 import { Resources } from '../lib/entities';
+import { Link } from '../lib/router';
 import { Security } from '../lib/security';
+import { CONTRACT_META } from '../lib/workspaces';
 
 /** The title a contract gives itself, JSON or YAML, without parsing YAML in the browser. */
 function titleOf(spec) {
@@ -52,7 +55,32 @@ function Compiled({ contract }) {
  */
 export function ApiContractsPage() {
   const toast = useToast();
+  const studio = useStudio();
   const contracts = useAsync(() => Resources.apiContracts.list(), []);
+  const routes = useAsync(() => Resources.routes.list(), []);
+
+  // who checks requests against a contract: the workspaces pointing at it, and the routes naming it
+  const usedBy = (contract) => {
+    const workspaces = (studio.table.workspaces || []).filter(
+      (w) => w.preset && w.preset.api_contract && w.preset.api_contract_id === contract.id
+    );
+    const named = (routes.data || []).filter((r) => (r.metadata || {})[CONTRACT_META] === contract.id);
+    if (workspaces.length === 0 && named.length === 0) return <span className="muted small">nothing yet</span>;
+    return (
+      <span className="small">
+        {workspaces.map((w) => (
+          <Link key={w.id} to={`/workspaces/${w.id}/protection`} style={{ marginRight: 8 }}>
+            {w.name}
+          </Link>
+        ))}
+        {named.length > 0 && (
+          <span className="muted" title={named.map((r) => r.name).join('\n')}>
+            {named.length} route{named.length === 1 ? '' : 's'} by metadata
+          </span>
+        )}
+      </span>
+    );
+  };
   const [editing, setEditing] = useState(null);
   const [checked, setChecked] = useState(null);
   const [url, setUrl] = useState('');
@@ -93,6 +121,12 @@ export function ApiContractsPage() {
         title="API contracts"
         description="The OpenAPI contracts requests are checked against: paths, methods, parameters and bodies."
       />
+      <Card style={{ marginBottom: 18 }}>
+        <p className="muted">
+          A workspace links to a contract in <b>Protection → API contract</b>: one contract for every route it claims, or each
+          route its own, chosen there route by route and saved on the route.
+        </p>
+      </Card>
       <Card style={{ marginBottom: 18 }} title="Import a contract" description="Fetched once, by the gateway, and stored here. Nothing refreshes it behind your back.">
         <div className="row" style={{ gap: 8 }}>
           <TextInput value={url} onChange={setUrl} placeholder="https://api.example.com/openapi.json" style={{ flex: 1 }} />
@@ -113,6 +147,7 @@ export function ApiContractsPage() {
         onEditingChange={setEditing}
         columns={[
           { key: 'compiled', label: 'Contract', render: (e) => <Compiled contract={e} /> },
+          { key: 'used', label: 'Used by', render: (e) => usedBy(e) },
           {
             key: 'inspect',
             label: '',

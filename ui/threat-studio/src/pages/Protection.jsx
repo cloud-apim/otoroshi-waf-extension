@@ -20,7 +20,72 @@ import {
 import { canWrite } from '../lib/bootstrap';
 import { Link } from '../lib/router';
 import { Resources } from '../lib/entities';
-import { enforcementOf, PRESET_DEFAULTS, replaceWorkspace, saveTable, SECTIONS, SENSITIVE_DETECTORS } from '../lib/workspaces';
+import {
+  CONTRACT_META,
+  enforcementOf,
+  PRESET_DEFAULTS,
+  replaceWorkspace,
+  routeContractOps,
+  saveTable,
+  SECTIONS,
+  SENSITIVE_DETECTORS,
+} from '../lib/workspaces';
+
+/**
+ * The contract each route of the workspace names, for a workspace that leaves it to them. Written on
+ * the route at once, as its own metadata: it is the route's, not the workspace's, and follows the
+ * route if another workspace claims it later.
+ */
+function RouteContracts({ workspace, contracts, writable }) {
+  const toast = useToast();
+  const ids = new Set((workspace.claims || []).map((r) => r.id));
+  const routes = useAsync(() => Resources.routes.list().then((all) => all.filter((r) => ids.has(r.id))), [workspace.id, ids.size]);
+  const [busy, setBusy] = useState(null);
+
+  const link = (route, contractId) => {
+    const ops = routeContractOps(route, contractId);
+    if (ops.length === 0) return;
+    setBusy(route.id);
+    Resources.routes
+      .patch(route.id, ops)
+      .then(() => {
+        const c = contracts.find((x) => x.id === contractId);
+        toast.success(c ? `${route.name} is checked against ${c.name}` : `${route.name} names no contract any more`);
+        routes.reload();
+      })
+      .catch(toast.error)
+      .finally(() => setBusy(null));
+  };
+
+  if (!routes.data) return <Loading />;
+  if (routes.data.length === 0) return <p className="muted small">This workspace claims no route yet.</p>;
+  const options = [{ value: '', label: 'None — not checked' }].concat(contracts.map((c) => ({ value: c.id, label: c.name })));
+  return (
+    <table className="table" style={{ marginTop: 8 }}>
+      <thead>
+        <tr>
+          <th>Route</th>
+          <th>Its contract</th>
+        </tr>
+      </thead>
+      <tbody>
+        {routes.data.map((r) => (
+          <tr key={r.id}>
+            <td>{r.name}</td>
+            <td>
+              <Select
+                value={(r.metadata || {})[CONTRACT_META] || ''}
+                onChange={(v) => link(r, v)}
+                options={options}
+                disabled={!writable || busy === r.id}
+              />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 /**
  * The arming console.
@@ -338,6 +403,18 @@ export function ProtectionPage() {
               </Link>
             </div>
           </div>
+          {!preset.api_contract_id && (
+            <div className="setting-row top">
+              <div>
+                <b>Each route&apos;s contract</b>
+                <div className="muted small">
+                  Saved on the route right away, as its <code>{CONTRACT_META}</code> metadata. A route that names none is not
+                  checked.
+                </div>
+              </div>
+              <RouteContracts workspace={workspace} contracts={refs.data.contracts || []} writable={writable} />
+            </div>
+          )}
         </Card>
       )}
 
