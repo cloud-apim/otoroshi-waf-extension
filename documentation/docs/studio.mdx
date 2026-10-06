@@ -68,7 +68,8 @@ asks the extension rather than guessing. What comes back is richer than a list:
 | **Logs** | The decisions one by one, with the signals behind each one |
 | **Routes** | Which routes it governs, and the posture each of them ends up with |
 | **Scope** | Its selectors |
-| **Protection** | The arming console: which sections run, what each sensitive data detector does, and whether any of it can stop a request |
+| **Protection** | The arming console: which sections run — from the threat gate to the traffic, login and object guards, the API contract, uploads and the response guards — what each sensitive data detector does, which contract each route is checked against, and whether any of it can stop a request |
+| **API** | The [API reports](./api/reports.mdx) of its routes: which credential each endpoint checks, the operations used and the zombies, the shadow endpoints, and how the traffic drifts from the contracts |
 | **WAF** · **Bots** · **IP reputation** · **Threat policy** | The entities it points at, and the state they are in |
 | **Bans & incidents** | Its traffic's incidents, and what the fabric is holding right now |
 | **Settings** | Name, position in the table, and whether it applies at all |
@@ -90,7 +91,8 @@ that decide which routes the workspace claims — and **Protection** — the arm
 
 Under those, a second section covers what belongs to the install rather than to any workspace: the
 fleet, threat feeds, ASN databases, CrowdSec, pre-routing, shared WAF rulesets, rule feeds, alert
-rules, malware scanners, and the cluster state.
+rules, malware scanners, API contracts — imported from a URL, listed operation by operation, with
+what uses each — and the cluster state.
 
 :::note Some things cannot be scoped to a workspace, and the studio says so
 Every enabled threat feed, ASN database and CrowdSec bouncer is consulted for every route whose

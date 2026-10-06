@@ -9,8 +9,10 @@ description: What the Cloud APIM Threat Protection Suite adds to Otoroshi, and h
 The Cloud APIM Threat Protection Suite is an [Otoroshi](https://www.otoroshi.io/) admin extension that adds
 threat protection to the gateway: a **web application firewall** speaking ModSecurity SecLang with
 the OWASP Core Rule Set embedded, **ip reputation** fed by threat intelligence feeds, CrowdSec and
-the public routing table, **bot and AI-crawler control** with an embedded challenge — and a
-**decision fabric** that makes those detectors act as one instead of four.
+the public routing table, **bot and AI-crawler control** with an embedded challenge, **behavioural
+detection** of what no single request shows, **response protection** for what leaves the backend,
+and **API security** built on the API's own OpenAPI contract — with a **decision fabric** that makes
+all those detectors act as one, and **Threat Studio**, one console to arm and watch them.
 
 It runs entirely on the JVM, inside the Otoroshi process. There is no native library to install, no
 sidecar, and no second daemon to operate.
@@ -24,8 +26,9 @@ admin API, analytics exporters and vault references instead of inventing its own
 ## The decision fabric
 
 Detectors do not each decide on their own. They contribute **signals** to a shared score, and one
-component turns that score into one graded action — `log`, `tarpit`, `challenge`, `deny` or `ban` —
-with cluster-wide bans, a cross-request memory and incident correlation behind it.
+component turns that score into one graded action — `log`, `challenge`, `throttle`, `tarpit`, `deny`
+or `ban` — with cluster-wide bans, a cross-request memory, incident correlation and alerting behind
+it.
 
 That arrangement is what makes the rest deployable: a false positive costs a log line at score 45
 instead of a broken customer at 403. It is also why there is a single **preset plugin**: the chain
@@ -33,7 +36,7 @@ is position-sensitive, and the preset makes the order structural rather than doc
 
 → [How the fabric works](./fabric/overview.mdx) · [The preset plugin](./fabric/preset.mdx)
 
-## The four detection modules
+## The detection modules
 
 <div class="row">
   <div class="col col--6">
@@ -83,14 +86,46 @@ call — or by a vendor widget, with European providers among the presets.
   </div>
   <div class="col col--6">
 
-### Behaviour
+### Behaviour and abuse
 
 Some attacks leave nothing a rule engine can see: credential stuffing is well-formed HTTP with a
-wrong password. **Fail2ban** counts failed responses per caller and bans the repeat offenders —
-counting in the shared store and banning through the cluster-wide registry, so the threshold means
-the same thing on one node and on twelve.
+wrong password, and a scraper reading the whole catalogue never sends a malformed request.
+**Fail2ban** counts failed responses per caller and bans the repeat offenders cluster-wide; the
+**login guard** sees credential stuffing, password spraying and likely account takeovers; the
+**traffic guard** learns each route's usual traffic and scores a surge away from it; the **object
+guard** sees enumeration and walks through identifiers per consumer, and budgets the distinct
+objects each one reads.
 
-→ [Fail2ban](./fabric/fail2ban.mdx)
+→ [Fail2ban](./fabric/fail2ban.mdx) · [Login guard](./bots/login.mdx) · [Traffic guard](./fabric/traffic.mdx) · [Object guard](./api/objects.mdx)
+
+  </div>
+</div>
+
+<div class="row">
+  <div class="col col--6">
+
+### Uploads and responses
+
+Every uploaded file is judged by its bytes rather than its name — disguised scripts and executables,
+polyglots, archive bombs, zip slips — and can go to a **clamd or ICAP antivirus** before the upload
+completes. On the way back, the **error leakage guard** replaces stack traces and debug pages with a
+neutral error, and the **sensitive data guard** masks card numbers, IBANs, national identifiers and
+secrets in place, each checked the way its issuer would.
+
+→ [Upload guard](./waf/uploads.mdx) · [Error leakage](./response/error-leakage.mdx) · [Sensitive data](./response/sensitive-data.mdx)
+
+  </div>
+  <div class="col col--6">
+
+### API security
+
+What only a gateway holding the API's contract can do. Every request is checked against the
+route's **OpenAPI 3.0 or 3.1 contract** — paths, methods, parameters and bodies — monitored or
+enforced. What the contract sees becomes **reports**: endpoints nobody documented that the backend
+still answers, operations nobody calls any more, fields the backend returns that the contract never
+mentions, and which credential each endpoint actually checks.
+
+→ [API contracts](./api/contracts.mdx) · [API reports](./api/reports.mdx)
 
   </div>
 </div>
@@ -100,9 +135,9 @@ the same thing on one node and on twelve.
 | Stage | What runs | Cost |
 |---|---|---|
 | Before routing | Honeypots and the global validators — covers traffic matching no route at all | A path lookup |
-| Access validation | Standing bans, bot verification, IP reputation, fail2ban's own bans | Node-local map reads and a binary search over merged ranges |
-| Request | SecLang phases 1, 2 and 5 — URI, headers, cookies, args, body — then the threat response acts on the score | Proportional to the ruleset and the body size |
-| Response | SecLang phases 3, 4 and 5 — status, response headers and body; failed statuses counted by fail2ban | Only when response inspection is enabled |
+| Access validation | Standing bans, bot verification, IP reputation, fail2ban's own bans, the traffic guard | Node-local map reads and a binary search over merged ranges |
+| Request | The API contract, SecLang phases 1, 2 and 5 — URI, headers, cookies, args, body — the upload, login and object guards, then the threat response acts on the score | Proportional to the ruleset and the body size |
+| Response | SecLang phases 3, 4 and 5; failed statuses and logins counted; the error leakage and sensitive data guards | Only what is switched on |
 
 The cheap checks run first on purpose: a caller already known to be hostile is refused for the price
 of a map lookup, without the rule engine ever seeing the request.
@@ -111,12 +146,15 @@ of a map lookup, without the rule engine ever seeing the request.
 
 | | |
 |---|---|
-| **Entities** | Ten: `WafConfig`, `WafRuleset`, `ThreatPolicy`, `ThreatFeed`, `AsnDatabase`, `GeoDatabase`, `CrowdSecBouncer`, `BotPolicy`, `ChallengeProvider`, `HoneypotPolicy` — full CRUD, admin API, import/export, Kubernetes CRDs |
-| **Route plugins** | WAF · IP reputation · Threat gate · Threat response · Bot guard · Fail2ban · [the preset](./fabric/preset.mdx) that lays them down in the right order |
+| **Entities** | Fourteen: `WafConfig`, `WafRuleset`, `ThreatPolicy`, `ThreatFeed`, `AsnDatabase`, `GeoDatabase`, `CrowdSecBouncer`, `BotPolicy`, `ChallengeProvider`, `HoneypotPolicy`, `AlertRule`, `MalwareScanner`, `RuleFeed`, `ApiContract` — full CRUD, admin API, import/export, Kubernetes CRDs |
+| **Route plugins** | WAF · IP reputation · Threat gate · Threat response · Bot guard · Fail2ban · Traffic guard · API contract · Upload guard · Login guard · Object guard · Error leakage guard · Sensitive data guard · [the preset](./fabric/preset.mdx) that lays them down in the right order, and a [global preset](./fabric/global-preset.mdx) that lays it over a fleet |
 | **Global plugins** | Three incoming-request validators — honeypot, WAF and IP reputation — evaluated before routing ([see the note](./reference/plugins.mdx#global-plugins-are-not-route-plugins)) |
-| **Admin UI** | One *Threat Protection* section, opening on an overview that says what to do next on this install: WAF configs, threat policies, threat feeds and their catalog, ASN and geolocation databases, CrowdSec bouncers, bot policies, challenge providers and presets, honeypots, and a *Bans & incidents* console with evidence, an allowlist and an incident state a team can work |
-| **Analytics** | Four event types, routable through any Otoroshi data exporter — including one normalised ECS-shaped `CloudApimSecurityEvent` |
-| **Console** | A [route posture view](./console.mdx) that needs nothing, plus twelve analytics queries and a seeded dashboard when the user-analytics exporter is configured |
+| **Threat Studio** | [One console](./studio.mdx) organised by workspace: what each set of routes runs, what it is armed to do, its traffic, its incidents and its APIs |
+| **Admin UI** | One *Threat Protection* section, opening on an overview that says what to do next on this install: every entity above, and a *Bans & incidents* console with evidence, an allowlist and an incident state a team can work |
+| **Analytics** | Nine event types, routable through any Otoroshi data exporter — including one normalised ECS-shaped `CloudApimSecurityEvent`, and its [OCSF](./fabric/alerting.mdx) form for a SIEM |
+| **Alerting** | [Alert rules](./fabric/alerting.mdx): one message per attacker, ban or burst to Slack, Teams, PagerDuty or a webhook |
+| **Rule feeds** | [Signed rule packs](./waf/feeds.mdx), checked by the local engine before they are installed |
+| **Console** | A [route posture view](./console.mdx) that needs nothing, plus thirty-five analytics queries and a seeded dashboard when the user-analytics exporter is configured |
 | **Tuning** | A [false-positive assistant](./waf/assistant.mdx) that turns an observed match into an exclusion, having run it against your configuration first, and a [learning mode](./waf/learning.mdx) that measures a window and says what arming would cost |
 
 ## Design rules
@@ -141,6 +179,7 @@ These hold everywhere in the extension, and they explain most of the API shape:
 - [Quickstart](./quickstart.mdx) — a protected route in about ten minutes
 - [Protecting a route, end to end](./tutorial.mdx) — the long version: every entity, in the order
   that works, and how to arm it without breaking traffic
+- [Threat Studio](./studio.mdx) — the console: workspaces, arming, analytics, incidents, APIs
 - [Security console](./console.mdx) — reading the events back, and which routes are actually protected
 - [Tuning](./waf/tuning.mdx) — how to get from monitoring to blocking without breaking traffic
 - [Tuning assistant](./waf/assistant.mdx) — the same work, from the admin UI, with every exclusion

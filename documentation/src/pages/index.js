@@ -8,7 +8,7 @@ const capabilities = [
   {
     kicker: 'Fabric',
     title: 'One score, one decision',
-    body: 'Detectors contribute weighted signals instead of each blocking alone. One component reads the total and applies one graded action — log, tarpit, challenge, deny or ban — with the full attribution kept, so any decision can be explained afterwards.',
+    body: 'Detectors contribute weighted signals instead of each blocking alone. One component reads the total and applies one graded action — log, challenge, throttle, tarpit, deny or ban — with the full attribution kept, so any decision can be explained afterwards.',
   },
   {
     kicker: 'Fabric',
@@ -29,6 +29,11 @@ const capabilities = [
     kicker: 'Payload',
     title: 'The OWASP CRS, embedded',
     body: 'CRS v4 ships inside the extension. Import it with one directive, then layer your own rules on top — or run only your own.',
+  },
+  {
+    kicker: 'Payload',
+    title: 'Uploads judged by their bytes',
+    body: 'Disguised scripts and executables, polyglots, archive bombs and zip slips refused from what a file is rather than what it is called — and every file handed to a clamd or ICAP antivirus before the upload completes, when you have one.',
   },
   {
     kicker: 'Reputation',
@@ -61,6 +66,31 @@ const capabilities = [
     body: 'Per-category rules over AI, search, SEO and monitoring crawlers, actually enforced, with a matching robots.txt and llms.txt generated from them — plus honeypot paths that catch a scanner with almost no false-positive risk.',
   },
   {
+    kicker: 'Behaviour',
+    title: 'What no single request shows',
+    body: 'Credential stuffing, password spraying and likely account takeovers on the login endpoints; a surge away from the traffic each route usually gets; a consumer walking object identifiers one after another — each scored on the shared judgement, never an account locked out.',
+  },
+  {
+    kicker: 'Behaviour',
+    title: 'Objects, not requests',
+    body: 'A scraper that keeps under your rate limit still reads the whole catalogue. A budget of distinct objects per consumer, counted across the cluster, refuses the next new one and never the ones already read.',
+  },
+  {
+    kicker: 'Response',
+    title: 'What leaves the backend',
+    body: 'Stack traces and debug pages replaced by a neutral error; card numbers, IBANs, national identifiers and secrets masked in place, each checked the way its issuer would, the response read as it streams and kept valid.',
+  },
+  {
+    kicker: 'API',
+    title: 'The contract, enforced',
+    body: 'Every request checked against the route\'s OpenAPI 3.0 or 3.1 contract — paths, methods, parameters and bodies. Whole classes of attack never reach the backend, because the payload does not match the contract to begin with.',
+  },
+  {
+    kicker: 'API',
+    title: 'What the API really is',
+    body: 'Endpoints the backend answers that nobody documented, operations nobody calls, fields the backend returns that the contract never mentions, and the credential each endpoint actually checks — in the console, and served to your CI.',
+  },
+  {
     kicker: 'Operations',
     title: 'Monitor before you block',
     body: 'Every module runs in monitoring mode first, and a fresh threat policy starts in dry run — emitting events without denying anything, so you can measure the false-positive cost before arming it.',
@@ -81,17 +111,17 @@ const layers = [
   {
     num: '02',
     name: 'Who is calling',
-    desc: 'Standing bans, threat feeds, CrowdSec decisions, network classification and bot verification, all before the request is parsed.',
+    desc: 'Standing bans, threat feeds, CrowdSec decisions, network classification, bot verification and traffic surges, all before the request is parsed.',
   },
   {
     num: '03',
     name: 'Request payload',
-    desc: 'CRS and your own SecLang rules over the URI, headers, cookies, arguments and body. Then the fabric reads the accumulated score and acts.',
+    desc: 'The API contract, then CRS and your own SecLang rules over the URI, headers, cookies, arguments and body, uploaded files, logins and objects. Then the fabric reads the accumulated score and acts.',
   },
   {
     num: '04',
     name: 'Response payload',
-    desc: 'The same engine over the backend response, for leakage and error-disclosure rules — and failed statuses counted towards a cluster-wide fail2ban.',
+    desc: 'The same engine over the backend response, error leakage replaced and sensitive data masked — and failed statuses and logins counted towards the cluster-wide memory.',
   },
 ];
 
@@ -119,8 +149,10 @@ function Hero() {
             </Heading>
             <p className={styles.heroSubtitle}>
               A web application firewall with the OWASP Core Rule Set, ip reputation, bot and
-              AI-crawler control — feeding one shared judgement instead of each blocking alone. As
-              Otoroshi entities and plugins, with no native dependency and no extra process to run.
+              AI-crawler control, behavioural detection, response protection and API security built
+              on your OpenAPI contracts — feeding one shared judgement instead of each blocking
+              alone. As Otoroshi entities and plugins, with no native dependency and no extra
+              process to run.
             </p>
             <div className={styles.heroButtons}>
               <Link className={styles.buttonPrimary} to="/docs/overview">

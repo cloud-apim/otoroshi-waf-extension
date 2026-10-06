@@ -24,6 +24,8 @@ This extension is built on top of the following open-source Cloud APIM libraries
 - **Request/Response inspection**: Inspect both incoming requests and outgoing responses
 - **Configurable body inspection**: Control body inspection limits and MIME types
 - **Blocking or monitoring mode**: Choose to block malicious requests or just log them
+- **Upload guard**: Every uploaded file judged by its bytes — disguised scripts and executables, polyglots, archive bombs, zip slips — and optionally handed to a clamd or ICAP antivirus before the upload completes
+- **Signed rule feeds**: Rule packs and virtual patches installed only once their signature verifies and the local engine has run their own tests
 
 ### IP reputation
 
@@ -37,11 +39,28 @@ This extension is built on top of the following open-source Cloud APIM libraries
 ### Decision fabric
 
 - **One shared threat score**: Detectors contribute weighted signals rather than each blocking alone, so a request is judged on the accumulation instead of on whichever check happens to fire first
-- **Graded response**: A threat policy maps score tiers to `log`, `tarpit`, `challenge`, `deny` or `ban` — and defaults to dry run, recording what it would have done and enforcing nothing
+- **Graded response**: A threat policy maps score tiers to `log`, `challenge`, `throttle`, `tarpit`, `deny` or `ban` — and defaults to dry run, recording what it would have done and enforcing nothing
 - **Cluster-wide bans**: A shared ban store and a cross-request ledger, so a caller banned on one node is banned on every node — with an operator console that shows what each ban is based on, an allowlist that no module can ban through, and incidents merged across nodes with a state a team can work
 - **Distributed fail2ban**: Repeated failed responses ban the caller across the whole cluster — Otoroshi's own plugin keeps its counters and bans node-local, so its threshold means N times what you configured on N nodes
 - **Correlated incidents**: Normalised ECS-shaped events grouped into one incident rather than nine thousand alerts
-- **One preset plugin**: Lays the whole chain down on a route in the one order that makes it work, with each section switchable
+- **One preset plugin**: Lays the whole chain down on a route in the one order that makes it work, with each section switchable — and a global preset lays it over a whole fleet from a table of route selectors
+- **Alerting**: One message per attacker, ban or burst to Slack, Teams, PagerDuty or a webhook, and OCSF findings for a SIEM
+
+### Behaviour and abuse
+
+- **Login guard**: Credential stuffing, password spraying and likely account takeovers scored on the login endpoints — an account is never locked out, at worst its owner is challenged
+- **Traffic guard**: Learns each route's, source's, api key's and network's usual traffic, and scores a surge away from it; escalation and de-escalation are the same mechanism
+- **Object guard**: Enumeration and walks through object identifiers seen per consumer — the BOLA pattern no single request shows — and a cluster-wide budget of distinct objects each consumer may read
+
+### Response protection
+
+- **Error leakage guard**: Stack traces, SQL errors and debug pages replaced by a neutral error before they leave
+- **Sensitive data guard**: Card numbers, IBANs, national identifiers, keys and tokens masked in place or refused, each checked the way its issuer would, the response read as it streams
+
+### API security
+
+- **API contracts**: Every request checked against the route's OpenAPI 3.0 or 3.1 contract — paths, methods, parameters, bodies — monitored or enforced, with responses reported
+- **API reports**: Shadow endpoints the backend answers but nobody documented, zombie operations nobody calls, drift from the contract with sensitive fields flagged, and the credential each endpoint actually checks — in the studio, and served to a CI
 
 ### Bots and automated traffic
 
@@ -51,11 +70,13 @@ This extension is built on top of the following open-source Cloud APIM libraries
 - **AI crawler policy**: Per-category rules, actually enforced, with a matching `robots.txt` and `llms.txt` generated from them
 - **Honeypots**: Decoy paths and canary tokens, evaluated before routing
 
-### Console
+### Threat Studio and console
+
+- **Threat Studio**: One console organised by workspace — what each set of routes runs, what it is armed to do, its traffic, its incidents and its APIs
 
 - **Route posture**: Which routes are protected, in which mode — and which ones nobody remembered to protect. Reads live state, needs no analytics backend
 - **Covered is not enforcing**: A route with the whole suite attached in dry run stops nothing, and the page counts the two separately
-- **Twelve analytics queries**: Attack volume, blocked versus observed, top sources, top signals, top triggered WAF rules, and what a monitoring WAF *would* have blocked
+- **Thirty-five analytics queries**: Attack volume, blocked versus observed, top sources, top signals, top triggered WAF rules, and what a monitoring WAF *would* have blocked
 - **A dashboard on first boot**: Seeded once, then yours — rearrange or delete it, it is an ordinary user dashboard
 
 ### Tuning
@@ -81,8 +102,8 @@ This extension is built on top of the following open-source Cloud APIM libraries
 A single node needs nothing else. A complete deployment needs two things, and both fail quietly
 rather than loudly:
 
-- **a redis** (`security.redis-uri`) for shared state — bans, the allowlist, incidents, fail2ban counters, challenges, tuning
-  candidates and learning windows. On a leader/worker cluster this is not optional: a worker never
+- **a redis** (`security.redis-uri`) for shared state — bans, the allowlist, incidents, fail2ban and login counters, throttle
+  quotas, object budgets, challenges, the API inventory, tuning candidates and learning windows. On a leader/worker cluster this is not optional: a worker never
   reaches your storage backend, so without it the workers record what they see and the leader that
   serves the admin UI never sees any of it
 - **a postgres** for analytics — the console's dashboards and queries read events back through
@@ -138,7 +159,7 @@ walks through every step, including what to look at before arming anything.
 
 ## Entities
 
-Nine, all with full CRUD, admin API, import/export and Kubernetes CRDs, under the API group
+Fourteen, all with full CRUD, admin API, import/export and Kubernetes CRDs, under the API group
 `waf.extensions.cloud-apim.com/v1`:
 
 | Entity | Collection | What it holds |
@@ -153,6 +174,10 @@ Nine, all with full CRUD, admin API, import/export and Kubernetes CRDs, under th
 | `BotPolicy` | `bot-policies` | Crawler signatures, per-category rules, `robots.txt` generation |
 | `ChallengeProvider` | `challenge-providers` | Proof of work settings, or a vendor widget |
 | `HoneypotPolicy` | `honeypot-policies` | Decoy paths and canary tokens |
+| `AlertRule` | `alert-rules` | What is worth a message, and to which channel |
+| `MalwareScanner` | `malware-scanners` | A clamd or ICAP antivirus uploads are handed to |
+| `RuleFeed` | `rule-feeds` | A signed source of rule packs and virtual patches, and the keys it is signed with |
+| `ApiContract` | `api-contracts` | An API's OpenAPI contract, what its requests are checked against |
 
 Standard Otoroshi entity endpoints, authenticated with an admin apikey:
 
@@ -174,13 +199,23 @@ All under the **Threat Protection** category in the route designer.
 
 | Plugin | Kind | Runs |
 |---|---|---|
-| Threat Protection - Preset | `NgPresetPlugin` | Expands into the five below, correctly ordered |
+| Threat Protection - Preset | `NgPresetPlugin` | Expands into the ones below, correctly ordered |
 | Threat gate | `NgAccessValidator` | Refuses callers already banned, before any inspection |
 | Bot guard | `NgAccessValidator` | Identifies crawlers and verifies the ones that publish a method |
 | IP reputation | `NgAccessValidator` | Scores against feeds, CrowdSec and ASN |
 | Fail2ban | `NgAccessValidator` + `NgRequestTransformer` | Counts failed responses, bans cluster-wide |
+| Traffic guard | `NgAccessValidator` | Scores a surge away from the learned traffic |
+| API contract | `NgRequestTransformer` | Checks the request against the route's OpenAPI contract; the response too, when asked |
 | Cloud APIM WAF | `NgRequestTransformer` | The rule engine, over the request and optionally the response |
+| Upload guard | `NgRequestTransformer` | Judges every uploaded file by what it is, and hands it to a scanner |
+| Login guard | `NgRequestTransformer` | Scores stuffing, spraying and attacks on an account; counts failures on the way back |
+| Object guard | `NgRequestTransformer` | Counts each consumer's objects, holds it to its budget |
 | Threat response | `NgRequestTransformer` | Reads the accumulated score and applies one graded action |
+| Error leakage guard | `NgRequestTransformer` | Replaces what leaks in an error response with a neutral error |
+| Sensitive data guard | `NgRequestTransformer` | Masks card numbers, IBANs, identifiers and secrets in responses |
+
+Most of the guards are off by default in the preset: each is switched on where it has something to
+watch.
 
 Three more are **incoming request validators**, configured on the global configuration rather than
 on a route — they run before routing, so they also cover traffic matching no route at all: the
@@ -219,8 +254,8 @@ SecRuleEngine On
 
 ## Analytics events
 
-Four types, each an Otoroshi `AnalyticEvent`, so they flow through any data exporter with no extra
-wiring:
+Each an Otoroshi `AnalyticEvent`, so they flow through any data exporter with no extra wiring. The
+main ones:
 
 | Event | Emitted by |
 |---|---|
@@ -228,11 +263,16 @@ wiring:
 | `CloudApimWafTrailEvent` | The WAF, once per request where a rule matched |
 | `CloudApimWafReputationEvent` | IP reputation, with the verdict and its sources |
 | `CloudApimWafAuditEvent` | SecLang `auditlog` actions — verbose, for debugging a specific rule |
+| `CloudApimSecurityAlert` | An alert rule that fired, as it was sent |
+| `CloudApimSecurityOcsf` | The security event as an OCSF Detection Finding, for a SIEM, when switched on |
+
+The operator actions — bans, tuning, learning — each have an audit event too. Full list:
+[events reference](https://cloud-apim.github.io/otoroshi-waf-extension/docs/reference/events).
 
 ## Distributed state
 
-Bans, the ledger and fail2ban counters are shared. On a cluster, point them at a redis so they
-actually are:
+Bans, the ledger, fail2ban and login counters, throttle quotas, object budgets and the API inventory
+are shared. On a cluster, point them at a redis so they actually are:
 
 ```hocon
 otoroshi.admin-extensions.configurations.cloud-apim_extensions_waf {

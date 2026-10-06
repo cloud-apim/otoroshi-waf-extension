@@ -19,6 +19,9 @@ This is the page to read before trusting a number.
 |---|---|---|
 | WAF, bots, reputation, honeypots, the preset | nothing | — |
 | Cluster-wide **bans**, the **allowlist**, **fail2ban**, **challenges**, the **ledger** | a redis | Each node keeps its own; a threshold means N× what you configured on N nodes |
+| **[Login guard](./bots/login.mdx)** counters, **[throttle](./fabric/policies.mdx#throttling)** quotas, **[object budgets](./api/objects.mdx#the-budget)** | a redis | Each node counts its own: an attack spread over N nodes needs N× the threshold, a quota or a budget is N× what you set |
+| **[API reports](./api/reports.mdx)** merged across nodes | a redis | Each node's inventory is reported by the node serving the report only |
+| The **[traffic guard](./fabric/traffic.mdx)** and the object guard's patterns | nothing | Per node by design: ratios to a baseline mean the same on one node as on twelve |
 | **[Incidents](./fabric/incidents.mdx)** merged across nodes, and their state | a redis | The console shows only what the node serving it saw |
 | **[Tuning assistant](./waf/assistant.mdx)** candidates | a redis | On a leader/worker cluster, an empty page |
 | **[Learning mode](./waf/learning.mdx)** windows | a redis | Counts that never leave the workers |
@@ -78,7 +81,7 @@ which writes to PostgreSQL:
 }
 ```
 
-The suite declares two projections and twelve queries against them; both tables and their indexes
+The suite declares two projections and thirty-five queries against them; both tables and their indexes
 are created on first use. Without the exporter, events still reach whatever data exporter you have
 configured — they simply do not land anywhere a dashboard can query.
 

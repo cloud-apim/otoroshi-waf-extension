@@ -536,7 +536,7 @@ If something breaks, you want to know which one did it.
 |---|---|---|---|
 | 1 | `block: true` | WAF config | The rule engine starts denying. Highest false-positive risk of the four — read [tuning](./waf/tuning.mdx) first |
 | 2 | `reputation_mode: "block"` | Preset config | A feed marked `block` denies on its own |
-| 3 | `dry_run: false` | Threat policy | The tiers become real. Tarpit, challenge, deny and ban all start happening |
+| 3 | `dry_run: false` | Threat policy | The tiers become real. Challenge, throttle, tarpit, deny and ban all start happening |
 | 4 | `fail2ban: true` | Preset config | Optional, and its own dry run — see below |
 
 Between each one, go back to step 7 and read the events again. `outcome` flipping from `observed`
