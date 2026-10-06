@@ -1,0 +1,105 @@
+---
+sidebar_position: 4
+title: Login guard
+description: Credential stuffing, password spraying and likely account takeovers, seen on the login endpoints.
+---
+
+# Login guard
+
+A login endpoint is attacked in ways a WAF never sees: every request is a well-formed login with a
+plausible username and a wrong password. What gives the attack away is the pattern, not the
+payload: one address failing over and over, one address trying hundreds of accounts, one account
+failing from addresses all over the world.
+
+The **Login guard** (`CloudApimLoginGuard`) counts failed logins per source and per account, sees
+those patterns, and turns them into signals on the [threat score](../fabric/policies.mdx). The
+threat response decides what that does: challenge, slow down, refuse or ban, as the policy's tiers
+say. Nothing here refuses a request on its own.
+
+## What it sees
+
+| Pattern | Seen when | Signal | Weight |
+|---|---|---|---|
+| Credential stuffing | One source reaches `source_failures` failed logins in the window | `login:credential_stuffing` | `50` |
+| Password spraying | One source fails against `source_accounts` distinct accounts | `login:password_spraying` | `70` |
+| Account under attack | One account reaches `account_failures` failures from at least `account_sources` sources | `login:account_under_attack` | `40` |
+| Breached password | The password is in a known breach (opt-in, see below) | `login:breached_password` | `20` |
+
+Past twice its threshold, a pattern weighs 20 more: an attack that goes on climbs the policy's tiers
+rather than staying where it started. With the default tiers (40 log, 70 tarpit, 90 ban), stuffing is
+logged, then slowed down, spraying is slowed down, then banned.
+
+**An account is never locked out.** A distributed attack on one account scores the sources trying
+it, every one of them, its owner included; with a challenge tier in the policy, the owner solves a
+challenge while the attack lasts and logs in. A lockout would hand the attacker a way to lock any
+user out.
+
+Each pattern is also reported once per window as a `CloudApimSecurityEvent` of category `login`,
+whether or not a threat response is on the route.
+
+## Likely account takeover
+
+A login that **succeeds** from a source that has just failed against `takeover_accounts` accounts
+(3 by default) is what a stuffing run looks like when it finds a password that works. It is reported
+as `login:account_takeover`, score `80`, and charged to the caller's ledger: the session it just
+opened is the one to look at, and an [alert rule](../fabric/alerting.mdx) on incidents above 70 tells
+someone at once.
+
+## Reading a login
+
+A request is a login when its method is one of `methods` (`POST`) and its path one of
+`login_paths`, exact or a prefix ending in `*`; empty means every such request of the route. The
+username is read from the first of `username_fields` found in a JSON body (a dotted field reaches
+into an object: `credentials.login`), a form body, or a `Basic` authorization header.
+
+A login failed when its status is one of `failure_statuses` (`401`, `403`). An application that
+answers `200` either way tells failure in its body: set `failure_marker` to the text a failed login
+contains.
+
+Usernames are never stored as typed: the counters key an account by an HMAC of the gateway's secret,
+and events show it masked, `j***@example.com`. Routes that share an account base share counters
+through the same `realm`.
+
+## Breached passwords
+
+`breached_passwords: true` checks each login's password against Have I Been Pwned with its
+k-anonymity range API: only the first five hexadecimal characters of the password's SHA-1 leave the
+gateway, and the range that comes back is matched locally and kept for an hour. It is off by
+default: it is a call to a third party on the login path, and some organisations forbid exactly that.
+
+## Configuration
+
+```json
+{
+  "login_paths": ["/login", "/api/auth/*"],
+  "methods": ["POST"],
+  "username_fields": ["username", "user", "login", "email", "user_name", "userName", "identifier", "account"],
+  "password_fields": ["password", "pass", "passwd", "pwd"],
+  "failure_statuses": [401, 403],
+  "failure_marker": null,
+  "realm": null,
+  "window_seconds": 900,
+  "source_failures": 20,
+  "source_accounts": 10,
+  "account_failures": 10,
+  "account_sources": 5,
+  "stuffing_weight": 50,
+  "spraying_weight": 70,
+  "account_attack_weight": 40,
+  "takeover_accounts": 3,
+  "takeover_weight": 80,
+  "breached_passwords": false,
+  "breached_weight": 20,
+  "body_limit": 65536
+}
+```
+
+A threshold of `0` turns its pattern off. Counts are shared by the whole cluster, in windows of
+`window_seconds`.
+
+## Laying it down
+
+On a route, add the plugin before the threat response, or switch `login` on in the
+[preset](../fabric/preset.mdx) or a [global preset](../fabric/global-preset.mdx) rule, with
+`login_paths`. In **Threat Studio**, it is the **Login guard** section of a workspace's protection.
+It is off by default: a route without a login endpoint has nothing for it to count.

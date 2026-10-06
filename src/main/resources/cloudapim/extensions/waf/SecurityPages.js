@@ -1550,7 +1550,7 @@ class AlertRulesPage extends Component {
     min_score: { type: 'number', props: { label: 'Min. score', help: 'Incident: the highest score of the incident' } },
     min_count: { type: 'number', props: { label: 'Min. decisions', help: 'Incident: how many decisions it folds' } },
     enforced_only: { type: 'bool', props: { label: 'Enforced only', help: 'Incident and burst: count only what was enforced' } },
-    categories: { type: 'array', props: { label: 'Categories', help: 'threat, honeypot, fail2ban, challenge, ban, upload, leakage, sensitive_data. Empty means every one' } },
+    categories: { type: 'array', props: { label: 'Categories', help: 'threat, honeypot, fail2ban, challenge, ban, upload, login, leakage, sensitive_data. Empty means every one' } },
     routes: { type: 'array', props: { label: 'Routes', help: 'Route ids or names. Empty means every route' } },
     burst_threshold: { type: 'number', props: { label: 'Burst threshold', help: 'Burst: decisions on one route' } },
     burst_window_seconds: { type: 'number', props: { label: 'Burst window', suffix: 'seconds' } },

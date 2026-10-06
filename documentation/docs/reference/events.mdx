@@ -52,7 +52,7 @@ land where an Elastic pipeline already looks for them.
 
 | Field | Meaning |
 |---|---|
-| `event.category` | Which component decided: `threat`, `honeypot`, `fail2ban`, `challenge`, `ban`, `upload`, `leakage` or `sensitive_data` |
+| `event.category` | Which component decided: `threat`, `honeypot`, `fail2ban`, `challenge`, `ban`, `upload`, `login`, `leakage` or `sensitive_data` |
 | `event.action` | `allow`, `log`, `tarpit`, `challenge`, `deny`, `ban`, or `mask` for a [leaking response](../response/error-leakage.mdx) replaced by a neutral error and for [sensitive values](../response/sensitive-data.mdx) masked in place. A response the sensitive data guard refuses is a `deny` |
 | `event.outcome` | `blocked` when it was enforced, `observed` in dry run |
 | `event.severity` | `1` to `4`, derived from the score |

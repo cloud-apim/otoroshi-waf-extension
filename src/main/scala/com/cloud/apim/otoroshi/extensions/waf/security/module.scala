@@ -266,6 +266,22 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
   )
   bans.onIssued = alerts.banned
 
+  /** BEH-3: failed logins, counted cluster-wide, accounts keyed by an HMAC rather than stored. */
+  val logins: com.cloud.apim.otoroshi.extensions.waf.login.LoginCounters =
+    new com.cloud.apim.otoroshi.extensions.waf.login.LoginCounters(s"$keyPrefix:login", sharedState, env.otoroshiSecret)
+
+  /** BEH-3: Have I Been Pwned's range API, only ever asked for a five-character hash prefix. */
+  val breachedPasswords: com.cloud.apim.otoroshi.extensions.waf.login.BreachedPasswords =
+    new com.cloud.apim.otoroshi.extensions.waf.login.BreachedPasswords(prefix =>
+      env.Ws
+        .url(s"https://api.pwnedpasswords.com/range/$prefix")
+        .withHttpHeaders("Add-Padding" -> "true", "User-Agent" -> "otoroshi-cloud-apim-threat-protection")
+        .withRequestTimeout(scala.concurrent.duration.Duration(1500, "millis"))
+        .get()
+        .map(res => Option.when(res.status == 200)(res.body))
+        .recover { case _ => None }
+    )
+
   private val botSettings = BotVerificationSettings(
     enabled = configuration.getOptional[Boolean]("security.bots.verify").getOrElse(true),
     positiveTtl = configuration.getOptional[Long]("security.bots.positive-ttl-seconds").getOrElse(21600L).seconds,

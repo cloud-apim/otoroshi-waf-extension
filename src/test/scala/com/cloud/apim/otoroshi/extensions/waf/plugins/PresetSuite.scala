@@ -64,7 +64,7 @@ class PresetSuite extends munit.FunSuite {
   }
 
   test("every emitted slot carries an index, or the ordering guarantee is void") {
-    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true)).foreach { i =>
+    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true, login = true)).foreach { i =>
       val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined || p.transformResponse.isDefined)
       assert(indexed, s"${i.plugin} was emitted without a plugin index")
     }
@@ -132,6 +132,8 @@ class PresetSuite extends munit.FunSuite {
       uploadsAllowedExtensions = Seq("png", "pdf"),
       uploadsScanner = Some("malware-scanner_1"),
       uploadsScanFailureAction = "allow",
+      login = true,
+      loginPaths = Seq("/login", "/api/auth/*"),
       include = Seq("/a"),
       exclude = Seq("/b")
     )
@@ -192,6 +194,17 @@ class PresetSuite extends munit.FunSuite {
     assertEquals((config \ "allowed_extensions").as[Seq[String]], Seq("png"))
     assertEquals((config \ "scanner").as[String], "ms_1")
     assertEquals((config \ "scan_failure_action").as[String], "reject")
+  }
+
+  test("the login guard is off by default, and contributes before the response reads the score") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.login, false)
+    assertEquals(names(chain(full)).contains("CloudApimLoginGuard"), false)
+    val armed     = chain(full.copy(login = true, loginPaths = Seq("/login")))
+    val transform = armed.flatMap(i => i.pluginIndex.flatMap(_.transformRequest).map(i.plugin -> _)).toMap
+    assert(transform(NgPluginHelper.pluginId[CloudApimLoginGuard]) < transform(NgPluginHelper.pluginId[CloudApimThreatResponse]))
+    val guard = armed.find(_.plugin == NgPluginHelper.pluginId[CloudApimLoginGuard]).get
+    assert(guard.pluginIndex.exists(_.transformResponse.isDefined), "the guard counts failures on the way back")
+    assertEquals((guard.config.raw \ "login_paths").as[Seq[String]], Seq("/login"))
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {

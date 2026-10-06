@@ -20,6 +20,7 @@ description: Every plugin the extension registers, and where each one is configu
 | Cloud APIM Threat Protection - Fail2ban | `NgAccessValidator` + `NgRequestTransformer` | A route |
 | Cloud APIM Threat Protection - Honeypot (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
 | Cloud APIM Threat Protection - Upload guard | `NgRequestTransformer` | A route. See [upload guard](../waf/uploads.mdx) |
+| Cloud APIM Threat Protection - Login guard | `NgRequestTransformer` | A route. See [login guard](../bots/login.mdx) |
 | Cloud APIM Threat Protection - Error leakage guard | `NgRequestTransformer` | A route. See [error leakage](../response/error-leakage.mdx) |
 | Cloud APIM Threat Protection - Sensitive data guard | `NgRequestTransformer` | A route. See [sensitive data](../response/sensitive-data.mdx) |
 
@@ -36,9 +37,10 @@ The fabric plugins are position-sensitive:
 4. Fail2ban                     enforce its own bans; count failures on the way back out
 5. Cloud APIM WAF               inspect the payload
 6. Upload guard                 judge every uploaded file by what it is
-7. Threat response              read the accumulated score, apply one tier
-8. Error leakage guard          on the way back, replace what leaks with a neutral error
-9. Sensitive data guard         then mask card numbers, IBANs, identifiers and secrets in place
+7. Login guard                  score stuffing, spraying and attacks on an account; count failures on the way back
+8. Threat response              read the accumulated score, apply one tier
+9. Error leakage guard          on the way back, replace what leaks with a neutral error
+10. Sensitive data guard        then mask card numbers, IBANs, identifiers and secrets in place
 ```
 
 The response plugin must come **after** the WAF, or it reads a score the WAF has not contributed to
@@ -104,4 +106,5 @@ cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingReque
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimErrorLeakageGuard
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimSensitiveDataGuard
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimUploadGuard
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimLoginGuard
 ```

@@ -256,6 +256,25 @@ export function ProtectionPage() {
         </Card>
       )}
 
+      {preset.login && (
+        <Card
+          style={{ marginTop: 18 }}
+          title="Login guard"
+          description="Failed logins are counted per source and per account. What the counts show becomes signals on the threat score: the threat policy decides whether that challenges, slows, refuses or bans. An account is never locked out."
+        >
+          <div className="setting-row top">
+            <div>
+              <b>Login paths</b>
+              <div className="muted small">
+                One per line, exact or ending in <code>*</code>, for instance <code>/api/auth/*</code>. Empty means every POST of the
+                routes.
+              </div>
+            </div>
+            <LinesInput value={preset.login_paths || []} onChange={(v) => set({ login_paths: v })} rows={3} disabled={!writable} />
+          </div>
+        </Card>
+      )}
+
       {preset.sensitive_data && (
         <Card
           style={{ marginTop: 18 }}

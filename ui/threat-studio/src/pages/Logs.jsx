@@ -43,6 +43,7 @@ const CATEGORIES = [
   { value: 'leakage', label: 'Error leakage' },
   { value: 'sensitive_data', label: 'Sensitive data' },
   { value: 'upload', label: 'Upload' },
+  { value: 'login', label: 'Login' },
 ];
 
 const ACTIONS = [
