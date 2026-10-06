@@ -26,6 +26,10 @@ final case class CloudApimSecuritySuitePresetConfig(
     sensitiveData: Boolean = false,
     sensitiveDataMode: String = "enforce",
     sensitiveDataDetectors: Map[String, String] = Map.empty,
+    // WAF-4: off by default, a route that takes no upload has nothing to judge
+    uploads: Boolean = false,
+    uploadsMode: String = "enforce",
+    uploadsAllowedExtensions: Seq[String] = Seq.empty,
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -57,6 +61,9 @@ object CloudApimSecuritySuitePresetConfig {
       "sensitive_data"  -> o.sensitiveData,
       "sensitive_data_mode" -> o.sensitiveDataMode,
       "sensitive_data_detectors" -> o.sensitiveDataDetectors,
+      "uploads"         -> o.uploads,
+      "uploads_mode"    -> o.uploadsMode,
+      "uploads_allowed_extensions" -> o.uploadsAllowedExtensions,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -78,6 +85,9 @@ object CloudApimSecuritySuitePresetConfig {
         sensitiveData = json.select("sensitive_data").asOpt[Boolean].getOrElse(false),
         sensitiveDataMode = CloudApimSensitiveDataConfig.modeOf(json.select("sensitive_data_mode").asOpt[String]),
         sensitiveDataDetectors = CloudApimSensitiveDataConfig.detectorsOf(json.select("sensitive_data_detectors").asOpt[JsObject]),
+        uploads = json.select("uploads").asOpt[Boolean].getOrElse(false),
+        uploadsMode = CloudApimUploadGuardConfig.modeOf(json.select("uploads_mode").asOpt[String]),
+        uploadsAllowedExtensions = json.select("uploads_allowed_extensions").asOpt[Seq[String]].getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -104,6 +114,9 @@ object CloudApimSecuritySuitePresetConfig {
     "sensitive_data",
     "sensitive_data_mode",
     "sensitive_data_detectors",
+    "uploads",
+    "uploads_mode",
+    "uploads_allowed_extensions",
     "include",
     "exclude"
   )
@@ -224,6 +237,27 @@ object CloudApimSecuritySuitePresetConfig {
         "help" -> s"A detector id and its action: off, log, mask or block. Ids: ${com.cloud.apim.otoroshi.extensions.waf.dlp.Detectors.all.map(_.id).mkString(", ")}. A detector not named keeps its default"
       )
     ),
+    "uploads"         -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "Upload guard",
+      "props" -> Json.obj("help" -> "Refuse uploaded files by what they are: disguised scripts and executables, polyglots, archive bombs and zip slips")
+    ),
+    "uploads_mode"    -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Upload guard mode",
+      "props" -> Json.obj(
+        "help"    -> "'monitor' reports what would be refused and lets every upload through",
+        "options" -> Json.arr(
+          Json.obj("label" -> "Enforce", "value" -> "enforce"),
+          Json.obj("label" -> "Monitor", "value" -> "monitor")
+        )
+      )
+    ),
+    "uploads_allowed_extensions" -> Json.obj(
+      "type"  -> "array",
+      "label" -> "Allowed upload extensions",
+      "props" -> Json.obj("help" -> "When not empty, the only file extensions accepted, without the dot")
+    ),
     "include"         -> Json.obj(
       "type"  -> "array",
       "label" -> "Apply on paths",
@@ -267,7 +301,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
   override def core: Boolean                               = true
   override def name: String                                = "Cloud APIM Threat Protection - Preset"
   override def description: Option[String]                 =
-    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF, threat response, error leakage guard and sensitive data guard — in the right order".some
+    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF, upload guard, threat response, error leakage guard and sensitive data guard — in the right order".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimSecuritySuitePresetConfig.default.some
 
   override def noJsForm: Boolean              = true
@@ -345,6 +379,16 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
+    // after the WAF, which reads the form fields, and before the response, which reads what it found
+    val uploads = Option.when(config.uploads) {
+      slot(
+        NgPluginHelper.pluginId[CloudApimUploadGuard],
+        CloudApimUploadGuardConfig(mode = config.uploadsMode, allowedExtensions = config.uploadsAllowedExtensions).json.asObject,
+        PluginIndex(transformRequest = 2.0.some),
+        config
+      )
+    }
+
     // far to the right of anything that could still contribute a signal
     val response = Option.when(config.response) {
       slot(
@@ -375,6 +419,6 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    Seq(gate, bots, reputation, fail2ban, waf, response, leakage, sensitive).flatten
+    Seq(gate, bots, reputation, fail2ban, waf, uploads, response, leakage, sensitive).flatten
   }
 }

@@ -251,16 +251,25 @@ final class StreamDecoder(coding: String) {
 
   @volatile var corrupt: Option[String] = None
 
-  def decode(chunk: ByteString): ByteString =
-    if (corrupt.isDefined) ByteString.empty
-    else {
-      var out = ByteString.empty
-      try decoder.feed(chunk) { piece =>
-          out = out ++ piece
-          true
-        }
+  def decode(chunk: ByteString): ByteString = {
+    var out = ByteString.empty
+    feed(chunk) { piece =>
+      out = out ++ piece
+      true
+    }
+    out
+  }
+
+  /**
+   * Decodes `chunk`, handing each piece to `out` as it comes, for as long as it answers `true`.
+   *
+   * Nothing is gathered: what the caller does not keep is gone, which is what a reader that counts
+   * a decompression bomb needs. `decode` would hold the whole expansion of the chunk first.
+   */
+  def feed(chunk: ByteString)(out: ByteString => Boolean): Unit =
+    if (corrupt.isEmpty) {
+      try decoder.feed(chunk)(out)
       catch { case e: CorruptBodyException => corrupt = Some(e.getMessage) }
-      out
     }
 
   def close(): Unit = Try(decoder.close())

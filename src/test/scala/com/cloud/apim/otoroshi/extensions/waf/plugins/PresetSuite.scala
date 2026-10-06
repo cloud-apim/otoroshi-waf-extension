@@ -64,7 +64,7 @@ class PresetSuite extends munit.FunSuite {
   }
 
   test("every emitted slot carries an index, or the ordering guarantee is void") {
-    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true)).foreach { i =>
+    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true, uploads = true)).foreach { i =>
       val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined || p.transformResponse.isDefined)
       assert(indexed, s"${i.plugin} was emitted without a plugin index")
     }
@@ -127,6 +127,9 @@ class PresetSuite extends munit.FunSuite {
       sensitiveData = true,
       sensitiveDataMode = "monitor",
       sensitiveDataDetectors = Map("card" -> "block", "jwt" -> "off"),
+      uploads = true,
+      uploadsMode = "monitor",
+      uploadsAllowedExtensions = Seq("png", "pdf"),
       include = Seq("/a"),
       exclude = Seq("/b")
     )
@@ -173,6 +176,18 @@ class PresetSuite extends munit.FunSuite {
     val guard = chain(cfg).find(_.plugin == NgPluginHelper.pluginId[CloudApimSensitiveDataGuard]).get
     assertEquals((guard.config.raw \ "mode").as[String], "monitor")
     assertEquals((guard.config.raw \ "detectors").as[Map[String, String]], Map("card" -> "block"))
+  }
+
+  test("the upload guard is off by default, and runs between the WAF and the response once switched on") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.uploads, false)
+    assertEquals(names(chain(full)).contains("CloudApimUploadGuard"), false)
+    val armed     = chain(full.copy(uploads = true, uploadsMode = "monitor", uploadsAllowedExtensions = Seq("png")))
+    val transform = armed.flatMap(i => i.pluginIndex.flatMap(_.transformRequest).map(i.plugin -> _)).toMap
+    val guard     = transform(NgPluginHelper.pluginId[CloudApimUploadGuard])
+    assert(transform(NgPluginHelper.pluginId[CloudApimWaf]) < guard && guard < transform(NgPluginHelper.pluginId[CloudApimThreatResponse]))
+    val config = armed.find(_.plugin == NgPluginHelper.pluginId[CloudApimUploadGuard]).get.config.raw
+    assertEquals((config \ "mode").as[String], "monitor")
+    assertEquals((config \ "allowed_extensions").as[Seq[String]], Seq("png"))
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {

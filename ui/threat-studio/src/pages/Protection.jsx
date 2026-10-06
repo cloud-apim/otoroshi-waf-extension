@@ -172,6 +172,16 @@ export function ProtectionPage() {
                   onChange={(v) => set({ error_leakage_mode: v })}
                 />
               )}
+              {s.key === 'uploads' && preset.uploads && (
+                <Segmented
+                  options={[
+                    { value: 'enforce', label: 'Enforce' },
+                    { value: 'monitor', label: 'Monitor' },
+                  ]}
+                  value={preset.uploads_mode}
+                  onChange={(v) => set({ uploads_mode: v })}
+                />
+              )}
               {s.key === 'sensitive_data' && preset.sensitive_data && (
                 <Segmented
                   options={[
@@ -186,6 +196,29 @@ export function ProtectionPage() {
           </div>
         ))}
       </Card>
+
+      {preset.uploads && (
+        <Card
+          style={{ marginTop: 18 }}
+          title="Upload guard"
+          description="Scripts, executables and HTML are refused whatever they are called, and so are archive bombs and entries escaping their directory. What else a file may be is up to the route."
+        >
+          <div className="setting-row top">
+            <div>
+              <b>Allowed extensions</b>
+              <div className="muted small">
+                One per line, without the dot, for instance <code>png</code>. Empty accepts any extension that is not denied.
+              </div>
+            </div>
+            <LinesInput
+              value={preset.uploads_allowed_extensions || []}
+              onChange={(v) => set({ uploads_allowed_extensions: v.map((e) => e.replace(/^\./, '').toLowerCase()) })}
+              rows={4}
+              disabled={!writable}
+            />
+          </div>
+        </Card>
+      )}
 
       {preset.sensitive_data && (
         <Card

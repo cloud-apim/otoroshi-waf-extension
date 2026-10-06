@@ -1,0 +1,150 @@
+---
+sidebar_position: 8
+title: Upload guard
+description: Judging uploaded files by what they are, not by what they say they are.
+---
+
+# Upload guard
+
+An upload says what it is three times: in its file name, in the `Content-Type` of its part, and in
+its bytes. Only the bytes are true. A web shell named `avatar.php.jpg`, an executable declared
+`image/png`, a GIF that is also valid PHP, a zip that expands to a terabyte or carries an entry named
+`../../etc/cron.d/x`: none of these is caught by checking a content type.
+
+The **Upload guard** (`CloudApimUploadGuard`) reads every file of a `multipart/form-data` body as it
+streams to the backend, and refuses what it finds disguised. Form fields are left to the WAF.
+
+## What it checks
+
+| Check | Reason | Status |
+|---|---|---|
+| The last extension is denied (`.php`, `.jsp`, `.aspx`, `.exe`, `.sh`, `.htaccess`...) | `denied_extension` | `415` |
+| A denied extension hidden before the last one: `shell.php.jpg` | `double_extension` | `415` |
+| A NUL byte in the name: `shell.php\0.jpg` | `null_byte` | `400` |
+| The last extension is not in the allowed list, when there is one | `extension_not_allowed` | `415` |
+| The content is of a denied kind (by default executables, server scripts and HTML) | `denied_type` | `415` |
+| The content is not of an allowed kind, when there is a list | `type_not_allowed` | `415` |
+| The content is of another family than its name or declared type say: a PDF named `.jpg` | `type_mismatch` | `415` |
+| An image, document or media file that also carries PHP, JSP or a script tag | `polyglot` | `415` |
+| An archive entry escaping its directory: `../`, an absolute path, a drive letter | `zip_slip` | `400` |
+| The archives expand past their size or ratio budget | `archive_bomb` | `413` |
+| Archives nested deeper than allowed | `archive_depth` | `413` |
+| More archive entries than allowed | `archive_entries` | `413` |
+| An archive nothing here can read: encrypted, an unknown compression method, 7z, rar, xz, zstd, bzip2 | `unreadable_archive` | `415` |
+| Too many files, or a file too large | `too_many_files`, `file_too_large` | `413` |
+| A body that is not valid multipart | `malformed_multipart` | `400` |
+
+### Names
+
+A name is read the way the server storing it will read it: a path is reduced to its last segment,
+trailing dots and spaces are dropped as Windows drops them, a name stops at an NTFS alternate data
+stream (`shell.php::$DATA`), at a NUL byte, and an extension stops at a semicolon as IIS 6 stops it
+(`shell.asp;.jpg`). Every extension of the name counts, not only the last: Apache runs
+`shell.php.jpg` as PHP whenever a handler is mapped by extension. An RFC 8187 name
+(`filename*=UTF-8''...`) is decoded before it is judged.
+
+### Content
+
+The first 64 KB of each file say what it is: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, HEIC and AVIF;
+PDF and legacy Office documents; zip (and everything built on it: docx, xlsx, odt, jar, apk), gzip,
+tar, 7z, rar, xz, zstd and bzip2; MP4, WebM, Ogg, FLAC, WAV and AVI; ELF, PE, Mach-O, Java class,
+DEX and WebAssembly executables; PHP, JSP and ASP code and shebang scripts; HTML, and SVG, which is
+an image unless it carries a script, an event handler or a `javascript:` link, in which case it is
+HTML. Anything else is `text` or `binary`.
+
+Kinds: `image`, `document`, `archive`, `media`, `executable`, `script`, `html`, `text`, `binary`.
+
+A mismatch compares families, not formats. A PNG named `.jpg` is a mislabelled image, which every
+image library copes with; a PDF named `.jpg` is pretending. A file nothing recognises (`binary`)
+contradicts nothing.
+
+### Archives
+
+A zip is read from its local headers as it streams, and every entry is actually inflated: the sizes
+a header declares can lie, what an entry inflates to cannot. An entry that is itself a zip is read
+the same way, one level deeper. The budget is the whole request's: every archive of the upload
+counts against the same expanded size and ratio, so two hundred archives just under the limit are
+as much of a bomb as one over it. A gzip file is decoded and counted the same way.
+
+Entry names are always checked for zip slip. Holding them to the denied extensions as well is a
+switch (`check_archive_entry_extensions`), off by default: a project archive full of `.sh` and `.php`
+files is ordinary on a code-hosting API.
+
+## Before and after the head
+
+The guard reads the first `body_limit` bytes (1 MiB) before anything is forwarded. A file refused
+within them gets its status and a JSON body, and the backend never sees the request:
+
+```json
+{ "error": "upload_refused", "reason": "polyglot", "detail": "gif content that also carries code", "reference": "1843627815893483520" }
+```
+
+Past them, the upload is already on its way. A file refused there cuts the upload before the chunk
+that revealed it is forwarded: the backend gets a broken body rather than the file, and the client
+an error. Memory stays bounded whatever is uploaded: what could still be the start of a boundary,
+the head of the current file, and the archive entry being inflated.
+
+Play decodes `gzip` and `deflate` request bodies before any plugin. A `br` body is decoded by the
+guard; a body in an encoding it cannot read is refused (`undecodable_body`, `415`).
+
+## Configuration
+
+```json
+{
+  "mode": "enforce",
+  "allowed_extensions": [],
+  "denied_extensions": ["php", "phtml", "phar", "jsp", "asp", "aspx", "exe", "sh", "htaccess"],
+  "allowed_types": [],
+  "denied_types": ["executable", "script", "html"],
+  "check_mismatch": true,
+  "max_files": 100,
+  "max_file_size": 0,
+  "archive_max_depth": 3,
+  "archive_max_entries": 10000,
+  "archive_max_expanded_size": 268435456,
+  "archive_max_ratio": 100,
+  "unreadable_archive_action": "reject",
+  "check_archive_entry_extensions": false,
+  "body_limit": 1048576
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `mode` | `enforce` | `monitor` reports what would be refused and lets every upload through |
+| `allowed_extensions` | `[]` | When not empty, the only extensions accepted, without the dot |
+| `denied_extensions` | 46 extensions | Never accepted, last or hidden before the last. The default list covers what web servers run and desktops execute |
+| `allowed_types` | `[]` | When not empty, the only kinds of content accepted |
+| `denied_types` | `executable`, `script`, `html` | Never accepted, whatever the file is called |
+| `check_mismatch` | `true` | Refuse a file whose content contradicts its name or declared type |
+| `max_files` · `max_file_size` | `100` · `0` | Files per request and bytes per file. `0` for no limit |
+| `archive_max_depth` | `3` | Archives inside archives, the uploaded one counting as 1: a zip carrying a war carrying jars |
+| `archive_max_entries` | `10000` | Entries across every archive of the request |
+| `archive_max_expanded_size` | 256 MiB | Bytes every archive of the request may expand to |
+| `archive_max_ratio` | `100` | How many times the archives may expand, judged past 1 MiB |
+| `unreadable_archive_action` | `reject` | `allow` lets through what cannot be looked into |
+| `check_archive_entry_extensions` | `false` | Hold archive entry names to the denied extensions too |
+| `body_limit` | 1 MiB | Bytes read before the upload is forwarded |
+
+:::tip Name the files a route takes
+Most routes that take uploads take one or two kinds of file. `allowed_extensions: ["png", "jpg"]`
+and `allowed_types: ["image"]` refuse everything else, which is a far shorter list to get right than
+everything dangerous.
+:::
+
+## Laying it down
+
+On a route, add the plugin, or switch `uploads` on in the [preset](../fabric/preset.mdx) or in a
+[global preset](../fabric/global-preset.mdx) rule, with `uploads_mode` and
+`uploads_allowed_extensions`. It runs after the WAF and before the threat response. In **Threat
+Studio**, it is the **Upload guard** section of a workspace's protection, with its allowed
+extensions. It is off by default: a route that takes no upload has nothing for it to judge.
+
+## What it reports
+
+Each refusal is a `CloudApimSecurityEvent` of category `upload`, action `deny` (outcome `blocked`)
+or `log` in monitor mode (outcome `observed`). Its signal names the reason, the field, the file name,
+what was seen, whether the upload was cut on its way, and the files read so far with their declared
+type, detected kind and size; its tag is `upload:<reason>`. A refusal found in the head is also a
+signal on the threat bus, so in monitor mode the threat response can still act on it, and when
+enforced it charges the caller's ledger: an image carrying PHP is not an accident.

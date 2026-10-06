@@ -42,9 +42,10 @@ wrong. (The preset is missing from the list because this route already carries i
 | 3 | IP reputation — feeds, CrowdSec and ASN | access validation | `3.0` |
 | 4 | [Fail2ban](./fail2ban.mdx) *(off by default)* | access validation | `4.0` |
 | 5 | Cloud APIM WAF | request transformation | `1.0` |
-| 6 | Threat response | request transformation | `900.0` |
-| 7 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
-| 8 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
+| 6 | [Upload guard](../waf/uploads.mdx) *(off by default)* | request transformation | `2.0` |
+| 7 | Threat response | request transformation | `900.0` |
+| 8 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
+| 9 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
 
 The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
 rather than by the order slots happen to sit in on the route.
@@ -82,6 +83,9 @@ the preset carry it.
   "sensitive_data": false,
   "sensitive_data_mode": "enforce",
   "sensitive_data_detectors": {},
+  "uploads": false,
+  "uploads_mode": "enforce",
+  "uploads_allowed_extensions": [],
   "include": [],
   "exclude": []
 }
@@ -101,6 +105,9 @@ the preset carry it.
 | `sensitive_data` | `false` | Off by default, for the same reason. See [sensitive data](../response/sensitive-data.mdx). |
 | `sensitive_data_mode` | `enforce` | `monitor` reports what every detector finds and changes nothing. |
 | `sensitive_data_detectors` | `{}` | A detector id and its action, `off`, `log`, `mask` or `block`. A detector not named keeps its default. |
+| `uploads` | `false` | Off by default: a route that takes no upload has nothing for it to judge. See [upload guard](../waf/uploads.mdx). |
+| `uploads_mode` | `enforce` | `monitor` reports what would be refused and lets every upload through. |
+| `uploads_allowed_extensions` | `[]` | When not empty, the only file extensions accepted, without the dot. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 

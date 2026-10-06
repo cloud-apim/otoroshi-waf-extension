@@ -29,6 +29,9 @@ export const PRESET_DEFAULTS = {
   sensitive_data: false,
   sensitive_data_mode: 'enforce',
   sensitive_data_detectors: {},
+  uploads: false,
+  uploads_mode: 'enforce',
+  uploads_allowed_extensions: [],
   include: [],
   exclude: [],
 };
@@ -40,6 +43,7 @@ export const SECTIONS = [
   { key: 'reputation', label: 'IP reputation', help: 'Score the caller against every enabled feed, CrowdSec bouncer and ASN database' },
   { key: 'fail2ban', label: 'Fail2ban', help: 'Ban callers that keep producing failed responses — the one detector your own clients can trip' },
   { key: 'waf', label: 'WAF', help: 'Run the rule engine. Needs a WAF config to expand at all.' },
+  { key: 'uploads', label: 'Upload guard', help: 'Refuse uploaded files by what they are: disguised scripts and executables, polyglots, archive bombs and zip slips' },
   { key: 'response', label: 'Threat response', help: 'Read the accumulated score and apply one graded action. Without it nothing enforces the score.' },
   { key: 'error_leakage', label: 'Error leakage guard', help: 'Replace stack traces, SQL errors and debug pages in responses with a neutral error, before they reach the caller' },
   { key: 'sensitive_data', label: 'Sensitive data guard', help: 'Mask card numbers, IBANs, national identifiers and secrets in responses, or refuse the response' },
