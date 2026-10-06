@@ -1,0 +1,141 @@
+---
+sidebar_position: 2
+title: Sensitive data guard
+description: Masking card numbers, IBANs, national identifiers and secrets in responses, or refusing the response.
+---
+
+# Sensitive data guard
+
+A backend that returns a full card number, an IBAN or a cloud credential rarely means to. A
+serializer picks up a field it should not have, a debug flag stays on, an export endpoint forgets a
+filter. The **Sensitive data guard** (`CloudApimSensitiveDataGuard`) reads every response on its
+way back out, finds those values, and reports them, masks them in place, or refuses the response.
+
+## What it looks for
+
+Each detector checks what it finds the way the issuer would before it counts: a pattern alone
+flags too much, since any sixteen digits look like a card.
+
+| Detector | Id | Checked by | Default |
+|---|---|---|---|
+| Payment card numbers | `card` | Issuer prefix and length (Visa, Mastercard, Amex, Discover, JCB, Diners, UnionPay, Maestro), then Luhn | `mask` |
+| IBANs | `iban` | The country's length, then the ISO 13616 mod 97 check | `mask` |
+| French social security numbers | `fr_nir` | The NIR key, Corsica's 2A and 2B included | `mask` |
+| US social security numbers | `us_ssn` | The dashed form, areas and groups never issued left out | `mask` |
+| Private keys | `private_key` | PEM blocks: RSA, EC, DSA, OpenSSH, PGP, PKCS#8 | `block` |
+| Cloud provider keys | `cloud_key` | AWS access keys, Google API keys, Azure storage account keys | `mask` |
+| Service tokens | `service_token` | GitHub, GitLab, Slack, Stripe live keys | `mask` |
+| LLM provider keys | `llm_key` | OpenAI and Anthropic API keys | `mask` |
+| JSON Web Tokens | `jwt` | A header that decodes and names its algorithm | `log` |
+| Email addresses in bulk | `email_bulk` | Distinct addresses in one response, past a threshold | `log` |
+
+A JWT is only reported by default: a login or token endpoint returns one on purpose, and masking it
+there breaks every client. One email address is a profile, a thousand are an export, so addresses
+are counted rather than masked and only reported past `email_threshold` distinct ones.
+
+## What each action does
+
+| Action | Effect |
+|---|---|
+| `off` | The detector does not run |
+| `log` | The value is reported, the response goes through as it is |
+| `mask` | The value is rewritten in place, see below |
+| `block` | The response is refused with a neutral error, see below |
+
+### Masking
+
+Masking replaces letters and digits with `*`, one for one, and keeps what tells a value apart
+without being it:
+
+```text
+"4111 1111 1111 1111"              → "4111 **** **** 1111"
+"FR76 3000 6000 0112 3456 7890 189" → "FR76 **** **** **** **** ***0 189"
+"123-45-6789"                       → "***-**-6789"
+"AKIA…" (an AWS access key)         → "AKIA****************"
+a JWT                               → its header, then * for the claims and the signature
+a private key                       → its BEGIN and END lines, * in between
+```
+
+Quotes, brackets, separators, escape sequences (`\n`, `A`) and character references (`&amp;`)
+are never touched, so a JSON, XML or HTML response stays well-formed. A card written as a bare JSON
+number is masked with zeros instead, which leaves a number where a number was expected:
+`4111000000001111`.
+
+Because nothing changes length, a response that declared its `Content-Length` keeps it. Headers
+that describe the original bytes (`Content-MD5`, `Digest`, `Content-Digest`, `Repr-Digest`) are
+dropped.
+
+### Blocking
+
+The guard reads the first `body_limit` bytes of the response before sending anything. A `block`
+detector that finds its value there turns the response into the same neutral error the
+[error leakage guard](./error-leakage.mdx) uses, carrying the request's reference:
+
+```json
+{ "error": "internal_error", "message": "Something went wrong.", "reference": "1843627815893483520" }
+```
+
+Past `body_limit`, the status is already on its way. A value found there cuts the response before
+the value is sent: the client gets a broken response rather than the key.
+
+## The whole body is read
+
+Masking is not bounded by `body_limit`. The guard reads every byte of the response as it streams
+by, so a list endpoint returning megabytes of customers has every row masked, not only the first
+few hundred kilobytes. Memory stays bounded: the guard only ever holds back the length of the
+longest value its active detectors can match, at most about 16 KB, so that no value is split
+between two chunks and missed.
+
+The cost is CPU. With every detector on, the guard reads about 30 MB per second and per core: a
+1 MB response costs some 30 ms, a typical API response well under a millisecond. Detectors you do
+not need are best switched `off`.
+
+A compressed response (`gzip`, `deflate`, `br`) is decoded to be read. When the guard can rewrite
+it, it is sent on decoded, without its `Content-Encoding`, `Content-Length` and `ETag`. In monitor
+mode, and when every active detector only logs, the original bytes go through untouched. A
+response in an encoding the guard cannot read (`zstd`, a chain of codings) goes through unread.
+
+## Configuration
+
+```json
+{
+  "mode": "enforce",
+  "detectors": { "jwt": "mask", "email_bulk": "block", "us_ssn": "off" },
+  "email_threshold": 50,
+  "body_limit": 262144,
+  "content_types": []
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `mode` | `enforce` | `monitor` reports what every detector finds and changes nothing |
+| `detectors` | `{}` | A detector id and its action. A detector not named keeps its default. `mask` on `email_bulk` reads as `log` |
+| `email_threshold` | `50` | Distinct addresses in one response past which `email_bulk` reports |
+| `body_limit` | 256 KiB | Bytes read before the response is sent on, to decide a `block` |
+| `content_types` | `[]` | The response types read. Empty means every textual type: `text/*`, JSON, XML, JavaScript, and responses with no type. Server-sent events (`text/event-stream`) are left out: holding them back would stall every event |
+
+:::warning Start in monitor
+A sixteen-digit identifier that happens to pass Luhn and start like a Visa card is masked like
+one, and a client reading it gets zeros. Run in `monitor` first: the events say what would have
+been masked, on which route, and a detector that objects to legitimate data can be switched to
+`log` or `off` there.
+:::
+
+## Laying it down
+
+On a route, add the plugin, or switch `sensitive_data` on in the [preset](../fabric/preset.mdx) or
+in a [global preset](../fabric/global-preset.mdx) rule, with `sensitive_data_mode` and
+`sensitive_data_detectors`. It runs after the error leakage guard: a response that guard replaced
+has nothing left to mask. In **Threat Studio**, it is the **Sensitive data guard** section of a
+workspace's protection, where each detector's action can be changed. It is off by default, because
+it rewrites responses rather than refusing requests.
+
+## What it reports
+
+One `CloudApimSecurityEvent` per response that held something, of category `sensitive_data`. Its
+action is `mask` when values were masked, `deny` when the response was refused, `log` otherwise
+and in monitor mode. Each signal names a detector, its family, how many values it found and its
+action, with the response status and the request's reference; the tags are `dlp:<detector>`. The
+values themselves are never in the event. It does not charge the caller's ledger: receiving a
+response is not an attack.

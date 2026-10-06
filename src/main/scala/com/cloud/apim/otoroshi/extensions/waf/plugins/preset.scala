@@ -22,6 +22,10 @@ final case class CloudApimSecuritySuitePresetConfig(
     // DLP-3: off by default, because it rewrites responses rather than refusing requests
     errorLeakage: Boolean = false,
     errorLeakageMode: String = "mask",
+    // DLP-1/DLP-2: off by default too, for the same reason. Detectors not named keep their default
+    sensitiveData: Boolean = false,
+    sensitiveDataMode: String = "enforce",
+    sensitiveDataDetectors: Map[String, String] = Map.empty,
     include: Seq[String] = Seq.empty,
     exclude: Seq[String] = Seq.empty
 ) extends NgPluginConfig {
@@ -50,6 +54,9 @@ object CloudApimSecuritySuitePresetConfig {
       "fail2ban_dry_run" -> o.fail2banDryRun,
       "error_leakage"   -> o.errorLeakage,
       "error_leakage_mode" -> o.errorLeakageMode,
+      "sensitive_data"  -> o.sensitiveData,
+      "sensitive_data_mode" -> o.sensitiveDataMode,
+      "sensitive_data_detectors" -> o.sensitiveDataDetectors,
       "include"         -> o.include,
       "exclude"         -> o.exclude
     )
@@ -68,6 +75,9 @@ object CloudApimSecuritySuitePresetConfig {
         fail2banDryRun = json.select("fail2ban_dry_run").asOpt[Boolean].getOrElse(true),
         errorLeakage = json.select("error_leakage").asOpt[Boolean].getOrElse(false),
         errorLeakageMode = json.select("error_leakage_mode").asOpt[String].map(_.trim.toLowerCase).filter(Set("mask", "monitor")).getOrElse("mask"),
+        sensitiveData = json.select("sensitive_data").asOpt[Boolean].getOrElse(false),
+        sensitiveDataMode = CloudApimSensitiveDataConfig.modeOf(json.select("sensitive_data_mode").asOpt[String]),
+        sensitiveDataDetectors = CloudApimSensitiveDataConfig.detectorsOf(json.select("sensitive_data_detectors").asOpt[JsObject]),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty),
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty)
       )
@@ -91,6 +101,9 @@ object CloudApimSecuritySuitePresetConfig {
     "response",
     "error_leakage",
     "error_leakage_mode",
+    "sensitive_data",
+    "sensitive_data_mode",
+    "sensitive_data_detectors",
     "include",
     "exclude"
   )
@@ -188,6 +201,29 @@ object CloudApimSecuritySuitePresetConfig {
         )
       )
     ),
+    "sensitive_data"  -> Json.obj(
+      "type"  -> "bool",
+      "label" -> "Sensitive data guard",
+      "props" -> Json.obj("help" -> "Mask card numbers, IBANs, national identifiers and secrets in responses, or refuse the response")
+    ),
+    "sensitive_data_mode" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Sensitive data mode",
+      "props" -> Json.obj(
+        "help"    -> "'monitor' reports what every detector finds and changes nothing",
+        "options" -> Json.arr(
+          Json.obj("label" -> "Enforce", "value" -> "enforce"),
+          Json.obj("label" -> "Monitor", "value" -> "monitor")
+        )
+      )
+    ),
+    "sensitive_data_detectors" -> Json.obj(
+      "type"  -> "object",
+      "label" -> "Sensitive data detectors",
+      "props" -> Json.obj(
+        "help" -> s"A detector id and its action: off, log, mask or block. Ids: ${com.cloud.apim.otoroshi.extensions.waf.dlp.Detectors.all.map(_.id).mkString(", ")}. A detector not named keeps its default"
+      )
+    ),
     "include"         -> Json.obj(
       "type"  -> "array",
       "label" -> "Apply on paths",
@@ -231,7 +267,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
   override def core: Boolean                               = true
   override def name: String                                = "Cloud APIM Threat Protection - Preset"
   override def description: Option[String]                 =
-    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF, threat response and error leakage guard — in the right order".some
+    "Expands into the whole detection fabric — threat gate, bot guard, IP reputation, WAF, threat response, error leakage guard and sensitive data guard — in the right order".some
   override def defaultConfigObject: Option[NgPluginConfig] = CloudApimSecuritySuitePresetConfig.default.some
 
   override def noJsForm: Boolean              = true
@@ -319,7 +355,7 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    // on the way back, the last thing between the backend's errors and the caller
+    // on the way back, first between the backend's errors and the caller
     val leakage = Option.when(config.errorLeakage) {
       slot(
         NgPluginHelper.pluginId[CloudApimErrorLeakageGuard],
@@ -329,6 +365,16 @@ class CloudApimSecuritySuitePreset extends NgPresetPlugin {
       )
     }
 
-    Seq(gate, bots, reputation, fail2ban, waf, response, leakage).flatten
+    // after it: a response it replaced has nothing left to mask, and costs nothing to scan
+    val sensitive = Option.when(config.sensitiveData) {
+      slot(
+        NgPluginHelper.pluginId[CloudApimSensitiveDataGuard],
+        CloudApimSensitiveDataConfig(mode = config.sensitiveDataMode, detectors = config.sensitiveDataDetectors).json.asObject,
+        PluginIndex(transformResponse = 2.0.some),
+        config
+      )
+    }
+
+    Seq(gate, bots, reputation, fail2ban, waf, response, leakage, sensitive).flatten
   }
 }

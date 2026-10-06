@@ -26,6 +26,9 @@ export const PRESET_DEFAULTS = {
   fail2ban_dry_run: true,
   error_leakage: false,
   error_leakage_mode: 'mask',
+  sensitive_data: false,
+  sensitive_data_mode: 'enforce',
+  sensitive_data_detectors: {},
   include: [],
   exclude: [],
 };
@@ -39,6 +42,25 @@ export const SECTIONS = [
   { key: 'waf', label: 'WAF', help: 'Run the rule engine. Needs a WAF config to expand at all.' },
   { key: 'response', label: 'Threat response', help: 'Read the accumulated score and apply one graded action. Without it nothing enforces the score.' },
   { key: 'error_leakage', label: 'Error leakage guard', help: 'Replace stack traces, SQL errors and debug pages in responses with a neutral error, before they reach the caller' },
+  { key: 'sensitive_data', label: 'Sensitive data guard', help: 'Mask card numbers, IBANs, national identifiers and secrets in responses, or refuse the response' },
+];
+
+/**
+ * What the sensitive data guard looks for, with the action each one takes when a workspace says
+ * nothing. The ids and defaults are the extension's own (`Detectors.all`): a detector missing here
+ * still runs, with its default, it just cannot be changed from the studio.
+ */
+export const SENSITIVE_DETECTORS = [
+  { id: 'card', label: 'Payment card numbers', family: 'Payment', default: 'mask', help: 'Issuer prefix and Luhn checked. Masked to 4111 **** **** 1111' },
+  { id: 'iban', label: 'IBANs', family: 'Banking', default: 'mask', help: 'Country length and mod 97 checked' },
+  { id: 'fr_nir', label: 'French social security numbers', family: 'Identity', default: 'mask', help: 'NIR, key checked, Corsica included' },
+  { id: 'us_ssn', label: 'US social security numbers', family: 'Identity', default: 'mask', help: 'Dashed form, numbers never issued left out' },
+  { id: 'private_key', label: 'Private keys', family: 'Secret', default: 'block', help: 'PEM blocks: RSA, EC, OpenSSH, PGP' },
+  { id: 'cloud_key', label: 'Cloud provider keys', family: 'Secret', default: 'mask', help: 'AWS access keys, Google API keys, Azure storage keys' },
+  { id: 'service_token', label: 'Service tokens', family: 'Secret', default: 'mask', help: 'GitHub, GitLab, Slack, Stripe live keys' },
+  { id: 'llm_key', label: 'LLM provider keys', family: 'Secret', default: 'mask', help: 'OpenAI and Anthropic API keys' },
+  { id: 'jwt', label: 'JSON Web Tokens', family: 'Secret', default: 'log', help: 'Reported only by default: a login endpoint returns them on purpose' },
+  { id: 'email_bulk', label: 'Email addresses in bulk', family: 'Contact', default: 'log', volume: true, help: 'Fifty distinct addresses or more in one response' },
 ];
 
 export function loadTable() {

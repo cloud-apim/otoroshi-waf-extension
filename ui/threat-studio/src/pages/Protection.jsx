@@ -19,7 +19,7 @@ import {
 import { canWrite } from '../lib/bootstrap';
 import { Link } from '../lib/router';
 import { Resources } from '../lib/entities';
-import { enforcementOf, PRESET_DEFAULTS, replaceWorkspace, saveTable, SECTIONS } from '../lib/workspaces';
+import { enforcementOf, PRESET_DEFAULTS, replaceWorkspace, saveTable, SECTIONS, SENSITIVE_DETECTORS } from '../lib/workspaces';
 
 /**
  * The arming console.
@@ -172,10 +172,59 @@ export function ProtectionPage() {
                   onChange={(v) => set({ error_leakage_mode: v })}
                 />
               )}
+              {s.key === 'sensitive_data' && preset.sensitive_data && (
+                <Segmented
+                  options={[
+                    { value: 'enforce', label: 'Enforce' },
+                    { value: 'monitor', label: 'Monitor' },
+                  ]}
+                  value={preset.sensitive_data_mode}
+                  onChange={(v) => set({ sensitive_data_mode: v })}
+                />
+              )}
             </div>
           </div>
         ))}
       </Card>
+
+      {preset.sensitive_data && (
+        <Card
+          style={{ marginTop: 18 }}
+          title="Sensitive data detectors"
+          description={
+            preset.sensitive_data_mode === 'monitor'
+              ? 'Monitor mode: every detector only reports what it finds, whatever its action below.'
+              : 'Mask rewrites the value in place and keeps the response valid. Block refuses the response, or cuts it when the value comes late.'
+          }
+        >
+          {SENSITIVE_DETECTORS.map((d) => {
+            const action = (preset.sensitive_data_detectors || {})[d.id] || d.default;
+            const actions = d.volume ? ['off', 'log', 'block'] : ['off', 'log', 'mask', 'block'];
+            return (
+              <div className="setting-row" key={d.id}>
+                <div>
+                  <b>{d.label}</b> <span className="faint small">{d.family}</span>
+                  <div className="muted small">{d.help}</div>
+                </div>
+                <div className="row" style={{ gap: 8 }}>
+                  {action !== d.default && <Badge kind="info">default: {d.default}</Badge>}
+                  <Select
+                    value={action}
+                    onChange={(v) => {
+                      const next = { ...(preset.sensitive_data_detectors || {}) };
+                      if (v === d.default) delete next[d.id];
+                      else next[d.id] = v;
+                      set({ sensitive_data_detectors: next });
+                    }}
+                    options={actions.map((a) => ({ value: a, label: a[0].toUpperCase() + a.slice(1) }))}
+                    disabled={!writable}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
 
       <Card style={{ marginTop: 18 }} title="Entities" description="The configuration each section reads. They are ordinary entities of the extension, shared by every workspace that points at them.">
         <div className="setting-row top">

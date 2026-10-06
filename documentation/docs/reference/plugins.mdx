@@ -20,6 +20,7 @@ description: Every plugin the extension registers, and where each one is configu
 | Cloud APIM Threat Protection - Fail2ban | `NgAccessValidator` + `NgRequestTransformer` | A route |
 | Cloud APIM Threat Protection - Honeypot (Incoming Request Validator) | `NgIncomingRequestValidator` | The global configuration |
 | Cloud APIM Threat Protection - Error leakage guard | `NgRequestTransformer` | A route. See [error leakage](../response/error-leakage.mdx) |
+| Cloud APIM Threat Protection - Sensitive data guard | `NgRequestTransformer` | A route. See [sensitive data](../response/sensitive-data.mdx) |
 
 All appear under the **Threat Protection** category.
 
@@ -35,6 +36,7 @@ The fabric plugins are position-sensitive:
 5. Cloud APIM WAF               inspect the payload
 6. Threat response              read the accumulated score, apply one tier
 7. Error leakage guard          on the way back, replace what leaks with a neutral error
+8. Sensitive data guard         then mask card numbers, IBANs, identifiers and secrets in place
 ```
 
 The response plugin must come **after** the WAF, or it reads a score the WAF has not contributed to
@@ -98,4 +100,5 @@ cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimBotG
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimFail2Ban
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.IncomingRequestValidatorCloudApimHoneypot
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimErrorLeakageGuard
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.CloudApimSensitiveDataGuard
 ```

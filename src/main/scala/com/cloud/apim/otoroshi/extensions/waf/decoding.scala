@@ -239,6 +239,34 @@ private[body] object BrotliChunkDecoder {
 }
 
 /**
+ * A whole compressed stream, decoded chunk by chunk, for a reader that sees every byte once and keeps
+ * none of them.
+ *
+ * A body that turns out not to decode stops decoding: `corrupt` says why, and nothing more comes out.
+ * It must be closed, gzip and brotli decoders hold native memory.
+ */
+final class StreamDecoder(coding: String) {
+
+  private val decoder = ChunkDecoder(coding)
+
+  @volatile var corrupt: Option[String] = None
+
+  def decode(chunk: ByteString): ByteString =
+    if (corrupt.isDefined) ByteString.empty
+    else {
+      var out = ByteString.empty
+      try decoder.feed(chunk) { piece =>
+          out = out ++ piece
+          true
+        }
+      catch { case e: CorruptBodyException => corrupt = Some(e.getMessage) }
+      out
+    }
+
+  def close(): Unit = Try(decoder.close())
+}
+
+/**
  * What a compressed body may expand to before it is refused.
  *
  * `maxSize` caps the decompressed bytes, `maxRatio` the decompressed size over the compressed size

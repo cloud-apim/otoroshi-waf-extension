@@ -64,7 +64,7 @@ class PresetSuite extends munit.FunSuite {
   }
 
   test("every emitted slot carries an index, or the ordering guarantee is void") {
-    chain(full.copy(fail2ban = true, errorLeakage = true)).foreach { i =>
+    chain(full.copy(fail2ban = true, errorLeakage = true, sensitiveData = true)).foreach { i =>
       val indexed = i.pluginIndex.exists(p => p.validateAccess.isDefined || p.transformRequest.isDefined || p.transformResponse.isDefined)
       assert(indexed, s"${i.plugin} was emitted without a plugin index")
     }
@@ -124,6 +124,9 @@ class PresetSuite extends munit.FunSuite {
       fail2banDryRun = false,
       errorLeakage = true,
       errorLeakageMode = "monitor",
+      sensitiveData = true,
+      sensitiveDataMode = "monitor",
+      sensitiveDataDetectors = Map("card" -> "block", "jwt" -> "off"),
       include = Seq("/a"),
       exclude = Seq("/b")
     )
@@ -145,6 +148,31 @@ class PresetSuite extends munit.FunSuite {
       .map(i => (i.config.raw \ "mode").as[String])
     assertEquals(modeOf(full.copy(errorLeakage = true)), Some("mask"))
     assertEquals(modeOf(full.copy(errorLeakage = true, errorLeakageMode = "monitor")), Some("monitor"))
+  }
+
+  test("the sensitive data guard is off by default, and runs after the error leakage guard once switched on") {
+    assertEquals(CloudApimSecuritySuitePresetConfig.default.sensitiveData, false)
+    assertEquals(names(chain(full)).contains("CloudApimSensitiveDataGuard"), false)
+    val armed = chain(full.copy(errorLeakage = true, sensitiveData = true))
+    assertEquals(names(armed).takeRight(2), Seq("CloudApimErrorLeakageGuard", "CloudApimSensitiveDataGuard"))
+    val response = armed.flatMap(i => i.pluginIndex.flatMap(_.transformResponse).map(i.plugin -> _)).toMap
+    assert(
+      response(NgPluginHelper.pluginId[CloudApimErrorLeakageGuard]) < response(NgPluginHelper.pluginId[CloudApimSensitiveDataGuard]),
+      "a response the leakage guard replaced has nothing left to mask"
+    )
+  }
+
+  test("the sensitive data mode and detectors reach the guard, unknown ones dropped") {
+    val cfg = CloudApimSecuritySuitePresetConfig.format
+      .reads(Json.obj(
+        "sensitive_data"           -> true,
+        "sensitive_data_mode"      -> "MONITOR",
+        "sensitive_data_detectors" -> Json.obj("card" -> "block", "nope" -> "mask", "iban" -> "explode")
+      ))
+      .get
+    val guard = chain(cfg).find(_.plugin == NgPluginHelper.pluginId[CloudApimSensitiveDataGuard]).get
+    assertEquals((guard.config.raw \ "mode").as[String], "monitor")
+    assertEquals((guard.config.raw \ "detectors").as[Map[String, String]], Map("card" -> "block"))
   }
 
   test("every field of the flow is described by the schema, or the form renders an empty row") {

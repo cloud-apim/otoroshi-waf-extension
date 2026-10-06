@@ -44,6 +44,7 @@ wrong. (The preset is missing from the list because this route already carries i
 | 5 | Cloud APIM WAF | request transformation | `1.0` |
 | 6 | Threat response | request transformation | `900.0` |
 | 7 | [Error leakage guard](../response/error-leakage.mdx) *(off by default)* | response transformation | `1.0` |
+| 8 | [Sensitive data guard](../response/sensitive-data.mdx) *(off by default)* | response transformation | `2.0` |
 
 The indices are Otoroshi's own `plugin_index` mechanism, so the ordering is enforced by the engine
 rather than by the order slots happen to sit in on the route.
@@ -78,6 +79,9 @@ the preset carry it.
   "fail2ban_dry_run": true,
   "error_leakage": false,
   "error_leakage_mode": "mask",
+  "sensitive_data": false,
+  "sensitive_data_mode": "enforce",
+  "sensitive_data_detectors": {},
   "include": [],
   "exclude": []
 }
@@ -94,6 +98,9 @@ the preset carry it.
 | `reputation_mode` | `block` | `monitor` scores without ever denying on its own, leaving the decision to the response. |
 | `error_leakage` | `false` | Off by default: it rewrites responses rather than refusing requests. See [error leakage](../response/error-leakage.mdx). |
 | `error_leakage_mode` | `mask` | `monitor` reports a leak and lets the response through as it is. |
+| `sensitive_data` | `false` | Off by default, for the same reason. See [sensitive data](../response/sensitive-data.mdx). |
+| `sensitive_data_mode` | `enforce` | `monitor` reports what every detector finds and changes nothing. |
+| `sensitive_data_detectors` | `{}` | A detector id and its action, `off`, `log`, `mask` or `block`. A detector not named keeps its default. |
 | *(none)* | — | The reputation section covers feeds, CrowdSec **and** [ASN classification](../reputation/asn.mdx) — every enabled source of each, since none of the three has a plugin of its own. |
 | `include` · `exclude` | *(empty)* | Path scoping — see the warning below. |
 

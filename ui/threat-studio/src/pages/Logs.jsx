@@ -41,6 +41,7 @@ const CATEGORIES = [
   { value: 'challenge', label: 'Challenge' },
   { value: 'ban', label: 'Ban' },
   { value: 'leakage', label: 'Error leakage' },
+  { value: 'sensitive_data', label: 'Sensitive data' },
 ];
 
 const ACTIONS = [

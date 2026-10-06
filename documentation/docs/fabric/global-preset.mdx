@@ -53,7 +53,9 @@ form for them, so this is edited as JSON in the danger zone:
                   "threat_policy": "threat-policy_9f2c...",
                   "waf_config": "waf-config_1f3a...",
                   "fail2ban": true,
-                  "error_leakage": true
+                  "error_leakage": true,
+                  "sensitive_data": true,
+                  "sensitive_data_detectors": { "jwt": "mask" }
                 }
               },
               {
