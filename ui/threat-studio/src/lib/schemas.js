@@ -580,6 +580,38 @@ export const SCHEMAS = {
     ],
   },
 
+  /* ------------------------------------------------------------------ rule feed */
+  'rule-feeds': {
+    resource: () => Resources.ruleFeeds,
+    label: 'Rule feed',
+    create: [
+      { key: 'name', label: 'Name', type: 'text', placeholder: 'Virtual patches' },
+      { key: 'url', label: 'Url', type: 'text', placeholder: 'https://rules.example.com/bundle.json' },
+    ],
+    sections: [
+      { title: 'Identity', fields: common },
+      {
+        title: 'Source',
+        description: 'Each version is checked before anything is installed: its signature, then every pack compiled by this gateway and run against its own tests.',
+        fields: [
+          { key: 'url', label: 'Url', type: 'text', help: 'https://, or file: for a feed copied onto the machine' },
+          { key: 'headers', label: 'Headers', type: 'json', rows: 3, help: 'What a private feed asks for, a licence key for instance' },
+          { key: 'trusted_keys', label: 'Trusted keys', type: 'lines', rows: 3, help: 'Ed25519 public keys, base64 or PEM, one per line. A bundle must be signed by one of them' },
+          { key: 'allow_unsigned', label: 'Allow unsigned bundles', type: 'bool', help: 'Only for a feed you host yourself, on a network you trust' },
+          { key: 'packs', label: 'Packs', type: 'lines', rows: 3, help: 'The pack ids to install, one per line. Empty means every pack of the feed' },
+        ],
+      },
+      {
+        title: 'Updates',
+        fields: [
+          { key: 'refresh_interval_seconds', label: 'Refresh every (s)', type: 'number' },
+          { key: 'timeout_millis', label: 'Timeout (ms)', type: 'number' },
+          { key: 'promotion_delay_seconds', label: 'Promotion delay (s)', type: 'number', help: 'How long a checked version waits before it is installed. 0 installs it at once' },
+        ],
+      },
+    ],
+  },
+
   /* ------------------------------------------------------------------ malware scanner */
   'malware-scanners': {
     resource: () => Resources.malwareScanners,

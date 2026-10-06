@@ -63,6 +63,7 @@ export const Resources = {
   geoDatabases: resource('geo-databases'),
   alertRules: resource('alert-rules'),
   malwareScanners: resource('malware-scanners'),
+  ruleFeeds: resource('rule-feeds'),
   routes: { list: (filters = {}) => {
     const params = new URLSearchParams({ in_mem: inMem() });
     Object.entries(filters).forEach(([k, v]) => params.append(`filter.${k}`, String(v)));

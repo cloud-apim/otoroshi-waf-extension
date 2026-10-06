@@ -1707,6 +1707,110 @@ class MalwareScannersPage extends Component {
   }
 }
 
+function feedsCall(path, body) {
+  return fetch('/extensions/cloud-apim/extensions/waf/feeds' + path, {
+    method: body ? 'POST' : 'GET',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then((r) => r.json());
+}
+
+class RuleFeedStatus extends Component {
+  state = { feed: null, busy: false, message: null };
+  componentDidMount() { this.load(); }
+  load = () => {
+    const id = this.props.rawValue && this.props.rawValue.id;
+    feedsCall('/_status').then((r) => this.setState({ feed: ((r && r.feeds) || []).find((f) => f.id === id) || null }));
+  };
+  act = (action) => {
+    this.setState({ busy: true, message: null });
+    feedsCall('/_' + action, { id: this.props.rawValue.id }).then((r) => {
+      this.setState({ busy: false, message: r.done ? { tone: 'success', text: action + ': done' } : { tone: 'danger', text: r.error || 'failed' } });
+      this.load();
+    });
+  };
+  version = (v) => (v ? v.version + (v.signed_by ? ' (signed by ' + v.signed_by + ')' : ' (unsigned)') + ' — ' + (v.packs || []).map((p) => p.name).join(', ') : 'none');
+  render() {
+    const st = this.state.feed && this.state.feed.state;
+    const button = (action, label, icon) =>
+      React.createElement('button', { key: action, className: 'btn btn-sm btn-success', type: 'button', onClick: () => this.act(action), disabled: this.state.busy, style: { marginRight: 6 } },
+        React.createElement('i', { className: 'fas ' + icon }, null), ' ' + label);
+    return React.createElement('div', { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Installed'),
+      React.createElement('div', { className: 'col-sm-10' },
+        st
+          ? suiteRows([
+              ['Active', this.version(st.active)],
+              ['Previous', this.version(st.previous)],
+              ['Waiting', st.pending ? this.version(st.pending) + ' since ' + new Date(st.pending.since).toLocaleString() : 'nothing'],
+              ['Last check', st.last_check_at ? new Date(st.last_check_at).toLocaleString() : 'never'],
+              ['Last error', st.last_error || 'none'],
+            ])
+          : suiteNotice('nostate', 'info', 'Not fetched yet. Save the feed, then refresh it.'),
+        React.createElement('div', { style: { marginTop: 8 } },
+          button('refresh', 'Refresh now', 'fa-sync'), button('promote', 'Promote the waiting version', 'fa-check'), button('rollback', 'Roll back', 'fa-undo')),
+        this.state.message ? suiteNotice('feedmsg', this.state.message.tone, this.state.message.text) : null
+      )
+    );
+  }
+}
+
+class RuleFeedsPage extends Component {
+  formSchema = {
+    _loc: { type: 'location', props: {} },
+    id: { type: 'string', disabled: true, props: { label: 'Id' } },
+    name: { type: 'string', props: { label: 'Name' } },
+    description: { type: 'string', props: { label: 'Description' } },
+    metadata: { type: 'object', props: { label: 'Metadata' } },
+    tags: { type: 'array', props: { label: 'Tags' } },
+    enabled: { type: 'bool', props: { label: 'Enabled' } },
+    url: { type: 'string', props: { label: 'Url', help: 'https://, or file: for a feed copied onto the machine' } },
+    headers: { type: 'object', props: { label: 'Headers', help: 'What a private feed asks for, a licence key for instance' } },
+    trusted_keys: { type: 'array', props: { label: 'Trusted keys', help: 'Ed25519 public keys, PEM or base64. A bundle must be signed by one of them' } },
+    allow_unsigned: { type: 'bool', props: { label: 'Allow unsigned bundles', help: 'Only for a feed you host yourself, on a network you trust' } },
+    packs: { type: 'array', props: { label: 'Packs', help: 'The pack ids to install. Empty means every pack of the feed' } },
+    refresh_interval_seconds: { type: 'number', props: { label: 'Refresh every', suffix: 'seconds' } },
+    timeout_millis: { type: 'number', props: { label: 'Timeout', suffix: 'ms' } },
+    promotion_delay_seconds: { type: 'number', props: { label: 'Promotion delay', suffix: 'seconds', help: 'How long a checked version waits before it is installed. 0 installs it at once' } },
+    status: { type: RuleFeedStatus, props: {} },
+  };
+  columns = [
+    { title: 'Name', filterId: 'name', content: (i) => i.name },
+    { title: 'Enabled', content: (i) => (i.enabled ? 'Yes' : 'No'), style: { textAlign: 'center', width: 80 } },
+    { title: 'Url', content: (i) => i.url },
+    { title: 'Signed', content: (i) => ((i.trusted_keys || []).length ? 'Yes' : i.allow_unsigned ? 'No' : '-'), style: { width: 80 } },
+  ];
+  formFlow = [
+    '_loc', 'id', 'name', 'description', '>>>Metadata and tags', 'tags', 'metadata',
+    '<<<Source', 'enabled', 'url', 'headers', 'trusted_keys', 'allow_unsigned', 'packs',
+    '<<<Updates', 'refresh_interval_seconds', 'timeout_millis', 'promotion_delay_seconds', 'status',
+  ];
+  componentDidMount() { this.props.setTitle('Rule feeds'); }
+  client = BackOfficeServices.apisClient('waf.extensions.cloud-apim.com', 'v1', 'rule-feeds');
+  render() {
+    return React.createElement(Table, {
+      parentProps: this.props,
+      selfUrl: 'extensions/cloud-apim/waf/rulefeeds',
+      defaultTitle: 'All rule feeds',
+      defaultValue: () => ({
+        id: 'rule-feed_' + uuid(), name: 'Rule feed', description: 'Signed rule packs and virtual patches, checked before they are installed',
+        tags: [], metadata: {}, enabled: true, url: '', headers: {}, trusted_keys: [], allow_unsigned: false, packs: [],
+        refresh_interval_seconds: 3600, timeout_millis: 30000, promotion_delay_seconds: 0,
+      }),
+      itemName: 'Rule feed',
+      formSchema: this.formSchema, formFlow: this.formFlow, columns: this.columns,
+      stayAfterSave: true,
+      fetchItems: () => this.client.findAll(),
+      updateItem: this.client.update, deleteItem: this.client.delete, createItem: this.client.create,
+      navigateTo: (i) => { window.location = `/bo/dashboard/extensions/cloud-apim/waf/rulefeeds/edit/${i.id}`; },
+      itemUrl: (i) => `/bo/dashboard/extensions/cloud-apim/waf/rulefeeds/edit/${i.id}`,
+      showActions: true, showLink: true, rowNavigation: true, extractKey: (i) => i.id, export: true,
+      kubernetesKind: 'waf.extensions.cloud-apim.com/RuleFeed',
+    }, null);
+  }
+}
+
 const SecurityFeatures = [
   {
     title: 'Threat policies',
@@ -1741,6 +1845,14 @@ const SecurityFeatures = [
     icon: () => 'fa-bug',
   },
   {
+    title: 'Rule feeds',
+    description: 'Signed rule packs and virtual patches, checked before they are installed',
+    absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
+    link: '/extensions/cloud-apim/waf/rulefeeds',
+    display: () => true,
+    icon: () => 'fa-satellite-dish',
+  },
+  {
     title: 'Malware scanners',
     description: 'clamd or ICAP antivirus for uploaded files',
     absoluteImg: '/extensions/assets/cloud-apim/extensions/waf/reputation-icon.svg',
@@ -1772,6 +1884,7 @@ const SecuritySidebarItems = [
   { title: 'Challenge presets', text: 'Vendor presets', path: 'extensions/cloud-apim/waf/challengepresets', icon: 'store' },
   { title: 'Bot policies', text: 'Crawlers and AI agents', path: 'extensions/cloud-apim/waf/botpolicies', icon: 'robot' },
   { title: 'Honeypots', text: 'Paths and canary tokens', path: 'extensions/cloud-apim/waf/honeypots', icon: 'bug' },
+  { title: 'Rule feeds', text: 'Packs and virtual patches', path: 'extensions/cloud-apim/waf/rulefeeds', icon: 'satellite-dish' },
   { title: 'Malware scanners', text: 'clamd and ICAP', path: 'extensions/cloud-apim/waf/scanners', icon: 'virus-slash' },
   { title: 'Alert rules', text: 'Slack, Teams, PagerDuty', path: 'extensions/cloud-apim/waf/alerts', icon: 'bell' },
   { title: 'Bans & incidents', text: 'Live security state', path: 'extensions/cloud-apim/waf/security', icon: 'gavel' },
@@ -1812,6 +1925,7 @@ const SecurityRoutes = [
   ...suiteEntityRoutes('honeypots', HoneypotPoliciesPage),
   ...suiteEntityRoutes('alerts', AlertRulesPage),
   ...suiteEntityRoutes('scanners', MalwareScannersPage),
+  ...suiteEntityRoutes('rulefeeds', RuleFeedsPage),
   {
     path: '/extensions/cloud-apim/waf/threatpolicies/:taction/:titem',
     component: (props) => React.createElement(ThreatPoliciesPage, props, null),

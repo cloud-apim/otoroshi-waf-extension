@@ -298,6 +298,25 @@ See [alerting](../fabric/alerting.mdx).
 
 See [malware scanning](../waf/uploads.mdx#malware-scanning).
 
+## RuleFeed
+
+`rule-feeds` · `waf.extensions.cloud-apim.com/RuleFeed`
+
+| Field | Type | Default |
+|---|---|---|
+| `enabled` | boolean | `true` |
+| `url` | string | `""` — `https://`, or `file:` |
+| `headers` | object | `{}` |
+| `trusted_keys` | string[] | `[]` — Ed25519 public keys, PEM or base64 |
+| `allow_unsigned` | boolean | `false` |
+| `packs` | string[] | `[]` — every pack of the feed |
+| `refresh_interval_seconds` | number | `3600`, at least `60` |
+| `timeout_millis` | number | `30000` |
+| `promotion_delay_seconds` | number | `0` |
+
+Each pack of an installed version is a `WafRuleset` with the id `rule-feed_<feed>_<pack>`, tagged
+`managed`. See [rule feeds](../waf/feeds.mdx).
+
 :::tip Secrets
 `headers` on a feed, `api_key` / `push_password` on a bouncer, and an alert rule's channel `url`,
 `routing_key` and `headers`, all go through Otoroshi's secret filling. Use vault references rather than literal values.

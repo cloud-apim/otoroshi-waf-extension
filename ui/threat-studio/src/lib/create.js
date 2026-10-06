@@ -26,6 +26,7 @@ const RESOURCES = {
   'geo-databases': () => Resources.geoDatabases,
   'alert-rules': () => Resources.alertRules,
   'malware-scanners': () => Resources.malwareScanners,
+  'rule-feeds': () => Resources.ruleFeeds,
 };
 
 /**

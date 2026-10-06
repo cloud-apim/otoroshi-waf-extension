@@ -28,6 +28,7 @@ import { RulesetsPage } from './pages/Rulesets';
 import { ClusterPage } from './pages/Cluster';
 import { AlertsPage } from './pages/Alerts';
 import { ScannersPage } from './pages/Scanners';
+import { RuleFeedsPage } from './pages/RuleFeeds';
 
 const StudioContext = createContext(null);
 export const useStudio = () => useContext(StudioContext);
@@ -60,6 +61,7 @@ const GLOBAL_PAGES = {
   rulesets: RulesetsPage,
   alerts: AlertsPage,
   scanners: ScannersPage,
+  rulefeeds: RuleFeedsPage,
   cluster: ClusterPage,
 };
 

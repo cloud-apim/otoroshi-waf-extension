@@ -30,6 +30,16 @@ export const Security = {
   scannerTest: (body) => api.post(`${SECURITY}/_scanner_test`, body),
 };
 
+const FEEDS = `${EXT_API}/feeds`;
+
+/** WAF-2, WAF-3: where each rule feed stands, and what an operator does about it. */
+export const RuleFeeds = {
+  status: () => api.get(`${FEEDS}/_status`),
+  refresh: (body) => api.post(`${FEEDS}/_refresh`, body),
+  promote: (body) => api.post(`${FEEDS}/_promote`, body),
+  rollback: (body) => api.post(`${FEEDS}/_rollback`, body),
+};
+
 export const Reputation = {
   status: () => api.get(`${REPUTATION}/_status`),
   catalog: () => api.get(`${REPUTATION}/_catalog`),

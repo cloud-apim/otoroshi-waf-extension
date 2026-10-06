@@ -30,6 +30,7 @@ import scala.util.Try
 class WafExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val wafConfigDatastore: CloudApimWafConfigDatastore = new KvCloudApimWafConfigDatastore(extensionId, env.datastores.redis, env)
   val wafRulesetDatastore: WafRulesetDatastore        = new KvWafRulesetDatastore(extensionId, env.datastores.redis, env)
+  val ruleFeedDatastore: RuleFeedDatastore            = new KvRuleFeedDatastore(extensionId, env.datastores.redis, env)
 }
 
 class WafExtensionState() {
@@ -41,6 +42,14 @@ class WafExtensionState() {
   // composed once per change rather than once per request: resolving references on the hot path
   // would put a map walk in front of every single call
   private val _composed = new UnboundedTrieMap[String, ComposedRules]()
+
+  private val _feeds    = new UnboundedTrieMap[String, RuleFeed]()
+
+  def ruleFeed(id: String): Option[RuleFeed] = _feeds.get(id)
+  def allRuleFeeds(): Seq[RuleFeed]         = _feeds.values.toSeq
+  def updateRuleFeeds(values: Seq[RuleFeed]): Unit = {
+    _feeds.addAll(values.map(v => (v.id, v))).remAll(_feeds.keySet.toSeq.diff(values.map(_.id)))
+  }
 
   def config(id: String): Option[CloudApimWafConfig] = _configs.get(id)
   def allConfigs(): Seq[CloudApimWafConfig]          = _configs.values.toSeq
@@ -194,6 +203,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     security.nodeId,
     () => security.sharedStateDistributed
   )
+  // WAF-2, WAF-3: signed rule packs and virtual patches, checked here before they are installed
+  lazy val feeds = new com.cloud.apim.otoroshi.extensions.waf.feeds.RuleFeedModule(
+    env,
+    datastores,
+    states,
+    rules => factory.engine(rules.toList),
+    s"${env.storageRoot}:extensions:${id.cleanup}"
+  )
   private val logger = Logger("cloud-apim-waf-extension")
   private val presets: Map[String, SecLangPreset] = Map("crs" -> EmbeddedCRSPreset.embedded)
   private val config = SecLangEngineConfig.default
@@ -260,6 +277,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     security.start()
     tuning.start()
     learning.start()
+    feeds.start()
   }
 
   override def stop(): Unit = {
@@ -267,6 +285,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     security.stop()
     tuning.stop()
     learning.stop()
+    feeds.stop()
   }
 
   override def frontendExtensions(): Seq[AdminExtensionFrontendExtension] = Seq(
@@ -281,12 +300,14 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     for {
       rulesets <- datastores.wafRulesetDatastore.findAllAndFillSecrets()
       configs  <- datastores.wafConfigDatastore.findAllAndFillSecrets()
+      feeds    <- datastores.ruleFeedDatastore.findAllAndFillSecrets()
       _        <- reputation.syncStates()
       _        <- security.syncStates()
     } yield {
       // rulesets first: composing a config against a stale ruleset map would be wrong for one tick
       states.updateRulesets(rulesets)
       states.updateConfigs(configs)
+      states.updateRuleFeeds(feeds)
       engines.retain(configs.map(_.id).toSet)
       com.cloud.apim.otoroshi.extensions.waf.analytics.SecurityDashboard.seedIfMissing()
       ()
@@ -308,6 +329,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     Seq(
       AdminExtensionEntity(CloudApimWafConfig.resource(env, datastores, states)),
       AdminExtensionEntity(WafRuleset.resource(env, datastores, states)),
+      AdminExtensionEntity(RuleFeed.resource(env, datastores, states)),
     ) ++ reputation.entities() ++ security.entities()
   }
 
@@ -708,7 +730,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleDescribeRules(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ studio.backofficeRoutes
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ feeds.backofficeAuthRoutes() ++ studio.backofficeRoutes
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext

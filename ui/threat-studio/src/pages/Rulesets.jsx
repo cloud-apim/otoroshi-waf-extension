@@ -26,7 +26,18 @@ export function RulesetsPage() {
         createLabel="New ruleset"
         emptyTitle="No ruleset"
         emptyBody={<p className="muted">Rulesets are optional: a config with none behaves exactly as it always did.</p>}
-        columns={[{ key: 'rules', label: 'Rules', render: (e) => (e.rules || []).length }]}
+        columns={[
+          { key: 'rules', label: 'Rules', render: (e) => (e.rules || []).length },
+          {
+            key: 'source',
+            label: 'Source',
+            render: (e) => {
+              const m = e.metadata || {};
+              // a feed's packs are rewritten by the feed: an edit here lasts until its next version
+              return m.managed_by ? `${m.feed || 'feed'} ${m.feed_version || ''}${m.retired_in ? ' — retired' : ''}` : 'hand-written';
+            },
+          },
+        ]}
       />
     </div>
   );

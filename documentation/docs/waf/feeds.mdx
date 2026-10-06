@@ -1,0 +1,141 @@
+---
+sidebar_position: 9
+title: Rule feeds
+description: Signed rule packs and virtual patches, checked by the gateway before they are installed.
+---
+
+# Rule feeds
+
+When the next Log4Shell lands, the mitigation is a rule, and waiting for an extension release to
+get it is waiting too long. A **rule feed** (`RuleFeed`) is a source of rules this gateway installs
+itself: curated rule packs for the workloads it fronts, and virtual patches for one vulnerability
+each. It fetches a signed bundle, checks it, and turns each of its packs into a managed WAF ruleset
+that WAF configs reference like any other.
+
+:::info No feed ships with the extension
+The machinery is here; the sources are not. A feed operated by Cloud APIM will plug in as a URL
+and a public key, and so does one you operate yourself, which is what the rest of this page shows.
+:::
+
+## What is checked before anything is installed
+
+A version of a feed is installed only once this gateway has checked it:
+
+1. **Its signature.** The bundle must be signed, in Ed25519, by one of the feed's `trusted_keys`,
+   over its exact bytes. A bundle changed after it was signed, or signed by anyone else, is refused.
+2. **Every pack compiles** with this gateway's engine, the one that will run it.
+3. **Every pack passes its own tests**: each pack carries requests it must block and requests it
+   must let through, and they run against the local engine. The rules are checked where they will
+   run, not where they were written.
+4. **It is not older** than the version installed. A feed never goes back on its own, so a replayed
+   old bundle cannot take a patch away.
+
+What fails any check is not installed, and the feed says why. A version that passes waits
+`promotion_delay_seconds` (`0` by default: installed at once), then each of its packs becomes a
+managed ruleset.
+
+## Managed rulesets
+
+A pack becomes the ruleset `rule-feed_<feed>_<pack>`, tagged `managed` and with its version in its
+metadata. Its id is the same from one version to the next, so a WAF config that lists it gets the
+new rules without being touched. A pack a new version no longer carries is **disabled**, not
+deleted: a config still listing it says so rather than silently protecting less.
+
+Managed rulesets are rewritten by their feed: an edit lasts until the next version. To change what a
+pack does, add rules after it in the WAF config, or turn a rule off with `SecRuleRemoveById`.
+
+New rules can be watched before they block: reference the pack from a WAF config with `block: false`
+first, and move it to the blocking config once its matches look right.
+
+## Operating a feed
+
+| Action | Effect |
+|---|---|
+| **Refresh now** | Fetch and check now, rather than at the next `refresh_interval_seconds` |
+| **Promote** | Install the version waiting for its promotion delay at once |
+| **Roll back** | Put the previous version back. The version rolled back from is not installed again; the next newer one is |
+
+They are in the feed's form in the backoffice, and on the **Rule feeds** page of Threat Studio, where
+the WAF rulesets page also says which rulesets a feed manages. In a leader/worker cluster only the
+leader fetches and installs; workers get the rulesets like any entity.
+
+`packs` names the packs to install, by id; empty installs all of them. `headers` carry what a private
+feed asks for, a licence key for instance. `url` is `https://`, or `file:` for a bundle copied onto
+the machine, for an air-gapped install.
+
+## Publishing a feed
+
+A bundle is JSON:
+
+```json
+{
+  "format": 1,
+  "feed": "acme-virtual-patches",
+  "version": "2026.10.06-1",
+  "published_at": 1791295000000,
+  "packs": [
+    {
+      "id": "lfi-guard",
+      "name": "Path traversal guard",
+      "kind": "virtual_patch",
+      "description": "Refuses ../ in arguments",
+      "references": ["https://owasp.org/www-community/attacks/Path_Traversal"],
+      "requires": [],
+      "rules": [
+        "SecRule ARGS \"@contains ../\" \"id:9100001,phase:2,deny,status:403,msg:'path traversal'\""
+      ],
+      "tests": [
+        { "name": "traversal", "request": { "method": "GET", "uri": "/file?f=../../etc/passwd" }, "expect": "block" },
+        { "name": "plain file", "request": { "method": "GET", "uri": "/file?f=report.pdf" }, "expect": "pass" }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `version` | Any string, unique per version |
+| `published_at` | Milliseconds since the epoch. A version is never older than the installed one |
+| `packs[].id` | Lowercase letters, digits, `-` and `_`. Stable across versions |
+| `packs[].kind` | `pack` for a curated rule pack, `virtual_patch` for a mitigation of one vulnerability |
+| `packs[].requires` | `["crs"]` runs the pack's tests with the Core Rule Set loaded first |
+| `packs[].tests[]` | A request (`method`, `uri`, `headers`, `body`) and whether it must be blocked (`block`) or let through (`pass`) |
+
+It is served in an envelope carrying its signature:
+
+```json
+{ "bundle": "<base64 of the bundle's bytes>", "signatures": [ { "key_id": "2026", "signature": "<base64>" } ] }
+```
+
+With OpenSSL 3:
+
+```bash
+openssl genpkey -algorithm ed25519 -out feed-key.pem
+```
+
+```bash
+openssl pkey -in feed-key.pem -pubout
+```
+
+The second command prints the public key the feed's `trusted_keys` take, PEM or its base64 body.
+Then sign the exact bytes of the bundle, and wrap both:
+
+```bash
+openssl pkeyutl -sign -inkey feed-key.pem -rawin -in bundle.json -out bundle.sig
+```
+
+```bash
+printf '{"bundle":"%s","signatures":[{"key_id":"2026","signature":"%s"}]}' "$(base64 < bundle.json | tr -d '\n')" "$(base64 < bundle.sig | tr -d '\n')" > envelope.json
+```
+
+Several signatures can be listed, which is how a signing key is rotated: sign with the old and the
+new key until every gateway trusts the new one.
+
+**Before publishing**, a gateway checks a bundle without installing anything:
+`POST /extensions/cloud-apim/extensions/waf/feeds/_check` with
+`{"served": "<the envelope, as a string>", "trusted_keys": ["..."]}` answers the signer and every
+pack's compile and test results. A publisher's CI runs exactly that.
+
+`allow_unsigned: true` accepts a bare bundle. It is meant for a feed you host yourself on a network
+you trust, never for one fetched across the internet.
