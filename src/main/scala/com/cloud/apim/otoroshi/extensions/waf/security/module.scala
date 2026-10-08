@@ -710,7 +710,7 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
       method = "POST",
       path = s"$basePath/_ledger",
       wantsBody = true,
-      handle = (_, _, _, body) => withJsonBody(body)(handleLedger)
+      handle = (_, _, user, body) => withJsonBody(body)(handleLedger(user, _))
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -1002,7 +1002,10 @@ class SecurityModule(env: Env, extensionId: AdminExtensionId, configuration: Con
     }
   }
 
-  private def handleLedger(body: JsValue): Future[Result] = refFrom(body) match {
+  // reading a score is open to the backoffice, forgetting one changes what every route decides
+  private def handleLedger(user: Option[BackOfficeUser], body: JsValue): Future[Result] = refFrom(body) match {
+    case Some(_) if (body \ "forget").asOpt[Boolean].contains(true) && !user.exists(_.rights.superAdmin(using env)) =>
+      Results.Forbidden(Json.obj("error" -> "forbidden", "error_description" -> "this action requires a super admin")).vfuture
     case Some(ref) if (body \ "forget").asOpt[Boolean].contains(true) =>
       ledger.forget(ref).map(ok => Results.Ok(Json.obj("done" -> ok)))
     case Some(ref) =>

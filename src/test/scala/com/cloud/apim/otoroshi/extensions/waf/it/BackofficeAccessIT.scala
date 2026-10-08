@@ -17,9 +17,9 @@ import scala.concurrent.duration.*
  * Who may call the extension's backoffice routes, asked of the gateway over http.
  *
  * Otoroshi hands a backoffice route every request that reaches the backoffice host, with or without a
- * session, so each route of the extension is called by nobody, then by a logged-in admin of one
- * tenant. The routes are read off the extension rather than listed here, so a route added later is
- * covered without touching this suite.
+ * session, so each route of the extension is called the three ways that matter: by nobody, by an
+ * admin of one tenant, and by a super admin. The routes are read off the extension rather than
+ * listed here, so a route added later is covered without touching this suite.
  */
 class BackofficeAccessIT extends munit.FunSuite {
 
@@ -32,8 +32,6 @@ class BackofficeAccessIT extends munit.FunSuite {
 
   private def routes: Seq[AdminExtensionBackofficeAuthRoute] =
     Gateway.instance.env.adminExtensions.extension[CloudApimWafExtension].get.backofficeAuthRoutes()
-
-  private def route(suffix: String): AdminExtensionBackofficeAuthRoute = routes.find(_.path.endsWith(suffix)).get
 
   /** A path the route answers: its parameters filled with something that names nothing. */
   private def concrete(route: AdminExtensionBackofficeAuthRoute): String =
@@ -52,34 +50,48 @@ class BackofficeAccessIT extends munit.FunSuite {
     )
   }
 
-  private val admin = "tenant-admin@backoffice-access.it"
-
-  private var cookies: Seq[WSCookie] = Seq.empty
-
-  override def beforeAll(): Unit = {
-    val user = SimpleOtoroshiAdmin(
-      username = admin,
+  private def register(username: String, rights: UserRights): Unit = {
+    val admin = SimpleOtoroshiAdmin(
+      username = username,
       password = BCrypt.hashpw(password, BCrypt.gensalt()),
-      label = admin,
+      label = username,
       createdAt = DateTime.now(),
       typ = OtoroshiAdminType.SimpleAdmin,
       metadata = Map.empty,
-      rights = UserRights(Seq(UserRight(TenantAccess("default", true, true), Seq(TeamAccess("*", true, true))))),
+      rights = rights,
       adminEntityValidators = Map.empty
     )
-    Await.result(Gateway.instance.env.datastores.simpleAdminDataStore.registerUser(user), 10.seconds)
+    Await.result(Gateway.instance.env.datastores.simpleAdminDataStore.registerUser(admin), 10.seconds)
+  }
+
+  private def login(username: String): Seq[WSCookie] = {
     val res = Gateway.await(
       Gateway.ws
         .url(s"http://127.0.0.1:${Gateway.port}/bo/simple/login")
         .withHttpHeaders("Host" -> Gateway.instance.env.backOfficeHost, "Content-Type" -> "application/json")
-        .post(Json.stringify(Json.obj("username" -> admin, "password" -> password)))
+        .post(Json.stringify(Json.obj("username" -> username, "password" -> password)))
     )
-    assertEquals(res.status, 200, s"could not log in: ${res.body}")
-    cookies = res.cookies.toSeq
+    assertEquals(res.status, 200, s"could not log in as $username: ${res.body}")
+    res.cookies.toSeq
+  }
+
+  private val superAdmin  = "super-admin@backoffice-access.it"
+  private val tenantAdmin = "tenant-admin@backoffice-access.it"
+
+  private var superCookies: Seq[WSCookie]  = Seq.empty
+  private var tenantCookies: Seq[WSCookie] = Seq.empty
+
+  override def beforeAll(): Unit = {
+    register(superAdmin, UserRights.superAdmin)
+    register(tenantAdmin, UserRights(Seq(UserRight(TenantAccess("default", true, true), Seq(TeamAccess("*", true, true))))))
+    superCookies = login(superAdmin)
+    tenantCookies = login(tenantAdmin)
   }
 
   override def afterAll(): Unit = {
-    Await.result(Gateway.instance.env.datastores.simpleAdminDataStore.deleteUser(admin), 10.seconds)
+    val store = Gateway.instance.env.datastores.simpleAdminDataStore
+    Await.result(store.deleteUser(superAdmin), 10.seconds)
+    Await.result(store.deleteUser(tenantAdmin), 10.seconds)
     ()
   }
 
@@ -98,24 +110,44 @@ class BackofficeAccessIT extends munit.FunSuite {
     }
   }
 
-  test("a logged-in admin reads every route as before") {
-    routes.filter(r => BackofficeAccess.isRead(r.method) && !BackofficeAccess.pages.contains(r.path)).foreach { route =>
-      val res = call(route, cookies)
-      assert(res.status != 401 && res.status != 415, s"${route.method} ${route.path}: ${res.status} ${res.body}")
+  test("an admin of one tenant reads, computes, and is refused every write") {
+    routes.filterNot(r => BackofficeAccess.pages.contains(r.path)).foreach { route =>
+      val res = call(route, tenantCookies)
+      if (BackofficeAccess.needsSuperAdmin(route)) {
+        assertEquals(res.status, 403, s"${route.method} ${route.path}: ${res.body}")
+      } else {
+        assert(res.status != 401 && res.status != 403, s"${route.method} ${route.path}: ${res.status} ${res.body}")
+      }
     }
   }
 
-  test("a logged-in admin writes as before, as long as the write is sent as json") {
-    // an unban that names nobody: it goes through and changes nothing
-    val unban = route("/security/_unban")
-    assertEquals(call(unban, cookies).status, 200)
-    assertEquals(call(unban, cookies, contentType = "text/plain").status, 415)
-    assertEquals(call(unban, cookies, contentType = "application/x-www-form-urlencoded").status, 415)
+  test("writes are the routes that change state or reach an address the caller chose") {
+    val writes = routes.filter(BackofficeAccess.needsSuperAdmin).map(_.path.split("/").last).toSet
+    Seq(
+      "_ban", "_unban", "_extend", "_allow", "_disallow", "_incident_state",
+      "_apply", "_start", "_stop", "_discard", "_refresh", "_promote", "_rollback", "_crowdsec_sync",
+      "_alert_test", "_scanner_test", "_contract_fetch", "workspaces"
+    ).foreach(w => assert(writes.contains(w), s"$w is not treated as a write"))
   }
 
-  test("the studio still answers its own rule on the table") {
-    // writing the table was already reserved to a super admin by the studio itself
-    val save = routes.find(r => r.method == "PUT" && r.path.endsWith("/studio/workspaces")).get
-    assertEquals(call(save, cookies).status, 403)
+  test("forgetting a score needs a super admin, reading one does not") {
+    val ledger = routes.find(_.path.endsWith("/security/_ledger")).get
+    def ledgerCall(cookies: Seq[WSCookie], forget: Boolean): WSResponse = Gateway.await(
+      Gateway.ws
+        .url(s"http://127.0.0.1:${Gateway.port}${ledger.path}")
+        .withHttpHeaders("Host" -> Gateway.instance.env.backOfficeHost, "Content-Type" -> "application/json")
+        .withCookies(cookies*)
+        .post(Json.stringify(Json.obj("ref" -> "ip:203.0.113.251", "forget" -> forget)))
+    )
+    assertEquals(ledgerCall(tenantCookies, forget = false).status, 200)
+    assertEquals(ledgerCall(tenantCookies, forget = true).status, 403)
+    assertEquals(ledgerCall(superCookies, forget = true).status, 200)
+  }
+
+  test("a super admin is let through, and a write has to be sent as json") {
+    val unban = routes.find(_.path.endsWith("/security/_unban")).get
+    assertEquals(call(unban, superCookies).status, 200)
+    assertEquals(call(unban, superCookies, contentType = "text/plain").status, 415)
+    assertEquals(call(unban, superCookies, contentType = "application/x-www-form-urlencoded").status, 415)
   }
 }

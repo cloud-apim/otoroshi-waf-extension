@@ -734,7 +734,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleDescribeRules(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ feeds.backofficeAuthRoutes() ++ studio.backofficeRoutes)
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ feeds.backofficeAuthRoutes() ++ studio.backofficeRoutes)(using env)
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext
