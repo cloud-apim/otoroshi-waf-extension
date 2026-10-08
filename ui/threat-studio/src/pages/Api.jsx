@@ -3,7 +3,7 @@ import { useWorkspace } from '../App';
 import { Badge, Card, Empty, ErrorAlert, Loading, NumberInput, PageHeader, Tabs, useAsync } from '../components/ui';
 import { fmtInt, fmtRelative } from '../lib/format';
 import { Link } from '../lib/router';
-import { Security } from '../lib/security';
+import { workspaceSecurity } from '../lib/security';
 
 const SEVERITY = { high: 'negative', medium: 'warning', low: 'info', info: '' };
 const STATE = { used: 'positive', unused: '', zombie: 'warning' };
@@ -40,7 +40,8 @@ export function ApiPage() {
   const [tab, setTab] = useState('auth');
   const [zombieDays, setZombieDays] = useState(90);
   const ids = (workspace.claims || []).map((r) => r.id);
-  const report = useAsync(() => Security.apiReport(ids, zombieDays), [workspace.id, ids.length, zombieDays]);
+  // the api narrows the report to the workspace's routes, and to none when it claims none
+  const report = useAsync(() => workspaceSecurity(workspace.id).apiReport(zombieDays), [workspace.id, ids.length, zombieDays]);
 
   const routes = (report.data && report.data.routes) || [];
   const summary = (report.data && report.data.summary) || {};

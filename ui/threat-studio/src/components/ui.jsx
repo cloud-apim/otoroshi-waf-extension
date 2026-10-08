@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
+import { SECRET_SENTINEL } from '../core/secrets';
 
 /* ---------- async data ---------- */
 
@@ -479,8 +480,22 @@ export function Readonly({ value, mono = true, copy = true }) {
   );
 }
 
+/**
+ * A secret, which may come back masked: a server that keeps secrets from the browser sends the sentinel instead,
+ * and a write sending it back keeps the stored value. So the sentinel reads "unchanged" until it is replaced.
+ */
 export function SecretInput({ value, onChange, placeholder }) {
   const [visible, setVisible] = useState(false);
+  if (value === SECRET_SENTINEL) {
+    return (
+      <div className="input-with-btn">
+        <input className="input" disabled value="" placeholder="unchanged" />
+        <button type="button" className="copy-btn" onClick={() => onChange('')} title="Replace it">
+          <Icon name="edit" />
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="input-with-btn">
       <input

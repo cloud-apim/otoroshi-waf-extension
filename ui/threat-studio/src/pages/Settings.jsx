@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useStudio, useWorkspace } from '../App';
+import { useCan, useStudio, useWorkspace } from '../App';
 import { Icon } from '../components/icons';
 import { Badge, Card, PageHeader, TextInput, Toggle, useConfirm, useToast } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
+import { hasPermission } from '../lib/platform';
 import { useRouter } from '../lib/router';
-import { moveWorkspace, removeWorkspace, replaceWorkspace, saveTable } from '../lib/workspaces';
+import { deleteWorkspace, moveWorkspaceTo, renameWorkspace, saveScope, saveTableSettings } from '../lib/workspaces';
 
 export function SettingsPage() {
   const { workspace, table } = useWorkspace();
@@ -12,15 +12,18 @@ export function SettingsPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const { navigate } = useRouter();
-  const writable = canWrite();
+  const can = useCan();
+  // the name is the workspace's; where it sits and whether it applies decide other routes too
+  const canRename = can('config:write');
+  const writable = hasPermission('admin');
   const [name, setName] = useState(workspace.name);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => setName(workspace.name), [workspace.id, workspace.name]);
 
-  const apply = (next, message) => {
+  const apply = (write, message) => {
     setBusy(true);
-    return saveTable(next)
+    return write()
       .then(() => {
         studio.reload();
         if (message) toast.success(message);
@@ -38,7 +41,7 @@ export function SettingsPage() {
       confirmLabel: 'Delete',
     });
     if (!ok) return;
-    await apply(removeWorkspace(table, workspace.id), 'Workspace deleted');
+    await apply(() => deleteWorkspace(workspace.id), 'Workspace deleted');
     navigate('/');
   };
 
@@ -55,13 +58,9 @@ export function SettingsPage() {
             <div className="muted small">Free text, for whoever reads this table next. Never used for matching.</div>
           </div>
           <div className="row" style={{ gap: 8 }}>
-            <TextInput value={name} onChange={setName} disabled={!writable} />
-            {writable && name !== workspace.name && (
-              <button
-                className="btn primary"
-                disabled={busy}
-                onClick={() => apply(replaceWorkspace(table, workspace.id, (w) => ({ ...w, name })), 'Renamed')}
-              >
+            <TextInput value={name} onChange={setName} disabled={!canRename} />
+            {canRename && name !== workspace.name && (
+              <button className="btn primary" disabled={busy} onClick={() => apply(() => renameWorkspace(workspace.id, name), 'Renamed')}>
                 Save
               </button>
             )}
@@ -78,7 +77,7 @@ export function SettingsPage() {
           <Toggle
             value={workspace.enabled !== false}
             disabled={!writable || busy}
-            onChange={(v) => apply(replaceWorkspace(table, workspace.id, (w) => ({ ...w, enabled: v })), v ? 'Enabled' : 'Disabled')}
+            onChange={(v) => apply(() => saveScope(workspace.id, { enabled: v }), v ? 'Enabled' : 'Disabled')}
           />
         </div>
 
@@ -96,7 +95,7 @@ export function SettingsPage() {
             <button
               className="copy-btn"
               disabled={!writable || busy || workspace.index === 0}
-              onClick={() => apply(moveWorkspace(table, workspace.id, -1))}
+              onClick={() => apply(() => moveWorkspaceTo(workspace.id, workspace.index - 1))}
               title="Move up"
             >
               <Icon name="arrowUp" />
@@ -104,7 +103,7 @@ export function SettingsPage() {
             <button
               className="copy-btn"
               disabled={!writable || busy || workspace.index === last}
-              onClick={() => apply(moveWorkspace(table, workspace.id, 1))}
+              onClick={() => apply(() => moveWorkspaceTo(workspace.id, workspace.index + 1))}
               title="Move down"
             >
               <Icon name="arrowDown" />
@@ -126,16 +125,7 @@ export function SettingsPage() {
             <Toggle
               value={table.enabled !== false}
               disabled={!writable || busy || !table.installed}
-              onChange={(v) => {
-                setBusy(true);
-                saveTable(table, { slotEnabled: v })
-                  .then(() => {
-                    studio.reload();
-                    toast.success(v ? 'Table enabled' : 'Table disabled');
-                  })
-                  .catch(toast.error)
-                  .finally(() => setBusy(false));
-              }}
+              onChange={(v) => apply(() => saveTableSettings({ enabled: v }), v ? 'Table enabled' : 'Table disabled')}
             />
           </div>
         </div>
@@ -150,7 +140,7 @@ export function SettingsPage() {
           <Toggle
             value={table.skip_protected_routes !== false}
             disabled={!writable || busy}
-            onChange={(v) => apply({ ...table, skip_protected_routes: v }, 'Saved')}
+            onChange={(v) => apply(() => saveTableSettings({ skip_protected_routes: v }), 'Saved')}
           />
         </div>
       </Card>

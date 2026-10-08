@@ -15,18 +15,17 @@ import {
   useConfirm,
   useToast,
 } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
+import { hasPermission } from '../lib/platform';
 import { Link, useRouter } from '../lib/router';
 import { fmtInt } from '../lib/format';
 import {
-  addWorkspace,
   armedSections,
+  createWorkspace,
+  deleteWorkspace,
   emptyWorkspace,
   isCatchAll,
   lintWorkspace,
-  moveWorkspace,
-  removeWorkspace,
-  saveTable,
+  moveWorkspaceTo,
 } from '../lib/workspaces';
 
 function targetSummary(ws) {
@@ -113,16 +112,21 @@ export function WorkspacesPage() {
   const [name, setName] = useState('');
 
   const table = studio.table;
-  const writable = canWrite();
+  // the table decides which rule wins each route: changing it is an administrator's
+  const writable = hasPermission('admin');
 
-  const apply = (next, message) => {
+  const apply = (write, message) => {
     setBusy(true);
-    return saveTable(next)
+    return write()
       .then(() => {
         studio.reload();
         if (message) toast.success(message);
+        return true;
       })
-      .catch(toast.error)
+      .catch((e) => {
+        toast.error(e);
+        return false;
+      })
       .finally(() => setBusy(false));
   };
 
@@ -130,7 +134,10 @@ export function WorkspacesPage() {
     const ws = emptyWorkspace(name.trim() || 'New workspace');
     setCreating(false);
     setName('');
-    apply(addWorkspace(table, ws)).then(() => navigate(`/workspaces/${ws.id}/scope`));
+    // no position: the api puts it above the catch-all, the only place a narrow rule can ever win
+    apply(() => createWorkspace({ id: ws.id, name: ws.name, targets: ws.targets, preset: ws.preset })).then(
+      (ok) => ok && navigate(`/workspaces/${ws.id}/scope`)
+    );
   };
 
   const remove = async (ws) => {
@@ -140,7 +147,7 @@ export function WorkspacesPage() {
       danger: true,
       confirmLabel: 'Delete',
     });
-    if (ok) apply(removeWorkspace(table, ws.id), 'Workspace deleted');
+    if (ok) apply(() => deleteWorkspace(ws.id), 'Workspace deleted');
   };
 
   if (studio.loading && !studio.loaded) return <div className="content"><Loading /></div>;
@@ -254,7 +261,10 @@ export function WorkspacesPage() {
                 ws={ws}
                 table={table}
                 busy={busy || !writable}
-                onMove={(id, delta) => apply(moveWorkspace(table, id, delta))}
+                onMove={(id, delta) => {
+                  const at = workspaces.findIndex((w) => w.id === id) + delta;
+                  if (at >= 0 && at < workspaces.length) apply(() => moveWorkspaceTo(id, at));
+                }}
                 onDelete={remove}
               />
             ))}
@@ -264,7 +274,7 @@ export function WorkspacesPage() {
 
       {!writable && (
         <p className="faint small" style={{ marginTop: 14 }}>
-          The table lives on the global configuration, so editing it needs a super admin. Everything else here is
+          The table decides which rule wins each route, so changing it is an administrator's. Everything else here is
           readable.
         </p>
       )}

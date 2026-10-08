@@ -1,4 +1,3 @@
-import { Resources } from './entities';
 
 /**
  * What the studio lets you edit, per entity.
@@ -33,7 +32,6 @@ const common = [
 export const SCHEMAS = {
   /* ------------------------------------------------------------------ WAF config */
   'waf-configs': {
-    resource: () => Resources.wafConfigs,
     label: 'WAF config',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Public APIs baseline' },
@@ -96,7 +94,7 @@ export const SCHEMAS = {
             key: 'rulesets',
             label: 'Rulesets',
             type: 'refs',
-            loader: () => Resources.wafRulesets.list(),
+            loader: (entities) => entities('waf-rulesets').list(),
             placeholder: 'Add a ruleset…',
             help: 'Applied in this order, before the inline rules',
           },
@@ -157,7 +155,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ WAF ruleset */
   'waf-rulesets': {
-    resource: () => Resources.wafRulesets,
     label: 'WAF ruleset',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Shared exclusions' },
@@ -177,7 +174,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ threat policy */
   'threat-policies': {
-    resource: () => Resources.threatPolicies,
     label: 'Threat policy',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Standard response' },
@@ -223,7 +219,7 @@ export const SCHEMAS = {
             key: 'challenge_provider',
             label: 'Challenge provider',
             type: 'ref',
-            loader: () => Resources.challengeProviders.list(),
+            loader: (entities) => entities('challenge-providers').list(),
             placeholder: 'First enabled one',
             help: 'What a challenge tier serves',
           },
@@ -276,7 +272,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ bot policy */
   'bot-policies': {
-    resource: () => Resources.botPolicies,
     label: 'Bot policy',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'AI crawlers' },
@@ -349,7 +344,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ challenge provider */
   'challenge-providers': {
-    resource: () => Resources.challengeProviders,
     label: 'Challenge provider',
     create: [{ key: 'name', label: 'Name', type: 'text', placeholder: 'Proof of work' }],
     sections: [
@@ -412,7 +406,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ honeypot */
   'honeypot-policies': {
-    resource: () => Resources.honeypotPolicies,
     label: 'Honeypot policy',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Decoy paths' },
@@ -461,7 +454,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ threat feed */
   'threat-feeds': {
-    resource: () => Resources.threatFeeds,
     label: 'Threat feed',
     create: [
       { key: 'name', label: 'Name', type: 'text' },
@@ -508,7 +500,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ alert rule */
   'alert-rules': {
-    resource: () => Resources.alertRules,
     label: 'Alert rule',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Enforced attacks to #security' },
@@ -584,7 +575,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ rule feed */
   'rule-feeds': {
-    resource: () => Resources.ruleFeeds,
     label: 'Rule feed',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Virtual patches' },
@@ -616,7 +606,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ api contract */
   'api-contracts': {
-    resource: () => Resources.apiContracts,
     label: 'API contract',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Orders API' },
@@ -643,7 +632,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ malware scanner */
   'malware-scanners': {
-    resource: () => Resources.malwareScanners,
     label: 'Malware scanner',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'ClamAV' },
@@ -684,7 +672,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ crowdsec */
   'crowdsec-bouncers': {
-    resource: () => Resources.crowdsecBouncers,
     label: 'CrowdSec bouncer',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Local CrowdSec' },
@@ -733,7 +720,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ asn database */
   'asn-databases': {
-    resource: () => Resources.asnDatabases,
     label: 'ASN database',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'ASN database' },
@@ -785,7 +771,6 @@ export const SCHEMAS = {
 
   /* ------------------------------------------------------------------ geolocation database */
   'geo-databases': {
-    resource: () => Resources.geoDatabases,
     label: 'Geolocation database',
     create: [
       { key: 'name', label: 'Name', type: 'text', placeholder: 'Geolocation database' },

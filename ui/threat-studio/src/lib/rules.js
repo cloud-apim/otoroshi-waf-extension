@@ -1,4 +1,5 @@
-import { api, EXT_API } from './api';
+import { backend } from './backend';
+import { currentWorkspace } from './platform';
 
 // What a rule id means, as the rulesets of the install define it: its message, or what the rule is
 // when it has none (a CRS setup rule, a paranoia level gate…), its family and whether it is plumbing
@@ -20,9 +21,14 @@ function flush() {
   for (let i = 0; i < batch.length; i += MAX_PER_CALL) ask(batch.slice(i, i + MAX_PER_CALL));
 }
 
+// asked of the workspace shown when there is one, of the gateway otherwise
+function describe(body) {
+  const ws = currentWorkspace();
+  return ws ? backend.run('rules.describe', ws, { body }) : backend.runGlobal('utils.rules', { body });
+}
+
 function ask(chunk) {
-  api
-    .post(`${EXT_API}/utils/_rules`, { ids: chunk.map(([id]) => id) })
+  describe({ ids: chunk.map(([id]) => id) })
     .then((res) => {
       const results = (res && res.results) || {};
       chunk.forEach(([id, resolve]) => resolve(results[id] || null));

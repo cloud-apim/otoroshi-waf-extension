@@ -1,4 +1,4 @@
-import { api } from './api';
+import { backend } from './backend';
 
 /**
  * The analytics of the suite, always asked of a *set* of routes.
@@ -87,22 +87,19 @@ export const Q = {
 export class NoExporterError extends Error {}
 
 /**
- * `scope` is the list of route ids the view is about — a workspace's claimed routes, or nothing at
- * all for the whole install.
+ * `workspace` is the id of the workspace the view is about, whose routes the api narrows every query to;
+ * without one, the query is about the whole install. A detail is one event, raw, which is its own operation.
  */
-export async function runQuery(query, { period = '7d', from, scope = [], params = {}, compare = false, bucket, signal } = {}) {
+export async function runQuery(query, { period = '7d', from, workspace, params = {}, compare = false, bucket } = {}) {
   const range = customRange(period);
   const p = PERIODS.find((x) => x.value === period) || PERIODS[2];
   const filters = range
     ? { from: from || new Date(range.from).toISOString(), to: new Date(range.to).toISOString() }
     : { from: from || p.from, to: 'now' };
-  const allParams = { ...params, ...(scope && scope.length > 0 ? { route_ids: scope } : {}) };
+  const body = { query, params, filters, compare, ...(bucket ? { bucket } : {}) };
   try {
-    return await api.post(
-      '/bo/api/proxy/api/analytics/_query',
-      { query, params: allParams, filters, compare, ...(bucket ? { bucket } : {}) },
-      { signal }
-    );
+    if (!workspace) return await backend.runGlobal('analytics.query', { body });
+    return await backend.run(query.endsWith('_detail') ? 'analytics.detail' : 'analytics.query', workspace, { body });
   } catch (e) {
     if (e.status === 412) throw new NoExporterError('no active user analytics exporter');
     throw e;

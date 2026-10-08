@@ -77,9 +77,9 @@ function ActionBadge({ row }) {
   );
 }
 
-function DecisionDrawer({ id, onClose, period, scope }) {
+function DecisionDrawer({ id, onClose, period, workspace }) {
   const detail = useAsync(
-    () => (id ? runQuery(Q.decisionDetail, { period, scope, params: { id } }).then((r) => itemsOf(r)[0] || null) : Promise.resolve(null)),
+    () => (id ? runQuery(Q.decisionDetail, { period, workspace, params: { id } }).then((r) => itemsOf(r)[0] || null) : Promise.resolve(null)),
     [id, period]
   );
   const raw = detail.data && detail.data.raw;
@@ -152,9 +152,9 @@ function DecisionDrawer({ id, onClose, period, scope }) {
   );
 }
 
-function WafTrailDrawer({ id, onClose, period, scope }) {
+function WafTrailDrawer({ id, onClose, period, workspace }) {
   const detail = useAsync(
-    () => (id ? runQuery(Q.wafTrailDetail, { period, scope, params: { id } }).then((r) => itemsOf(r)[0] || null) : Promise.resolve(null)),
+    () => (id ? runQuery(Q.wafTrailDetail, { period, workspace, params: { id } }).then((r) => itemsOf(r)[0] || null) : Promise.resolve(null)),
     [id, period]
   );
   const raw = detail.data && detail.data.raw;
@@ -298,7 +298,7 @@ function TrailRules({ ids, rules }) {
  * millisecond, and paging on the instant would drop every row sharing the one a page ended on —
  * silently, and exactly on the traffic this log exists to show.
  */
-function useLog(query, params, { period, scope, tick, onBusy, onLoaded }) {
+function useLog(query, params, { period, scope, workspace, tick, onBusy, onLoaded }) {
   const [rows, setRows] = useState([]);
   const [next, setNext] = useState(null);
   const [state, setState] = useState({ loading: true, refreshing: false, error: null });
@@ -309,7 +309,7 @@ function useLog(query, params, { period, scope, tick, onBusy, onLoaded }) {
     (cursor) =>
       runQuery(query, {
         period,
-        scope,
+        workspace,
         params: {
           ...params,
           limit: 100,
@@ -388,7 +388,7 @@ function useSearchParam(query, setQuery, name) {
 // the server sends a hundred rows at a time, read here 25 at a time
 const PAGE_SIZE = 25;
 
-function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
+function DecisionsLog({ period, scope, workspace, tick, onBusy, onLoaded, query, setQuery }) {
   const category = query.category || '';
   const action = query.action || '';
   const outcome = OUTCOMES.some((o) => o.value === query.outcome) ? query.outcome : 'all';
@@ -405,7 +405,7 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
     ...(outcome === 'all' ? {} : { enforced: outcome === 'enforced' }),
     ...(source.trim() ? { source: source.trim() } : {}),
   };
-  const log = useLog(Q.decisionsLog, params, { period, scope, tick, onBusy, onLoaded });
+  const log = useLog(Q.decisionsLog, params, { period, scope, workspace, tick, onBusy, onLoaded });
   const paged = usePaged(log.rows, PAGE_SIZE, JSON.stringify(params), { hasMore: !!log.next, loadMore: log.more, loading: log.loading });
 
   if (log.error instanceof NoExporterError) return <Card><NoExporter /></Card>;
@@ -465,7 +465,7 @@ function DecisionsLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }
         {log.loading && log.rows.length === 0 && <div style={{ padding: 16 }}><Loading /></div>}
         <Pager paged={paged} position="bottom" />
       </Card>
-      <DecisionDrawer id={open} onClose={() => setOpen(null)} period={period} scope={scope} />
+      <DecisionDrawer id={open} onClose={() => setOpen(null)} period={period} workspace={workspace} />
     </>
   );
 }
@@ -477,14 +477,14 @@ const TRAIL_FILTERS = [
   { value: 'would_block', label: 'Would have blocked' },
 ];
 
-function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
+function TrailLog({ period, scope, workspace, tick, onBusy, onLoaded, query, setQuery }) {
   const only = TRAIL_FILTERS.some((f) => f.value === query.only) ? query.only : '';
   const setOnly = (v) => setQuery({ only: v });
   const q = query.q || '';
   const [searchInput, setSearchInput] = useSearchParam(query, setQuery, 'q');
   const [open, setOpen] = useState(null);
   const params = { ...(only ? { only } : {}), ...(q ? { q } : {}) };
-  const log = useLog(Q.wafTrailLog, params, { period, scope, tick, onBusy, onLoaded });
+  const log = useLog(Q.wafTrailLog, params, { period, scope, workspace, tick, onBusy, onLoaded });
   const paged = usePaged(log.rows, PAGE_SIZE, JSON.stringify(params), { hasMore: !!log.next, loadMore: log.more, loading: log.loading });
   // the labels of the rules on the page, not of every rule loaded so far
   const rules = useRules(paged.shown.flatMap((row) => row.rule_ids || []));
@@ -552,7 +552,7 @@ function TrailLog({ period, scope, tick, onBusy, onLoaded, query, setQuery }) {
         {log.loading && log.rows.length === 0 && <div style={{ padding: 16 }}><Loading /></div>}
         <Pager paged={paged} position="bottom" />
       </Card>
-      <WafTrailDrawer id={open} onClose={() => setOpen(null)} period={period} scope={scope} />
+      <WafTrailDrawer id={open} onClose={() => setOpen(null)} period={period} workspace={workspace} />
     </>
   );
 }
@@ -573,7 +573,7 @@ export function LogsPage() {
   const [busy, setBusy] = useState(false);
   const [loadedAt, setLoadedAt] = useState(null);
   const scope = (workspace.claims || []).map((r) => r.id);
-  const logProps = { period, scope, tick, onBusy: setBusy, onLoaded: setLoadedAt, query, setQuery };
+  const logProps = { period, scope, workspace: workspace.id, tick, onBusy: setBusy, onLoaded: setLoadedAt, query, setQuery };
 
   return (
     <div className="content wide">

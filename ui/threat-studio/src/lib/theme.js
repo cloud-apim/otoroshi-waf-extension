@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from './api';
+import { backend } from './backend';
 import { bootstrap } from './bootstrap';
 
 /**
@@ -10,12 +10,11 @@ import { bootstrap } from './bootstrap';
  * backoffice user is what makes the choice follow them to another browser. The local copy wins on
  * read, because it is the one that cannot fail.
  *
- * The preference endpoint parses its body as json, so the value has to be sent as a json string —
- * posting the bare word silently 500s and the choice is lost on the next reload.
+ * The preference is saved through the backend (lib/backend.js), which sends it as the json the
+ * preference endpoint parses: posting the bare word silently 500s and the choice is lost on reload.
  */
 
 export const STORAGE_KEY = 'threat_studio_theme';
-const PREFERENCE = `/bo/api/me/preferences/${STORAGE_KEY}`;
 export const THEMES = ['light', 'dark', 'system'];
 
 function systemTheme() {
@@ -71,8 +70,7 @@ export function useTheme() {
     setPreference(value);
     bootstrap.theme = value;
     remember(value);
-    // a json string, not the bare word: the endpoint parses its body
-    api.post(PREFERENCE, JSON.stringify(value)).catch(() => {});
+    backend.prefs.set(STORAGE_KEY, value).catch(() => {});
   };
 
   return { theme, preference, choose };

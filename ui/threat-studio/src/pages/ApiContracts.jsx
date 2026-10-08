@@ -3,7 +3,8 @@ import { useStudio } from '../App';
 import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
 import { Badge, Card, PageHeader, TextInput, useAsync, useToast } from '../components/ui';
-import { createEntity, seedFor } from '../lib/create';
+import { seedFor } from '../lib/create';
+import { useEntities } from '../lib/scope';
 import { Resources } from '../lib/entities';
 import { Link } from '../lib/router';
 import { Security } from '../lib/security';
@@ -56,6 +57,7 @@ function Compiled({ contract }) {
 export function ApiContractsPage() {
   const toast = useToast();
   const studio = useStudio();
+  const contractsResource = useEntities()('api-contracts');
   const contracts = useAsync(() => Resources.apiContracts.list(), []);
   const routes = useAsync(() => Resources.routes.list(), []);
 
@@ -102,10 +104,10 @@ export function ApiContractsPage() {
           toast.error(r.error);
           return;
         }
-        const seed = await seedFor('api-contracts', {
+        const seed = await seedFor(contractsResource, {
           patch: { spec: r.spec, name: titleOf(r.spec) || 'Imported contract', description: `Imported from ${url.trim()}` },
         });
-        const created = await createEntity('api-contracts', seed);
+        const created = await contractsResource.create(seed);
         setUrl('');
         contracts.reload();
         setEditing(created);

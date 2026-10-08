@@ -12,9 +12,9 @@ import {
   Toggle,
   useToast,
 } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
+import { hasPermission } from '../lib/platform';
 import { Link } from '../lib/router';
-import { emptyTarget, replaceWorkspace, saveTable } from '../lib/workspaces';
+import { emptyTarget, saveScope } from '../lib/workspaces';
 
 /**
  * The selector, written out.
@@ -104,10 +104,11 @@ function TargetRow({ target, onChange, onRemove, disabled }) {
 }
 
 export function ScopePage() {
-  const { workspace, table } = useWorkspace();
+  const { workspace } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
-  const writable = canWrite();
+  // which routes a workspace claims decides what every other one claims: the table's administrators decide it
+  const writable = hasPermission('admin');
   const [targets, setTargets] = useState(workspace.targets || []);
   const [skip, setSkip] = useState(!!workspace.skip);
   const [busy, setBusy] = useState(false);
@@ -122,7 +123,7 @@ export function ScopePage() {
 
   const save = () => {
     setBusy(true);
-    saveTable(replaceWorkspace(table, workspace.id, (w) => ({ ...w, targets, skip })))
+    saveScope(workspace.id, { targets, skip })
       .then(() => {
         studio.reload();
         toast.success('Scope saved');

@@ -6,6 +6,7 @@ import { Card, ErrorAlert, Loading, PageHeader, Pager, Segmented, TextInput, use
 import { fmtInt } from '../lib/format';
 import { Link } from '../lib/router';
 import { Security } from '../lib/security';
+import { adminLink } from '../lib/platform';
 
 const FILTERS = [
   { value: 'all', label: 'All' },
@@ -154,15 +155,17 @@ export function FleetPage() {
                           <PostureMarks posture={r} />
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          <a
-                            className="copy-btn"
-                            href={`/bo/dashboard/routes/${r.route_id}?tab=flow`}
-                            target="_blank"
-                            rel="noreferrer"
-                            title="Open this route in Otoroshi"
-                          >
-                            <Icon name="external" />
-                          </a>
+                          {adminLink('/routes') && (
+                            <a
+                              className="copy-btn"
+                              href={adminLink(`/routes/${r.route_id}?tab=flow`)}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Open this route in Otoroshi"
+                            >
+                              <Icon name="external" />
+                            </a>
+                          )}
                         </td>
                       </tr>
                     ))}

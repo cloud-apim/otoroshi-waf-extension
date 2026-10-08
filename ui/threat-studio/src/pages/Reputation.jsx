@@ -1,11 +1,11 @@
-import { useStudio, useWorkspace } from '../App';
+import { useCan, useStudio, useWorkspace } from '../App';
 import { Icon } from '../components/icons';
 import { Badge, Card, Loading, PageHeader, Segmented, useAsync, useToast } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
 import { Link } from '../lib/router';
-import { Resources } from '../lib/entities';
+import { useEntities } from '../lib/scope';
 import { fmtInt } from '../lib/format';
-import { PRESET_DEFAULTS, replaceWorkspace, saveTable } from '../lib/workspaces';
+import { hasPermission } from '../lib/platform';
+import { PRESET_DEFAULTS, savePreset } from '../lib/workspaces';
 
 /**
  * Reputation is a workspace decision only in its mode.
@@ -15,22 +15,27 @@ import { PRESET_DEFAULTS, replaceWorkspace, saveTable } from '../lib/workspaces'
  * shows is the mode — the part that is a choice here — and then what the install will consult.
  */
 export function ReputationPage() {
-  const { workspace, table } = useWorkspace();
+  const { workspace } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
-  const writable = canWrite();
+  const writable = useCan()('config:write');
+  const entities = useEntities();
   const preset = { ...PRESET_DEFAULTS, ...(workspace.preset || {}) };
+  // the sources are the gateway's: who may read its configuration sees them
+  const install = hasPermission('admin:read');
 
   const sources = useAsync(
     () =>
-      Promise.all([Resources.threatFeeds.list(), Resources.asnDatabases.list(), Resources.crowdsecBouncers.list()]).then(
-        ([feeds, asn, crowdsec]) => ({ feeds, asn, crowdsec })
-      ),
+      install
+        ? Promise.all([entities('threat-feeds').list(), entities('asn-databases').list(), entities('crowdsec-bouncers').list()]).then(
+            ([feeds, asn, crowdsec]) => ({ feeds, asn, crowdsec })
+          )
+        : Promise.resolve(null),
     []
   );
 
   const set = (patch) =>
-    saveTable(replaceWorkspace(table, workspace.id, (w) => ({ ...w, preset: { ...preset, ...patch } })))
+    savePreset(workspace.id, patch)
       .then(() => {
         studio.reload();
         toast.success('Saved');
@@ -74,6 +79,8 @@ export function ReputationPage() {
           <Loading />
         ) : sources.error ? (
           <p className="muted">Could not read the sources.</p>
+        ) : !sources.data ? (
+          <p className="muted">The sources are set for the whole gateway, by its administrators.</p>
         ) : (
           <>
             <div className="setting-row" style={{ paddingTop: 4 }}>

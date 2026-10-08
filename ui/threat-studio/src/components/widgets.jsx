@@ -4,6 +4,7 @@ import { Icon } from './icons';
 import { Empty, Segmented, Select, Toggle } from './ui';
 import { fmtDate, fmtInt, fmtNumber, fmtPercent } from '../lib/format';
 import { customRange, isPeriod, itemsOf, PERIODS, rangePeriod } from '../lib/analytics';
+import { adminLink } from '../lib/platform';
 
 // `<input type="datetime-local">` speaks local wall-clock time without a zone: `2026-09-25T14:30`
 const pad = (n) => String(n).padStart(2, '0');
@@ -432,10 +433,14 @@ export function NoExporter() {
       <p className="muted" style={{ marginTop: 10 }}>
         Everything that reads live state instead — coverage, bans, incidents, tuning and learning — works without it.
       </p>
-      <a className="btn primary" style={{ marginTop: 14 }} href="/bo/dashboard/exporters" target="_blank" rel="noreferrer">
-        <Icon name="external" />
-        Configure a data exporter
-      </a>
+      {adminLink('/exporters') ? (
+        <a className="btn primary" style={{ marginTop: 14 }} href={adminLink('/exporters')} target="_blank" rel="noreferrer">
+          <Icon name="external" />
+          Configure a data exporter
+        </a>
+      ) : (
+        <p className="muted" style={{ marginTop: 10 }}>An administrator of the gateway sets one up.</p>
+      )}
     </Empty>
   );
 }

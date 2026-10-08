@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useStudio, useWorkspace } from '../App';
+import { useCan, useStudio, useWorkspace } from '../App';
 import { Icon } from '../components/icons';
 import {
   Badge,
@@ -17,18 +17,17 @@ import {
   useConfirm,
   useToast,
 } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
 import { Link } from '../lib/router';
-import { Resources } from '../lib/entities';
+import { useEntities } from '../lib/scope';
 import {
   CONTRACT_META,
   enforcementOf,
+  loadWorkspaceRoutes,
   PRESET_DEFAULTS,
-  replaceWorkspace,
-  routeContractOps,
-  saveTable,
+  savePreset,
   SECTIONS,
   SENSITIVE_DETECTORS,
+  setRouteContract,
 } from '../lib/workspaces';
 
 /**
@@ -38,19 +37,17 @@ import {
  */
 function RouteContracts({ workspace, contracts, writable }) {
   const toast = useToast();
-  const ids = new Set((workspace.claims || []).map((r) => r.id));
-  const routes = useAsync(() => Resources.routes.list().then((all) => all.filter((r) => ids.has(r.id))), [workspace.id, ids.size]);
+  const claims = (workspace.claims || []).length;
+  const routes = useAsync(() => loadWorkspaceRoutes(workspace.id).then((r) => (r && r.routes) || []), [workspace.id, claims]);
   const [busy, setBusy] = useState(null);
 
   const link = (route, contractId) => {
-    const ops = routeContractOps(route, contractId);
-    if (ops.length === 0) return;
-    setBusy(route.id);
-    Resources.routes
-      .patch(route.id, ops)
+    if ((route.contract || '') === (contractId || '')) return;
+    setBusy(route.route_id);
+    setRouteContract(workspace.id, route.route_id, contractId)
       .then(() => {
         const c = contracts.find((x) => x.id === contractId);
-        toast.success(c ? `${route.name} is checked against ${c.name}` : `${route.name} names no contract any more`);
+        toast.success(c ? `${route.route_name} is checked against ${c.name}` : `${route.route_name} names no contract any more`);
         routes.reload();
       })
       .catch(toast.error)
@@ -70,14 +67,14 @@ function RouteContracts({ workspace, contracts, writable }) {
       </thead>
       <tbody>
         {routes.data.map((r) => (
-          <tr key={r.id}>
-            <td>{r.name}</td>
+          <tr key={r.route_id}>
+            <td>{r.route_name}</td>
             <td>
               <Select
-                value={(r.metadata || {})[CONTRACT_META] || ''}
+                value={r.contract || ''}
                 onChange={(v) => link(r, v)}
                 options={options}
-                disabled={!writable || busy === r.id}
+                disabled={!writable || busy === r.route_id}
               />
             </td>
           </tr>
@@ -95,11 +92,12 @@ function RouteContracts({ workspace, contracts, writable }) {
  * switches. A section switched off expands into nothing at all, not into a disabled plugin.
  */
 export function ProtectionPage() {
-  const { workspace, table } = useWorkspace();
+  const { workspace } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
   const confirm = useConfirm();
-  const writable = canWrite();
+  const writable = useCan()('config:write');
+  const entities = useEntities();
 
   const [preset, setPreset] = useState({ ...PRESET_DEFAULTS, ...(workspace.preset || {}) });
   const [busy, setBusy] = useState(false);
@@ -111,11 +109,11 @@ export function ProtectionPage() {
   const refs = useAsync(
     () =>
       Promise.all([
-        Resources.threatPolicies.list(),
-        Resources.botPolicies.list(),
-        Resources.wafConfigs.list(),
-        Resources.malwareScanners.list(),
-        Resources.apiContracts.list(),
+        entities('threat-policies').list(),
+        entities('bot-policies').list(),
+        entities('waf-configs').list(),
+        entities('malware-scanners').list(),
+        entities('api-contracts').list(),
       ]).then(([policies, bots, configs, scanners, contracts]) => ({ policies, bots, configs, scanners, contracts })),
     []
   );
@@ -139,7 +137,7 @@ export function ProtectionPage() {
       if (!ok) return;
     }
     setBusy(true);
-    saveTable(replaceWorkspace(table, workspace.id, (w) => ({ ...w, preset })))
+    savePreset(workspace.id, preset)
       .then(() => {
         studio.reload();
         toast.success('Protection saved');

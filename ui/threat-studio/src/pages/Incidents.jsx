@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Icon } from '../components/icons';
 import { GeoRows, IpAddress } from '../components/ip';
 import {
@@ -23,18 +23,20 @@ import {
 import { DataTable, NoExporter } from '../components/widgets';
 import { fmtDate, fmtInt, fmtRelative } from '../lib/format';
 import { itemsOf, NoExporterError, Q, runQuery } from '../lib/analytics';
-import { Security } from '../lib/security';
+import { hasPermission } from '../lib/platform';
+import { Security, workspaceSecurity } from '../lib/security';
 
 /**
  * The console during an incident, rather than the report afterwards.
  *
- * Two halves that answer different questions. The first is this workspace's traffic, from the
- * analytics. The second is live state — what the fabric is holding *right now* — and that half is
- * install-wide by construction: a ban is issued against a caller, not against a route, and is
- * enforced everywhere. Pretending it could be scoped to a workspace would be a comfortable lie.
+ * This workspace's traffic first, from the analytics. Then live state — what the fabric is holding
+ * *right now* — which is about callers, not routes: a ban is issued against a caller and enforced on
+ * every route. So the workspace is shown the callers seen on its own routes and its routes' part of
+ * what they did, acts on what it saw, and lifts what it banned; the whole of the live state, with the
+ * allowlist, is the install's.
  */
 
-function BanDrawer({ entry, onClose, onAction }) {
+function BanDrawer({ entry, onClose, onAction, canAct, install }) {
   if (!entry) return null;
   return (
     <Drawer open title="Ban" onClose={onClose}>
@@ -70,17 +72,24 @@ function BanDrawer({ entry, onClose, onAction }) {
           </table>
         </>
       )}
-      <div className="row" style={{ gap: 8, marginTop: 22 }}>
-        <button className="btn" onClick={() => onAction('extend', entry)}>
-          Extend by an hour
-        </button>
-        <button className="btn danger" onClick={() => onAction('unban', entry)}>
-          Lift the ban
-        </button>
-        <button className="btn" onClick={() => onAction('allow', entry)}>
-          Allowlist
-        </button>
-      </div>
+      {(entry.timeline_elsewhere || 0) > 0 && (
+        <p className="faint small">And {entry.timeline_elsewhere} event{entry.timeline_elsewhere === 1 ? '' : 's'} on routes of other workspaces.</p>
+      )}
+      {canAct && (
+        <div className="row" style={{ gap: 8, marginTop: 22 }}>
+          <button className="btn" onClick={() => onAction('extend', entry)}>
+            Extend by an hour
+          </button>
+          <button className="btn danger" onClick={() => onAction('unban', entry)}>
+            Lift the ban
+          </button>
+          {install && (
+            <button className="btn" onClick={() => onAction('allow', entry)}>
+              Allowlist
+            </button>
+          )}
+        </div>
+      )}
     </Drawer>
   );
 }
@@ -92,7 +101,7 @@ function BanDrawer({ entry, onClose, onAction }) {
  * fabric already issued. A manual ban is issued against an identity — an IP by default — for a
  * duration, and enforced on every route of the install.
  */
-function BanModal({ open, onClose, onBanned }) {
+function BanModal({ open, onClose, onBanned, sec }) {
   const toast = useToast();
   const [kind, setKind] = useState('ip');
   const [value, setValue] = useState('');
@@ -111,7 +120,7 @@ function BanModal({ open, onClose, onBanned }) {
 
   const ban = () => {
     setBusy(true);
-    Security.ban({
+    sec.ban({
       ref: `${kind}:${value.trim()}`,
       duration_seconds: Math.max(1, Math.round(Number(hours) * 3600)),
       reason: reason.trim() || 'banned from Threat Studio',
@@ -172,16 +181,19 @@ function matches(needle, ...values) {
   return !needle || values.some((v) => (Array.isArray(v) ? v.join(' ') : String(v || '')).toLowerCase().includes(needle));
 }
 
-function LiveState() {
+/** `workspaceId` narrows the live state to what a workspace saw; without one it is the install's, whole. */
+function LiveState({ workspaceId, canAct }) {
   const toast = useToast();
   const confirm = useConfirm();
+  const install = !workspaceId;
+  const sec = install ? Security : workspaceSecurity(workspaceId);
   const [open, setOpen] = useState(null);
   const [banning, setBanning] = useState(false);
   const [search, setSearch] = useState('');
-  const bans = useAsync(() => Security.bans(), []);
-  const incidents = useAsync(() => Security.incidents(), []);
-  const allowlist = useAsync(() => Security.allowlist(), []);
-  const status = useAsync(() => Security.status(), []);
+  const bans = useAsync(() => sec.bans(), [workspaceId]);
+  const incidents = useAsync(() => sec.incidents(), [workspaceId]);
+  const allowlist = useAsync(() => (install ? Security.allowlist() : Promise.resolve({ entries: [] })), [workspaceId]);
+  const status = useAsync(() => (install ? Security.status() : Promise.resolve(null)), [workspaceId]);
 
   // one search for the three lists: during an incident the question is about one caller, everywhere
   const needle = search.trim().toLowerCase();
@@ -205,10 +217,10 @@ function LiveState() {
     if (kind === 'unban') {
       const ok = await confirm({ title: 'Lift this ban?', message: `${entry.key} will be let through again.`, danger: true, confirmLabel: 'Lift' });
       if (!ok) return;
-      await Security.unban({ ref }).then(() => toast.success('Ban lifted')).catch(toast.error);
+      await sec.unban({ ref }).then(() => toast.success('Ban lifted')).catch(toast.error);
     }
     if (kind === 'extend') {
-      await Security.extend({ ref, duration_seconds: 3600 }).then(() => toast.success('Ban extended')).catch(toast.error);
+      await sec.extend({ ref, duration_seconds: 3600 }).then(() => toast.success('Ban extended')).catch(toast.error);
     }
     if (kind === 'allow') {
       const ok = await confirm({
@@ -241,12 +253,18 @@ function LiveState() {
         className="flush"
         style={{ marginTop: 16, marginBottom: 18 }}
         title="What the fabric is holding now"
-        description="Bans are issued against a caller and enforced on every route of the install."
+        description={
+          install
+            ? 'Bans are issued against a caller and enforced on every route of the install.'
+            : 'The bans this workspace issued, and the ones whose evidence is on its routes. A ban is enforced on every route of the install.'
+        }
         actions={
-          <button className="btn sm danger" onClick={() => setBanning(true)}>
-            <Icon name="ban" />
-            Ban an address
-          </button>
+          canAct && (
+            <button className="btn sm danger" onClick={() => setBanning(true)}>
+              <Icon name="ban" />
+              {install ? 'Ban an address' : 'Ban a caller seen here'}
+            </button>
+          )
         }
       >
         <Pager paged={bansPaged} position="top" />
@@ -290,7 +308,15 @@ function LiveState() {
       </Card>
 
       <div className="grid c2">
-        <Card className="flush" title="Incidents" description="What the fabric is still watching, merged across every node.">
+        <Card
+          className="flush"
+          title="Incidents"
+          description={
+            install
+              ? 'What the fabric is still watching, merged across every node.'
+              : 'The callers seen on this workspace’s routes, and where this workspace is with each one.'
+          }
+        >
           <Pager paged={incidentsPaged} position="top" />
           {incidents.loading ? (
             <div style={{ padding: 20 }}><Loading /></div>
@@ -318,8 +344,9 @@ function LiveState() {
                       <td>
                         <Select
                           value={i.state || 'open'}
+                          disabled={!canAct}
                           onChange={(v) =>
-                            Security.incidentState({ key: i.key, state: v })
+                            sec.incidentState({ key: i.key, state: v })
                               .then(() => {
                                 toast.success('Incident moved');
                                 incidents.reload();
@@ -351,6 +378,7 @@ function LiveState() {
           <Pager paged={incidentsPaged} position="bottom" />
         </Card>
 
+        {install && (
         <Card className="flush" title="Allowlist" description="What the fabric has been told to leave alone, on every route.">
           <Pager paged={allowPaged} position="top" />
           {allowlist.loading ? (
@@ -400,17 +428,18 @@ function LiveState() {
           )}
           <Pager paged={allowPaged} position="bottom" />
         </Card>
+        )}
       </div>
 
-      <BanDrawer entry={open} onClose={() => setOpen(null)} onAction={action} />
-      <BanModal open={banning} onClose={() => setBanning(false)} onBanned={reload} />
+      <BanDrawer entry={open} onClose={() => setOpen(null)} onAction={action} canAct={canAct} install={install} />
+      <BanModal open={banning} onClose={() => setBanning(false)} onBanned={reload} sec={sec} />
     </>
   );
 }
 
-function WorkspaceIncidents({ scope }) {
+function WorkspaceIncidents({ workspaceId }) {
   const [search, setSearch] = useState('');
-  const state = useAsync(() => runQuery(Q.topIncidents, { period: '7d', scope, params: { top_n: 200 } }), [scope.join(',')]);
+  const state = useAsync(() => runQuery(Q.topIncidents, { period: '7d', workspace: workspaceId, params: { top_n: 200 } }), [workspaceId]);
   const needle = search.trim().toLowerCase();
   const rows = (state.data && !state.error ? itemsOf(state.data) : []).filter((row) => !needle || String(row.source || '').toLowerCase().includes(needle));
   const paged = usePaged(rows, 20, needle);
@@ -446,15 +475,15 @@ function WorkspaceIncidents({ scope }) {
   );
 }
 
-const TABS = [
-  { value: 'workspace', label: 'This workspace' },
-  { value: 'live', label: 'Live state (install-wide)' },
-];
-
 export function IncidentsPage() {
   const { workspace } = useWorkspace();
+  const can = useCan();
   const [tab, setTab] = useState('workspace');
-  const scope = (workspace.claims || []).map((r) => r.id);
+  const TABS = [
+    { value: 'workspace', label: 'This workspace' },
+    { value: 'live', label: 'Live state' },
+    ...(hasPermission('admin:read') ? [{ value: 'install', label: 'Live state (install-wide)' }] : []),
+  ];
 
   return (
     <div className="content wide">
@@ -463,7 +492,9 @@ export function IncidentsPage() {
         description="Who is being stopped, on what evidence, and what to do about them."
       />
       <Tabs tabs={TABS} value={tab} onChange={setTab} />
-      {tab === 'workspace' ? <WorkspaceIncidents scope={scope} /> : <LiveState />}
+      {tab === 'workspace' && <WorkspaceIncidents workspaceId={workspace.id} />}
+      {tab === 'live' && <LiveState workspaceId={workspace.id} canAct={can('incidents:respond')} />}
+      {tab === 'install' && <LiveState canAct={hasPermission('admin')} />}
     </div>
   );
 }

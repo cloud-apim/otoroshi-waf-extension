@@ -304,8 +304,12 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     val table   = s.resolve(routes)
     val claimed = routes.filter(r => claimedBy(table, r, id))
     val also    = routes.filter(r => table.governanceOf.get(r.id).exists(_.alsoMatched.contains(id)))
+    // with the contract each route names for itself, which the workspace's pages set
     def postures(rs: Seq[NgRoute]): JsArray =
-      JsArray(rs.filter(readable).map(r => PostureReport.of(r, table.governanceOf.getOrElse(r.id, RouteGovernance.none)).json))
+      JsArray(rs.filter(readable).map { r =>
+        PostureReport.of(r, table.governanceOf.getOrElse(r.id, RouteGovernance.none)).json.as[JsObject] ++
+        Json.obj("contract" -> Json.toJson(r.metadata.get(ContractMeta)))
+      })
     Json.obj(
       "routes"        -> postures(claimed),
       "also_matched"  -> postures(also),
