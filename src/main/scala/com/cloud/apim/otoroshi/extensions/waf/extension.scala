@@ -1,5 +1,6 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf
 
+import com.cloud.apim.otoroshi.extensions.waf.access.BackofficeAccess
 import com.cloud.apim.otoroshi.extensions.waf.entities.*
 import com.cloud.apim.otoroshi.extensions.waf.reputation.ReputationModule
 import com.cloud.apim.otoroshi.extensions.waf.security.SecurityModule
@@ -713,7 +714,8 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
 
   override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = security.adminApiRoutes()
 
-  override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
+  // every route goes through the guard, so one added later is closed by default
+  override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = BackofficeAccess.guard(Seq(
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
       path = "/extensions/cloud-apim/extensions/waf/utils/_compile",
@@ -732,7 +734,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleDescribeRules(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ feeds.backofficeAuthRoutes() ++ studio.backofficeRoutes
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ feeds.backofficeAuthRoutes() ++ studio.backofficeRoutes)
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext
