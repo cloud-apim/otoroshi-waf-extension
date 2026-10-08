@@ -148,7 +148,12 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     "workspace-bans",
     "route-contract",
     "workspace-lookups",
-    "module-routes"
+    "module-routes",
+    "workspace-entities",
+    "entity-ownership",
+    "secret-sentinel",
+    "workspace-tuning",
+    "workspace-learning"
   )
 
   // what a caller may do on a workspace, in the words of the studio front
@@ -812,6 +817,230 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
+  // the entities of a workspace
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  private lazy val kindEntities: Map[String, StudioEntities] =
+    StudioKind.all.map(k => k.plural -> new StudioEntities(StudioKind.Group, k.plural)).toMap
+
+  private def entitiesOf(kind: StudioKind): StudioEntities = kindEntities(kind.plural)
+
+  private def kindOf(name: String): StudioKind =
+    StudioKind.of(name).filter(_.referenceable).getOrElse(throw notFound(s"'$name' is not something a workspace has"))
+
+  private val Rulesets           = StudioKind.of("waf-rulesets").get
+  private val ChallengeProviders = StudioKind.of("challenge-providers").get
+
+  /** Every entity of the suite and who names it, as of now. */
+  private def graph(sc: Scope): Future[EntityGraph] = {
+    val potential = sc.stored.potential(sc.routes, sc.table)
+    val claims    = sc.stored.config.rules
+      .map(r => r.id -> sc.routes.filter(route => claimedBy(potential, route, r.id)).map(_.id).toSet)
+      .toMap
+    Future
+      .sequence(StudioKind.all.map(k => entitiesOf(k).everything().map(_.map(k -> _))))
+      .map(all => new EntityGraph(all.flatten, sc.stored.config.rules, sc.routes, ws => claims.getOrElse(ws, Set.empty)))
+  }
+
+  private def itemJson(g: EntityGraph, sc: Scope, entity: JsObject): JsObject = {
+    val id = EntityGraph.idOf(entity)
+    Json.obj(
+      "entity"    -> entity,
+      "ownership" -> (if (g.owns(sc.rule.id, id)) "workspace" else "shared"),
+      "usage"     -> g.usage(sc.rule.id, id),
+      // installed by a rule feed: whatever is written here, the next pack replaces
+      "managed"   -> entity.select("metadata").select("managed_by").asOpt[String].isDefined
+    )
+  }
+
+  private def visibleEntity(g: EntityGraph, sc: Scope, kind: StudioKind, id: String)(using call: ThreatStudioApiRequest): Future[JsObject] =
+    if (!g.visible(sc.rule.id, kind, id)) Future.failed(notFound(s"no such ${kind.plural} '$id'"))
+    else entitiesOf(kind).get(id).map(_.getOrElse(throw notFound(s"no such ${kind.plural} '$id'")))
+
+  private def ownEntity(g: EntityGraph, sc: Scope, kind: StudioKind, id: String)(using call: ThreatStudioApiRequest): Future[JsObject] =
+    visibleEntity(g, sc, kind, id).map { e =>
+      if (!g.owns(sc.rule.id, id))
+        throw conflict(s"this ${kind.plural} is shared with what is outside the workspace: copy it into the workspace to change it", Json.obj("shared_entity" -> id))
+      e
+    }
+
+  /** What an entity of the workspace names has to be visible to the workspace. */
+  private def checkRefs(g: EntityGraph, sc: Scope, kind: StudioKind, entity: JsObject, current: Option[JsObject]): Unit = {
+    def changed(field: String): Boolean = current.forall(c => c.select(field).asOpt[JsValue] != entity.select(field).asOpt[JsValue])
+    val refs: Seq[(StudioKind, String)] = kind.plural match {
+      case "waf-configs" if changed("rulesets")               =>
+        entity.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty).map(Rulesets -> _)
+      case "threat-policies" if changed("challenge_provider") =>
+        entity.select("challenge_provider").asOpt[String].filter(_.nonEmpty).toSeq.map(ChallengeProviders -> _)
+      case _                                                  => Seq.empty
+    }
+    refs.foreach { case (k, id) => if (!g.visible(sc.rule.id, k, id)) throw notFound(s"no such ${k.plural} '$id'") }
+  }
+
+  /** The entities a preset names, when it changes them, have to be visible to the workspace. */
+  private def checkPresetRefs(g: EntityGraph, ws: String, before: CloudApimSecuritySuitePresetConfig, after: CloudApimSecuritySuitePresetConfig): Unit = {
+    val b = before.json
+    val a = after.json
+    StudioKind.referenceable.flatMap(k => k.presetField.map(k -> _)).foreach { case (kind, field) =>
+      val ref = a.select(field).asOpt[String].filter(_.nonEmpty)
+      if (ref != b.select(field).asOpt[String].filter(_.nonEmpty)) ref.foreach { id =>
+        if (!g.visible(ws, kind, id)) throw notFound(s"no such ${kind.plural} '$id'")
+      }
+    }
+  }
+
+  // where the entities a caller creates go: for a caller limited to some teams, the teams it may write,
+  // so it still sees what it created; anyone else keeps the location of the template
+  private def locationFor(using call: ThreatStudioApiRequest): Option[JsObject] = call.backOfficeUser match {
+    case Right(Some(user)) if !(user.rights.superAdmin || user.rights.tenantAdmin(call.currentTenant)) =>
+      val tenant = call.currentTenant.value
+      val teams  = user.rights.rights
+        .filter(r => r.tenant.value == "*" || r.tenant.value == tenant)
+        .flatMap(_.teams)
+        .filter(t => t.canWrite && !t.value.startsWith("*"))
+        .map(_.value)
+        .distinct
+      Some(Json.obj("tenant" -> tenant, "teams" -> teams))
+    case _ => None
+  }
+
+  private def marked(sc: Scope, kind: StudioKind, entity: JsObject): JsObject =
+    entity ++ Json.obj(
+      "metadata" -> (entity.select("metadata").asOpt[JsObject].getOrElse(Json.obj()) ++
+        Json.obj(EntityGraph.Mark -> sc.rule.id, EntityGraph.KindMark -> kind.plural))
+    )
+
+  private def createEntity(sc: Scope, kind: StudioKind, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
+    graph(sc).flatMap { g =>
+      val seeded = entitiesOf(kind).template() ++ (form - "id")
+      checkRefs(g, sc, kind, seeded, None)
+      val located = if (form.value.contains("_loc")) seeded else locationFor.fold(seeded)(loc => seeded ++ Json.obj("_loc" -> loc))
+      entitiesOf(kind).create(marked(sc, kind, located)).map(saved => Results.Created(Json.obj("entity" -> saved, "ownership" -> "workspace")))
+    }
+
+  private def updateEntity(sc: Scope, kind: StudioKind, id: String, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
+    graph(sc).flatMap { g =>
+      ownEntity(g, sc, kind, id).flatMap { current =>
+        val next = SecretSentinel.unmasked(form, current).as[JsObject] ++ Json.obj("id" -> id)
+        checkRefs(g, sc, kind, next, Some(current))
+        entitiesOf(kind).update(marked(sc, kind, next)).map(saved => Results.Ok(Json.obj("entity" -> saved, "ownership" -> "workspace")))
+      }
+    }
+
+  private def deleteEntity(sc: Scope, kind: StudioKind, id: String)(using call: ThreatStudioApiRequest): Future[Result] =
+    graph(sc).flatMap { g =>
+      ownEntity(g, sc, kind, id).flatMap { _ =>
+        if (g.referencersOf(id).nonEmpty) throw conflict(s"this ${kind.plural} is still used", Json.obj("usage" -> g.usage(sc.rule.id, id)))
+        entitiesOf(kind).delete(id).map(_ => Results.NoContent)
+      }
+    }
+
+  /**
+   * A copy of an entity the workspace may see, made its own, and in place of the original in the
+   * preset when asked: how a workspace changes something it shares.
+   */
+  private def forkEntity(sc: Scope, kind: StudioKind, id: String, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
+    graph(sc).flatMap { g =>
+      visibleEntity(g, sc, kind, id).flatMap { source =>
+        val template = entitiesOf(kind).template()
+        val name     = form.select("name").asOpt[String].map(_.trim).filter(_.nonEmpty)
+          .getOrElse(s"${source.select("name").asOpt[String].getOrElse(id)} (copy)")
+        val copy     = (source - "_loc" - "metadata") ++ Json.obj(
+          "id"       -> EntityGraph.idOf(template),
+          "name"     -> name,
+          "metadata" -> Json.obj(),
+          "_loc"     -> locationFor.orElse(source.select("_loc").asOpt[JsObject]).getOrElse(Json.obj())
+        )
+        entitiesOf(kind).create(marked(sc, kind, copy)).flatMap { saved =>
+          val newId = EntityGraph.idOf(saved)
+          (kind.presetField, form.select("use").asOpt[Boolean].getOrElse(false)) match {
+            case (Some(field), true) =>
+              mutate("fork_into_preset") { before =>
+                before.replace(sc.rule.id)(rule => rule.copy(preset = presetFrom(rule.preset.json.asObject ++ Json.obj(field -> newId))))
+              }.map(_ => Results.Created(Json.obj("entity" -> saved, "ownership" -> "workspace", "used" -> true)))
+            case _                   => Results.Created(Json.obj("entity" -> saved, "ownership" -> "workspace", "used" -> false)).vfuture
+          }
+        }
+      }
+    }
+
+  // ---------------------------------------------------------------------------------------------
+  // tuning, learning and compilation, on what the workspace may change
+  // ---------------------------------------------------------------------------------------------
+
+  private val WafConfigs = StudioKind.of("waf-configs").get
+
+  private def delegateJson(route: AdminExtensionBackofficeAuthRoute, body: JsValue)(using call: ThreatStudioApiRequest): Future[(Int, JsValue)] =
+    delegate(route, body).flatMap { result =>
+      result.body.consumeData.map(bytes => (result.header.status, Try(Json.parse(bytes.utf8String)).getOrElse(JsNull)))
+    }
+
+  /** The false positive candidates of the workspace's routes. */
+  private def matchesOf(sc: Scope)(using call: ThreatStudioApiRequest): Future[(Int, JsObject, Seq[JsObject])] = {
+    val ids = sc.visibleIds
+    delegateJson(moduleRoute("GET", "tuning/_matches"), JsNull).map { case (status, json) =>
+      val mine = (json \ "matches").asOpt[Seq[JsObject]].getOrElse(Seq.empty).filter(m => (m \ "route_id").asOpt[String].exists(ids.contains))
+      (status, json.asOpt[JsObject].getOrElse(Json.obj()), mine)
+    }
+  }
+
+  private def sampleOf(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Option[JsObject]] =
+    form.select("sample_id").asOpt[String] match {
+      case None     => None.vfuture
+      case Some(id) =>
+        matchesOf(sc).map { case (_, _, mine) =>
+          Some(mine.find(m => (m \ "id").asOpt[String].contains(id) || (m \ "key").asOpt[String].contains(id)).getOrElse(throw notFound("no such sample on this workspace")))
+        }
+    }
+
+  private def configRefOf(form: JsObject, sample: Option[JsObject]): String =
+    form.select("config_ref").asOpt[String].filter(_.nonEmpty)
+      .orElse(sample.flatMap(s => (s \ "config_ref").asOpt[String]))
+      .getOrElse(throw badRequest("'config_ref' is required"))
+
+  /** What tuning and learning write for a config of the workspace is the workspace's too. */
+  private def markManagedRulesets(sc: Scope, configRef: String)(using call: ThreatStudioApiRequest): Future[Unit] =
+    entitiesOf(WafConfigs).get(configRef).flatMap {
+      case None         => ().vfuture
+      case Some(config) =>
+        val ids = config.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty)
+        Future
+          .sequence(ids.map(id => entitiesOf(Rulesets).get(id)))
+          .map(_.flatten.filter(rs => EntityGraph.markOf(rs).isEmpty && rs.select("metadata").select("cloud-apim.tuning.config").asOpt[String].contains(configRef)))
+          .flatMap(rulesets => Future.sequence(rulesets.map(rs => entitiesOf(Rulesets).update(marked(sc, Rulesets, rs)))))
+          .map(_ => ())
+    }
+
+  private def tuning(sc: Scope, action: String, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
+    for {
+      g      <- graph(sc)
+      sample <- sampleOf(sc, form)
+      ref     = configRefOf(form, sample)
+      _       = if (action == "_apply") { if (!g.owns(sc.rule.id, ref)) throw conflict("this waf config is shared: copy it into the workspace to tune it", Json.obj("shared_entity" -> ref)) }
+                else if (!g.visible(sc.rule.id, WafConfigs, ref)) throw notFound(s"no such waf-configs '$ref'")
+      result <- delegate(moduleRoute("POST", s"tuning/$action"), form ++ Json.obj("config_ref" -> ref))
+      _      <- if (action == "_apply" && result.header.status < 300) markManagedRulesets(sc, ref) else ().vfuture
+    } yield result
+
+  private def learning(sc: Scope, action: String, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
+    for {
+      g      <- graph(sc)
+      ref     = configRefOf(form, None)
+      // a window counts every route the config runs on: a config shared with others would report on them
+      _       = if (!g.owns(sc.rule.id, ref)) throw conflict("this waf config is shared: copy it into the workspace to learn on it", Json.obj("shared_entity" -> ref))
+      result <- delegate(moduleRoute("POST", s"learning/$action"), form ++ Json.obj("config_ref" -> ref))
+      _      <- if (action == "_apply" && result.header.status < 300) markManagedRulesets(sc, ref) else ().vfuture
+    } yield result
+
+  private def compile(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
+    graph(sc).flatMap { g =>
+      form.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty).foreach { id =>
+        if (!g.visible(sc.rule.id, Rulesets, id)) throw notFound(s"no such waf-rulesets '$id'")
+      }
+      delegate(moduleRoute("POST", "utils/_compile"), form)
+    }
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
   // routes
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -907,9 +1136,15 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     },
     route("PATCH", "/workspaces/:id/preset", wantsBody = true) {
       val id = call.param("id")
-      mutate("save_preset") { before =>
-        // fields left out keep their value: a page sends what it edits and nothing else
-        before.replace(id)(rule => rule.copy(preset = presetFrom(rule.preset.json.asObject ++ call.form)))
+      scope(id).flatMap(graph).flatMap { g =>
+        mutate("save_preset") { before =>
+          // fields left out keep their value: a page sends what it edits and nothing else
+          before.replace(id) { rule =>
+            val next = presetFrom(rule.preset.json.asObject ++ call.form)
+            checkPresetRefs(g, id, rule.preset, next)
+            rule.copy(preset = next)
+          }
+        }
       }.map(s => withEtag(workspaceJson(s, id, env.proxyState.allRoutes()), s.version))
     },
     route("PUT", "/workspaces/:id/scope", wantsBody = true) {
@@ -1018,6 +1253,89 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
             }
         }
       }
+    },
+
+    // its entities
+
+    route("GET", "/workspaces/:id/entities/:kind") {
+      val kind = kindOf(call.param("kind"))
+      scope(call.param("id")).flatMap { sc =>
+        for {
+          g        <- graph(sc)
+          readable <- entitiesOf(kind).all()
+        } yield Results.Ok(JsArray(readable.filter(e => g.visible(sc.rule.id, kind, EntityGraph.idOf(e))).map(e => itemJson(g, sc, e))))
+      }
+    },
+    route("GET", "/workspaces/:id/entities/:kind/_template") {
+      val kind = kindOf(call.param("kind"))
+      scope(call.param("id")).map(sc => Results.Ok(marked(sc, kind, entitiesOf(kind).template())))
+    },
+    route("POST", "/workspaces/:id/entities/:kind", wantsBody = true) {
+      val kind = kindOf(call.param("kind"))
+      scope(call.param("id")).flatMap(sc => createEntity(sc, kind, call.form))
+    },
+    route("GET", "/workspaces/:id/entities/:kind/:eid") {
+      val kind = kindOf(call.param("kind"))
+      scope(call.param("id")).flatMap(sc => graph(sc).flatMap(g => visibleEntity(g, sc, kind, call.param("eid")).map(e => Results.Ok(itemJson(g, sc, e)))))
+    },
+    route("PUT", "/workspaces/:id/entities/:kind/:eid", wantsBody = true) {
+      val kind = kindOf(call.param("kind"))
+      scope(call.param("id")).flatMap(sc => updateEntity(sc, kind, call.param("eid"), call.form))
+    },
+    route("DELETE", "/workspaces/:id/entities/:kind/:eid") {
+      val kind = kindOf(call.param("kind"))
+      scope(call.param("id")).flatMap(sc => deleteEntity(sc, kind, call.param("eid")))
+    },
+    route("POST", "/workspaces/:id/entities/:kind/:eid/_fork", wantsBody = true) {
+      val kind = kindOf(call.param("kind"))
+      scope(call.param("id")).flatMap(sc => forkEntity(sc, kind, call.param("eid"), call.form))
+    },
+    route("GET", "/workspaces/:id/entities/:kind/:eid/_usage") {
+      val kind = kindOf(call.param("kind"))
+      val eid  = call.param("eid")
+      scope(call.param("id")).flatMap { sc =>
+        graph(sc).flatMap { g =>
+          visibleEntity(g, sc, kind, eid).map { _ =>
+            // who else uses it is the gateway's business: a workspace is told how many
+            val details = if (tenantAdmin) Json.obj("referencers" -> JsArray(g.referencersOf(eid).map(_.json))) else Json.obj()
+            Results.Ok(g.usage(sc.rule.id, eid) ++ details)
+          }
+        }
+      }
+    },
+
+    // tuning, learning and compilation
+
+    route("GET", "/workspaces/:id/tuning/matches") {
+      scope(call.param("id")).flatMap(sc => matchesOf(sc).map { case (status, json, mine) => Results.Status(status)(json ++ Json.obj("matches" -> mine)) })
+    },
+    route("POST", "/workspaces/:id/tuning/_propose", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => tuning(sc, "_propose", call.form))
+    },
+    route("POST", "/workspaces/:id/tuning/_preview", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => tuning(sc, "_preview", call.form))
+    },
+    route("POST", "/workspaces/:id/tuning/_apply", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => tuning(sc, "_apply", call.form))
+    },
+    route("GET", "/workspaces/:id/learning") {
+      scope(call.param("id")).flatMap { sc =>
+        for {
+          g             <- graph(sc)
+          (status, json) <- delegateJson(moduleRoute("GET", "learning/_running"), JsNull)
+        } yield {
+          val running = (json \ "running").asOpt[Seq[String]].getOrElse(Seq.empty).filter(id => g.visible(sc.rule.id, WafConfigs, id))
+          Results.Status(status)(json.asOpt[JsObject].getOrElse(Json.obj()) ++ Json.obj("running" -> running))
+        }
+      }
+    },
+    route("POST", "/workspaces/:id/learning/:action", wantsBody = true) {
+      val action = call.param("action")
+      if (!Seq("_start", "_stop", "_discard", "_report", "_apply").contains(action)) throw notFound("no such learning action")
+      scope(call.param("id")).flatMap(sc => learning(sc, action, call.form))
+    },
+    route("POST", "/workspaces/:id/waf/_compile", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => compile(sc, call.form))
     }
   ) ++ moduleRoutes.map(mirrored)
 }
