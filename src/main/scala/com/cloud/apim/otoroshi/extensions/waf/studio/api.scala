@@ -395,8 +395,10 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     case _               => throw badRequest("'targets' must be an array")
   }
 
+  // a type test rather than the JsBoolean extractor, whose signature differs between play-json
+  // versions: a gateway built on another one would throw a NoSuchMethodError, fatal to its actor system
   private def bool(form: JsObject, key: String): Option[Boolean] = form.value.get(key).map {
-    case JsBoolean(b) => b
+    case b: JsBoolean => b.value
     case _            => throw badRequest(s"'$key' must be a boolean")
   }
 
