@@ -583,6 +583,7 @@ export function ConfirmProvider({ children }) {
           }
         >
           <p className="muted">{state.message}</p>
+          {state.body}
         </Modal>
       )}
     </ConfirmContext.Provider>

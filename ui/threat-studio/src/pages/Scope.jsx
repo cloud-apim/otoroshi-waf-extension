@@ -12,9 +12,10 @@ import {
   Toggle,
   useToast,
 } from '../components/ui';
+import { useRouteChangesConfirm } from '../components/changes';
 import { hasPermission } from '../lib/platform';
 import { Link } from '../lib/router';
-import { emptyTarget, saveScope } from '../lib/workspaces';
+import { emptyTarget, previewScope, saveScope } from '../lib/workspaces';
 
 /**
  * The selector, written out.
@@ -107,6 +108,7 @@ export function ScopePage() {
   const { workspace } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
+  const confirmChanges = useRouteChangesConfirm();
   // which routes a workspace claims decides what every other one claims: the table's administrators decide it
   const writable = hasPermission('admin');
   const [targets, setTargets] = useState(workspace.targets || []);
@@ -121,15 +123,25 @@ export function ScopePage() {
   const dirty =
     JSON.stringify(targets) !== JSON.stringify(workspace.targets || []) || skip !== !!workspace.skip;
 
-  const save = () => {
+  // the routes the new scope takes from another workspace, or leaves to the next rule, shown before it is saved
+  const save = async () => {
+    const scope = { targets, skip };
     setBusy(true);
-    saveScope(workspace.id, { targets, skip })
-      .then(() => {
-        studio.reload();
-        toast.success('Scope saved');
-      })
-      .catch(toast.error)
-      .finally(() => setBusy(false));
+    try {
+      const ok = await confirmChanges(await previewScope(workspace.id, scope), {
+        title: 'Save this scope?',
+        message: 'These routes change workspace, and with it the protection they get.',
+        confirmLabel: 'Save',
+      });
+      if (!ok) return;
+      await saveScope(workspace.id, scope);
+      studio.reload();
+      toast.success('Scope saved');
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

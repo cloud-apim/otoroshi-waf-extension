@@ -153,7 +153,9 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     "entity-ownership",
     "secret-sentinel",
     "workspace-tuning",
-    "workspace-learning"
+    "workspace-learning",
+    "entity-assign",
+    "rule-preview"
   )
 
   // what a caller may do on a workspace, in the words of the studio front
@@ -457,6 +459,21 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     val rule  = rules(from)
     val rest  = rules.patch(from, Nil, 1)
     before.copy(config = before.config.copy(rules = rest.patch(to, Seq(rule), 0)))
+  }
+
+  /** `targets`, `enabled` and `skip` of a rule, any of them. */
+  private def scoped(before: Stored, id: String, form: JsObject): Stored =
+    before.replace(id) { rule =>
+      rule.copy(
+        targets = form.value.get("targets").map(targetsFrom).getOrElse(rule.targets),
+        enabled = bool(form, "enabled").getOrElse(rule.enabled),
+        skip = bool(form, "skip").getOrElse(rule.skip)
+      )
+    }
+
+  private def without(before: Stored, id: String): Stored = {
+    before.rule(id)
+    before.copy(config = before.config.copy(rules = before.config.rules.filterNot(_.id == id)))
   }
 
   /** The routes a proposed table would move, and whether the caller could write it. */
@@ -836,14 +853,67 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
   private val ChallengeProviders = StudioKind.of("challenge-providers").get
 
   /** Every entity of the suite and who names it, as of now. */
-  private def graph(sc: Scope): Future[EntityGraph] = {
-    val potential = sc.stored.potential(sc.routes, sc.table)
-    val claims    = sc.stored.config.rules
-      .map(r => r.id -> sc.routes.filter(route => claimedBy(potential, route, r.id)).map(_.id).toSet)
+  private def graph(sc: Scope): Future[EntityGraph] = graphOf(sc.stored, sc.routes, sc.table)
+
+  private def graphOf(s: Stored, routes: Seq[NgRoute], resolved: PostureReport.Table): Future[EntityGraph] = {
+    val potential = s.potential(routes, resolved)
+    val claims    = s.config.rules
+      .map(r => r.id -> routes.filter(route => claimedBy(potential, route, r.id)).map(_.id).toSet)
       .toMap
     Future
       .sequence(StudioKind.all.map(k => entitiesOf(k).everything().map(_.map(k -> _))))
-      .map(all => new EntityGraph(all.flatten, sc.stored.config.rules, sc.routes, ws => claims.getOrElse(ws, Set.empty)))
+      .map(all => new EntityGraph(all.flatten, s.config.rules, routes, ws => claims.getOrElse(ws, Set.empty)))
+  }
+
+  /**
+   * Who each entity a workspace may own belongs to, for the administrators of the table: the
+   * workspace its mark names, and whether it holds there or the entity is shared after all. A mark
+   * naming no rule of the table is an orphan: no workspace sees the entity, and nobody but an
+   * administrator changes it.
+   */
+  private def ownershipJson(s: Stored, g: EntityGraph, kind: StudioKind, entity: JsObject): JsObject = {
+    val id   = EntityGraph.idOf(entity)
+    val mark = EntityGraph.markOf(entity)
+    Json.obj(
+      "kind"    -> kind.plural,
+      "id"      -> id,
+      "name"    -> Json.toJson(entity.select("name").asOpt[String]),
+      "mark"    -> Json.toJson(mark),
+      "owner"   -> Json.toJson(g.ownerOf(id)),
+      "orphan"  -> mark.exists(m => !s.config.rules.exists(_.id == m)),
+      "used_by" -> g.referencersOf(id).size,
+      "managed" -> entity.select("metadata").select("managed_by").asOpt[String].isDefined
+    )
+  }
+
+  /**
+   * An entity given to a workspace, or to none: the mark is set or removed, and the entity belongs
+   * to the workspace once nothing outside of it names it. What it decides is who else may see and
+   * change the entity, so it is an administrator's call.
+   */
+  private def assignEntity(kind: StudioKind, id: String, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
+    if (!tenantAdmin) throw forbidden("giving an entity to a workspace needs an admin of the tenant")
+    val target = form.value.get("workspace") match {
+      case Some(JsString(ws)) if ws.trim.nonEmpty => Some(ws.trim)
+      case Some(JsNull) | Some(JsString(_))       => None
+      case _                                      => throw badRequest("'workspace' is the id of a workspace, or null for none")
+    }
+    stored().flatMap { s =>
+      target.foreach(s.rule)
+      entitiesOf(kind).get(id).flatMap {
+        case None          => throw notFound(s"no such ${kind.plural} '$id'")
+        case Some(current) =>
+          val meta = current.select("metadata").asOpt[JsObject].getOrElse(Json.obj()) - EntityGraph.Mark - EntityGraph.KindMark
+          val next = current ++ Json.obj(
+            "metadata" -> target.fold(meta)(ws => meta ++ Json.obj(EntityGraph.Mark -> ws, EntityGraph.KindMark -> kind.plural))
+          )
+          for {
+            saved <- entitiesOf(kind).update(next)
+            routes = env.proxyState.allRoutes()
+            g     <- graphOf(s, routes, s.resolve(routes))
+          } yield Results.Ok(ownershipJson(s, g, kind, saved))
+      }
+    }
   }
 
   private def itemJson(g: EntityGraph, sc: Scope, entity: JsObject): JsObject = {
@@ -1153,16 +1223,8 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     },
     route("PUT", "/workspaces/:id/scope", wantsBody = true) {
       val id = call.param("id")
-      mutate("save_scope") { before =>
-        val form = call.form
-        before.replace(id) { rule =>
-          rule.copy(
-            targets = form.value.get("targets").map(targetsFrom).getOrElse(rule.targets),
-            enabled = bool(form, "enabled").getOrElse(rule.enabled),
-            skip = bool(form, "skip").getOrElse(rule.skip)
-          )
-        }
-      }.map(s => withEtag(workspaceJson(s, id, env.proxyState.allRoutes()), s.version))
+      mutate("save_scope")(before => scoped(before, id, call.form))
+        .map(s => withEtag(workspaceJson(s, id, env.proxyState.allRoutes()), s.version))
     },
     route("POST", "/workspaces/:id/_move", wantsBody = true) {
       val id = call.param("id")
@@ -1172,10 +1234,37 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     },
     route("DELETE", "/workspaces/:id") {
       val id = call.param("id")
-      mutate("delete_workspace") { before =>
-        before.rule(id)
-        before.copy(config = before.config.copy(rules = before.config.rules.filterNot(_.id == id)))
-      }.map(_ => Results.NoContent)
+      mutate("delete_workspace")(before => without(before, id)).map(_ => Results.NoContent)
+    },
+
+    // what a change of one rule would do to the routes, before it is made: the same change as the write
+    route("POST", "/workspaces/:id/scope/_preview", wantsBody = true) {
+      val id = call.param("id")
+      stored().map(before => Results.Ok(previewJson(before, scoped(before, id, call.form), env.proxyState.allRoutes())))
+    },
+    route("POST", "/workspaces/:id/_move/_preview", wantsBody = true) {
+      val id = call.param("id")
+      val to = call.form.select("to").asOpt[Int].getOrElse(throw badRequest("'to' is required"))
+      stored().map(before => Results.Ok(previewJson(before, move(before, id, to), env.proxyState.allRoutes())))
+    },
+    route("POST", "/workspaces/:id/_delete/_preview") {
+      val id = call.param("id")
+      stored().map(before => Results.Ok(previewJson(before, without(before, id), env.proxyState.allRoutes())))
+    },
+
+    // who the entities belong to
+
+    route("GET", "/entities/_ownership") {
+      stored().flatMap { s =>
+        val routes = env.proxyState.allRoutes()
+        for {
+          g        <- graphOf(s, routes, s.resolve(routes))
+          readable <- Future.sequence(StudioKind.referenceable.map(k => entitiesOf(k).all().map(_.map(k -> _))))
+        } yield Results.Ok(JsArray(readable.flatten.map { case (k, e) => ownershipJson(s, g, k, e) }))
+      }
+    },
+    route("POST", "/entities/:kind/:eid/_assign", wantsBody = true) {
+      assignEntity(kindOf(call.param("kind")), call.param("eid"), call.form)
     },
 
     // what the workspace sees of its traffic

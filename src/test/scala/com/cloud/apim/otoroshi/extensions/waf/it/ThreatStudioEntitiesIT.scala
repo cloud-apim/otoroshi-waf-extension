@@ -218,6 +218,54 @@ class ThreatStudioEntitiesIT extends munit.FunSuite {
     assertEquals((full.json \ "referencers").as[Seq[JsObject]].map(r => (r \ "id").as[String]).toSet, Set("ws_ea", "ws_eb"))
   }
 
+  private def owners(key: Key): Map[String, JsObject] = {
+    val res = get(key, "/entities/_ownership")
+    assertEquals(res.status, 200, res.body)
+    res.json.as[Seq[JsObject]].map(o => (o \ "id").as[String] -> o).toMap
+  }
+
+  test("an administrator sees who each entity belongs to, and gives the orphans of a deleted workspace to another") {
+    val own    = (create(teamA, "ws_ea", "waf-configs", config) \ "id").as[String]
+    val before = owners(tenantAdmin)
+    assertEquals((before(own) \ "owner").asOpt[String], Some("ws_ea"))
+    assertEquals((before(own) \ "orphan").as[Boolean], false)
+    assertEquals((before(sharedConfig) \ "mark").asOpt[String], None)
+    assertEquals((before(sharedConfig) \ "owner").asOpt[String], None)
+    assertEquals((before(sharedConfig) \ "used_by").as[Int], 2)
+    // a key of a team reads the entities it may read, and only those
+    assertEquals(owners(teamB).get(own), None)
+    // the workspace gone, what it owned is nobody's: no workspace sees it
+    Await.result(
+      studio.writeTable(CloudApimSecuritySuiteGlobalPresetConfig(Seq(rule("ws_eb", "entities-b").copy(preset = usesShared))), Some(true)),
+      10.seconds
+    )
+    assertEquals((owners(tenantAdmin)(own) \ "orphan").as[Boolean], true)
+    assertEquals(ownership(tenantAdmin, "ws_eb", "waf-configs").get(own), None)
+    val assigned = send(tenantAdmin, "POST", s"/entities/waf-configs/$own/_assign", Json.obj("workspace" -> "ws_eb"))
+    assertEquals(assigned.status, 200, assigned.body)
+    assertEquals((assigned.json \ "owner").asOpt[String], Some("ws_eb"))
+    assertEquals((assigned.json \ "orphan").as[Boolean], false)
+    assertEquals((stored("waf-configs", own) \ "metadata" \ "threat_studio_workspace").as[String], "ws_eb")
+    assertEquals(ownership(tenantAdmin, "ws_eb", "waf-configs").get(own), Some("workspace"))
+    // given to none, it is shared again
+    val none = send(tenantAdmin, "POST", s"/entities/waf-configs/$own/_assign", Json.obj("workspace" -> JsNull))
+    assertEquals(none.status, 200, none.body)
+    assertEquals((none.json \ "mark").asOpt[String], None)
+    assertEquals((stored("waf-configs", own) \ "metadata" \ "threat_studio_workspace").asOpt[String], None)
+    assertEquals(ownership(tenantAdmin, "ws_eb", "waf-configs").get(own), Some("shared"))
+    Gateway.delete(s"/apis/waf.extensions.cloud-apim.com/v1/waf-configs/$own")
+  }
+
+  test("giving an entity to a workspace is an administrator's call") {
+    val own = (create(teamA, "ws_ea", "waf-configs", config) \ "id").as[String]
+    assertEquals(send(teamA, "POST", s"/entities/waf-configs/$own/_assign", Json.obj("workspace" -> "ws_eb")).status, 403)
+    assertEquals(send(tenantAdmin, "POST", s"/entities/waf-configs/$own/_assign", Json.obj("workspace" -> "ws_nope")).status, 404)
+    assertEquals(send(tenantAdmin, "POST", s"/entities/waf-configs/$own/_assign", Json.obj("workspace" -> 12)).status, 400)
+    assertEquals(send(tenantAdmin, "POST", "/entities/waf-configs/waf-config_nope/_assign", Json.obj("workspace" -> "ws_eb")).status, 404)
+    assertEquals(send(tenantAdmin, "POST", "/entities/threat-feeds/x/_assign", Json.obj("workspace" -> "ws_eb")).status, 404)
+    assertEquals((stored("waf-configs", own) \ "metadata" \ "threat_studio_workspace").as[String], "ws_ea")
+  }
+
   test("tuning and learning change only a configuration of the workspace") {
     val matches = get(teamA, "/workspaces/ws_ea/tuning/matches")
     assertEquals(matches.status, 200, matches.body)

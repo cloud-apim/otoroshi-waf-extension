@@ -121,6 +121,13 @@ export const createWorkspace = (form) => backend.runGlobal('workspaces.create', 
 
 export const deleteWorkspace = (wsId) => backend.runGlobal('workspaces.delete', { ws: wsId });
 
+/** What saving a scope, moving or deleting a workspace would do to the routes: `{ changes, hidden, allowed, reason }`. */
+export const previewScope = (wsId, scope) => backend.runGlobal('workspaces.previewScope', { ws: wsId, body: scope });
+
+export const previewMove = (wsId, to) => backend.runGlobal('workspaces.previewMove', { ws: wsId, body: { to } });
+
+export const previewDelete = (wsId) => backend.runGlobal('workspaces.previewDelete', { ws: wsId });
+
 /** `{ enabled, skip_protected_routes }`, any of them: `enabled` is the slot of the global preset. */
 export const saveTableSettings = (settings) => backend.runGlobal('table.settings', { body: settings });
 

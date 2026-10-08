@@ -106,7 +106,7 @@ class ThreatStudioApiIT extends munit.FunSuite {
     val res = get(readerA, "/_info")
     assertEquals(res.status, 200, res.body)
     val features = (res.json \ "features").as[Seq[String]]
-    Seq("caller-rights", "workspace-permissions", "table-version", "rule-writes", "table-preview", "actor")
+    Seq("caller-rights", "workspace-permissions", "table-version", "rule-writes", "table-preview", "actor", "entity-assign", "rule-preview")
       .foreach(f => assert(features.contains(f), s"$f missing from $features"))
   }
 
@@ -244,6 +244,30 @@ class ThreatStudioApiIT extends munit.FunSuite {
     assertEquals((res.json \ "hidden").as[Int], 1, "route b1 moves too, and team-a cannot read it")
     assertEquals((res.json \ "allowed").as[Boolean], false)
     assertEquals((res.json \ "version").as[String], (read \ "version").as[String])
+  }
+
+  test("a change of one rule is previewed as its write would make it, and nothing is written") {
+    // ws_a taking route b1 through its tag: b1 leaves ws_mixed, a1 and a2 fall to no workspace
+    val scope   = send(teamA, "POST", "/workspaces/ws_a/scope/_preview", Json.obj("targets" -> Json.arr(target("studio-api-b"))))
+    assertEquals(scope.status, 200, scope.body)
+    assertEquals((scope.json \ "changes").as[Seq[JsObject]].map(c => (c \ "route" \ "id").as[String]).toSet, Set(routeId("studio-api-a1"), routeId("studio-api-a2")))
+    assertEquals((scope.json \ "hidden").as[Int], 1)
+    assertEquals((scope.json \ "allowed").as[Boolean], false)
+    // ws_a deleted, its routes fall to no workspace: team-a's own routes
+    val delete  = send(teamA, "POST", "/workspaces/ws_a/_delete/_preview", JsNull)
+    assertEquals(delete.status, 200, delete.body)
+    val changes = (delete.json \ "changes").as[Seq[JsObject]]
+    assertEquals(changes.map(c => (c \ "route" \ "id").as[String]).toSet, Set(routeId("studio-api-a1"), routeId("studio-api-a2")))
+    assert(changes.forall(c => (c \ "before" \ "id").as[String] == "ws_a" && (c \ "after").toOption.forall(_ == JsNull)))
+    assertEquals((delete.json \ "allowed").as[Boolean], true)
+    // ws_mixed above ws_a takes nothing from it
+    val move    = send(tenantAdmin, "POST", "/workspaces/ws_mixed/_move/_preview", Json.obj("to" -> 0))
+    assertEquals(move.status, 200, move.body)
+    assertEquals((move.json \ "changes").as[Seq[JsObject]], Seq.empty)
+    assertEquals(send(tenantAdmin, "POST", "/workspaces/ws_nope/_delete/_preview", JsNull).status, 404)
+    assertEquals(send(tenantAdmin, "POST", "/workspaces/ws_a/_move/_preview", Json.obj("to" -> 9)).status, 400)
+    assertEquals(ruleIds(), Seq("ws_a", "ws_mixed", "ws_empty"))
+    assertEquals(claims(workspace(superKey, "ws_a")), Set(routeId("studio-api-a1"), routeId("studio-api-a2")))
   }
 
   // ---------------------------------------------------------------------------------------------

@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useCan, useStudio, useWorkspace } from '../App';
 import { Icon } from '../components/icons';
-import { Badge, Card, PageHeader, TextInput, Toggle, useConfirm, useToast } from '../components/ui';
+import { useRouteChangesConfirm } from '../components/changes';
+import { Badge, Card, PageHeader, TextInput, Toggle, useToast } from '../components/ui';
 import { hasPermission } from '../lib/platform';
 import { useRouter } from '../lib/router';
-import { deleteWorkspace, moveWorkspaceTo, renameWorkspace, saveScope, saveTableSettings } from '../lib/workspaces';
+import { deleteWorkspace, moveWorkspaceTo, previewDelete, previewMove, previewScope, renameWorkspace, saveScope, saveTableSettings } from '../lib/workspaces';
 
 export function SettingsPage() {
   const { workspace, table } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
-  const confirm = useConfirm();
+  const confirmChanges = useRouteChangesConfirm();
   const { navigate } = useRouter();
   const can = useCan();
   // the name is the workspace's; where it sits and whether it applies decide other routes too
@@ -32,18 +33,46 @@ export function SettingsPage() {
       .finally(() => setBusy(false));
   };
 
-  const remove = async () => {
-    const ok = await confirm({
-      title: `Delete ${workspace.name}?`,
-      message:
-        'The routes it governs fall through to the rules below it, and to nothing at all if there are none. The entities it points at are not deleted.',
-      danger: true,
-      confirmLabel: 'Delete',
-    });
-    if (!ok) return;
-    await apply(() => deleteWorkspace(workspace.id), 'Workspace deleted');
-    navigate('/');
-  };
+  // a change of the table is shown with the routes it moves before it is made
+  const guarded = (load, opts, write, message) =>
+    load()
+      .then((preview) => confirmChanges(preview, opts))
+      .then((ok) => ok && apply(write, message))
+      .catch(toast.error);
+
+  const remove = () =>
+    guarded(
+      () => previewDelete(workspace.id),
+      {
+        always: true,
+        title: `Delete ${workspace.name}?`,
+        message:
+          'The routes it governs fall through to the rules below it, and to nothing at all if there are none. The entities it points at are not deleted.',
+        danger: true,
+        confirmLabel: 'Delete',
+      },
+      () => deleteWorkspace(workspace.id).then(() => navigate('/')),
+      'Workspace deleted'
+    );
+
+  const moveTo = (to) =>
+    guarded(
+      () => previewMove(workspace.id, to),
+      { title: `Move ${workspace.name}?`, message: 'The first rule that matches a route wins it: moving this one changes who wins these routes.', confirmLabel: 'Move' },
+      () => moveWorkspaceTo(workspace.id, to)
+    );
+
+  const enable = (enabled) =>
+    guarded(
+      () => previewScope(workspace.id, { enabled }),
+      {
+        title: enabled ? `Enable ${workspace.name}?` : `Disable ${workspace.name}?`,
+        message: enabled ? 'It takes back the routes it matches first.' : 'Its routes fall through to the rules below it.',
+        confirmLabel: enabled ? 'Enable' : 'Disable',
+      },
+      () => saveScope(workspace.id, { enabled }),
+      enabled ? 'Enabled' : 'Disabled'
+    );
 
   const last = table.workspaces.length - 1;
 
@@ -77,7 +106,7 @@ export function SettingsPage() {
           <Toggle
             value={workspace.enabled !== false}
             disabled={!writable || busy}
-            onChange={(v) => apply(() => saveScope(workspace.id, { enabled: v }), v ? 'Enabled' : 'Disabled')}
+            onChange={enable}
           />
         </div>
 
@@ -95,7 +124,7 @@ export function SettingsPage() {
             <button
               className="copy-btn"
               disabled={!writable || busy || workspace.index === 0}
-              onClick={() => apply(() => moveWorkspaceTo(workspace.id, workspace.index - 1))}
+              onClick={() => moveTo(workspace.index - 1)}
               title="Move up"
             >
               <Icon name="arrowUp" />
@@ -103,7 +132,7 @@ export function SettingsPage() {
             <button
               className="copy-btn"
               disabled={!writable || busy || workspace.index === last}
-              onClick={() => apply(() => moveWorkspaceTo(workspace.id, workspace.index + 1))}
+              onClick={() => moveTo(workspace.index + 1)}
               title="Move down"
             >
               <Icon name="arrowDown" />

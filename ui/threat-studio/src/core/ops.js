@@ -121,6 +121,10 @@ export const globalOps = define(
     'workspaces.delete': { access: 'admin', method: 'DELETE', path: `${STUDIO_ADMIN_PATH}/workspaces/:ws`, audit: true },
     'workspaces.setScope': { access: 'admin', method: 'PUT', path: `${STUDIO_ADMIN_PATH}/workspaces/:ws/scope`, audit: true },
     'workspaces.move': { access: 'admin', method: 'POST', path: `${STUDIO_ADMIN_PATH}/workspaces/:ws/_move`, audit: true },
+    // what a change of one rule would do to the routes, before it is made
+    'workspaces.previewScope': { access: 'admin:read', method: 'POST', path: `${STUDIO_ADMIN_PATH}/workspaces/:ws/scope/_preview` },
+    'workspaces.previewMove': { access: 'admin:read', method: 'POST', path: `${STUDIO_ADMIN_PATH}/workspaces/:ws/_move/_preview` },
+    'workspaces.previewDelete': { access: 'admin:read', method: 'POST', path: `${STUDIO_ADMIN_PATH}/workspaces/:ws/_delete/_preview` },
 
     // every entity of the suite
     'entities.list': { access: 'admin:read', method: 'GET', path: `${ENTITIES}/:kind` },
@@ -130,6 +134,9 @@ export const globalOps = define(
     'entities.create': { access: 'admin', method: 'POST', path: `${ENTITIES}/:kind`, audit: true },
     'entities.update': { access: 'admin', method: 'PUT', path: `${ENTITIES}/:kind/:eid`, audit: true },
     'entities.delete': { access: 'admin', method: 'DELETE', path: `${ENTITIES}/:kind/:eid`, audit: true },
+    // who the entities a workspace may own belong to, and an entity given to a workspace or to none
+    'entities.ownership': { access: 'admin:read', method: 'GET', path: `${STUDIO_ADMIN_PATH}/entities/_ownership` },
+    'entities.assign': { access: 'admin', method: 'POST', path: `${STUDIO_ADMIN_PATH}/entities/:kind/:eid/_assign`, audit: true },
 
     // the routes of the gateway, and the one metadata entry the studio writes on them
     'routes.list': { access: 'admin:read', method: 'GET', path: '/apis/proxy.otoroshi.io/v1/routes' },

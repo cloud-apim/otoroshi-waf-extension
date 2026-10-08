@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useStudio } from '../App';
 import { Icon } from '../components/icons';
+import { useRouteChangesConfirm } from '../components/changes';
 import { Lint } from '../components/posture';
 import {
   Badge,
@@ -12,7 +13,6 @@ import {
   Modal,
   PageHeader,
   TextInput,
-  useConfirm,
   useToast,
 } from '../components/ui';
 import { hasPermission } from '../lib/platform';
@@ -26,6 +26,8 @@ import {
   isCatchAll,
   lintWorkspace,
   moveWorkspaceTo,
+  previewDelete,
+  previewMove,
 } from '../lib/workspaces';
 
 function targetSummary(ws) {
@@ -105,7 +107,7 @@ function WorkspaceRow({ ws, table, onMove, onDelete, busy }) {
 export function WorkspacesPage() {
   const studio = useStudio();
   const toast = useToast();
-  const confirm = useConfirm();
+  const confirmChanges = useRouteChangesConfirm();
   const { navigate } = useRouter();
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -140,15 +142,33 @@ export function WorkspacesPage() {
     );
   };
 
-  const remove = async (ws) => {
-    const ok = await confirm({
-      title: `Delete ${ws.name}?`,
-      message: `The routes it governs fall through to the rules below it, and to nothing at all if there are none. The entities it uses are not deleted.`,
-      danger: true,
-      confirmLabel: 'Delete',
-    });
-    if (ok) apply(() => deleteWorkspace(ws.id), 'Workspace deleted');
-  };
+  // a change of the table is shown with the routes it moves before it is made
+  const guarded = (load, opts, write, message) =>
+    load()
+      .then((preview) => confirmChanges(preview, opts))
+      .then((ok) => ok && apply(write, message))
+      .catch(toast.error);
+
+  const remove = (ws) =>
+    guarded(
+      () => previewDelete(ws.id),
+      {
+        always: true,
+        title: `Delete ${ws.name}?`,
+        message: `The routes it governs fall through to the rules below it, and to nothing at all if there are none. The entities it uses are not deleted.`,
+        danger: true,
+        confirmLabel: 'Delete',
+      },
+      () => deleteWorkspace(ws.id),
+      'Workspace deleted'
+    );
+
+  const move = (ws, at) =>
+    guarded(
+      () => previewMove(ws.id, at),
+      { title: `Move ${ws.name}?`, message: 'The first rule that matches a route wins it: moving this one changes who wins these routes.', confirmLabel: 'Move' },
+      () => moveWorkspaceTo(ws.id, at)
+    );
 
   if (studio.loading && !studio.loaded) return <div className="content"><Loading /></div>;
   if (studio.error) return <div className="content"><ErrorAlert error={studio.error} /></div>;
@@ -263,7 +283,7 @@ export function WorkspacesPage() {
                 busy={busy || !writable}
                 onMove={(id, delta) => {
                   const at = workspaces.findIndex((w) => w.id === id) + delta;
-                  if (at >= 0 && at < workspaces.length) apply(() => moveWorkspaceTo(id, at));
+                  if (at >= 0 && at < workspaces.length) move(workspaces.find((w) => w.id === id), at);
                 }}
                 onDelete={remove}
               />
