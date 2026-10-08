@@ -200,13 +200,13 @@ class ThreatStudio(env: Env) {
   // the table, resolved
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  private def summaryOf(postures: Seq[RoutePosture]): JsObject = Json.obj(
+  private[studio] def summaryOf(postures: Seq[RoutePosture]): JsObject = Json.obj(
     "total"     -> postures.size,
     "covered"   -> postures.count(_.covered),
     "enforcing" -> postures.count(_.enforcing)
   )
 
-  private def routeRef(route: NgRoute): JsObject =
+  private[studio] def routeRef(route: NgRoute): JsObject =
     Json.obj("id" -> route.id, "name" -> route.name)
 
   /**
@@ -218,8 +218,25 @@ class ThreatStudio(env: Env) {
    * that works — and it is the single most likely thing to be wrong about an ordered table.
    */
   def workspacesJson: JsValue = {
-    val routes   = env.proxyState.allRoutes()
-    val table    = PostureReport.table(routes)
+    val routes = env.proxyState.allRoutes()
+    tableJson(PostureReport.table(routes), routes)
+  }
+
+  /**
+   * The table as the studio reads it.
+   *
+   * `visible` narrows every list of routes to the ones a caller may read, and says how many of the
+   * routes a rule claims were left out; the table itself is always resolved against every route,
+   * since a rule's claims depend on the rules above it whoever reads them. `extra` adds fields to each
+   * rule. Without either, this is the backoffice studio's answer.
+   */
+  def tableJson(
+      table: PostureReport.Table,
+      routes: Seq[NgRoute],
+      visible: Option[NgRoute => Boolean] = None,
+      extra: CloudApimSecuritySuiteGlobalRule => JsObject = _ => Json.obj()
+  ): JsObject = {
+    val shown    = visible.getOrElse((_: NgRoute) => true)
     val postures = routes.map(r => r -> PostureReport.of(r, table.governanceOf.getOrElse(r.id, RouteGovernance.none))).toMap
 
     val claimedBy = routes.groupBy(r => table.governanceOf.get(r.id).flatMap(_.workspaceId))
@@ -247,10 +264,10 @@ class ThreatStudio(env: Env) {
         "preset"      -> rule.preset.json,
         "route_only"  -> rule.routeOnly,
         "unreachable" -> (catchAllAt >= 0 && idx > catchAllAt),
-        "claims"      -> JsArray(claimed.map(routeRef)),
-        "matches"     -> JsArray(matched.map(routeRef)),
-        "summary"     -> summaryOf(claimed.map(postures.apply))
-      )
+        "claims"      -> JsArray(claimed.filter(shown).map(routeRef)),
+        "matches"     -> JsArray(matched.filter(shown).map(routeRef)),
+        "summary"     -> summaryOf(claimed.filter(shown).map(postures.apply))
+      ) ++ visible.fold(Json.obj())(_ => Json.obj("hidden_claims" -> claimed.count(r => !shown(r)))) ++ extra(rule)
     }
 
     val unclaimed   = routes.filter { r =>
@@ -262,6 +279,7 @@ class ThreatStudio(env: Env) {
       val g = table.governanceOf.getOrElse(r.id, RouteGovernance.none)
       g.workspaceId.isEmpty && !g.selfManaged && postures(r).covered
     }
+    val fleetRoutes = routes.filter(shown)
 
     Json.obj(
       "installed"             -> table.installed,
@@ -271,11 +289,11 @@ class ThreatStudio(env: Env) {
       "plugin_id"             -> CloudApimSecuritySuiteGlobalPreset.pluginId,
       "workspaces"            -> JsArray(workspaces),
       "fleet"                 -> Json.obj(
-        "summary"      -> summaryOf(routes.map(postures.apply)),
-        "governed"     -> routes.count(r => table.governanceOf.get(r.id).exists(_.workspaceId.isDefined)),
-        "unclaimed"    -> JsArray(unclaimed.map(routeRef)),
-        "self_managed" -> JsArray(selfManaged.map(routeRef)),
-        "protected_outside_table" -> JsArray(skipped.map(routeRef))
+        "summary"      -> summaryOf(fleetRoutes.map(postures.apply)),
+        "governed"     -> fleetRoutes.count(r => table.governanceOf.get(r.id).exists(_.workspaceId.isDefined)),
+        "unclaimed"    -> JsArray(unclaimed.filter(shown).map(routeRef)),
+        "self_managed" -> JsArray(selfManaged.filter(shown).map(routeRef)),
+        "protected_outside_table" -> JsArray(skipped.filter(shown).map(routeRef))
       )
     )
   }
@@ -349,7 +367,7 @@ class ThreatStudio(env: Env) {
   }
 
   /** Ids are the studio's handle on a rule, so a table saved without them is given them here. */
-  private def withIds(rules: Seq[CloudApimSecuritySuiteGlobalRule]): Seq[CloudApimSecuritySuiteGlobalRule] = {
+  private[studio] def withIds(rules: Seq[CloudApimSecuritySuiteGlobalRule]): Seq[CloudApimSecuritySuiteGlobalRule] = {
     val seen = scala.collection.mutable.HashSet.empty[String]
     rules.zipWithIndex.map { case (rule, idx) =>
       val candidate = Option(rule.id).map(_.trim).filter(_.nonEmpty).getOrElse(s"rule_${idx}_${otoroshi.security.IdGenerator.token(8).toLowerCase}")

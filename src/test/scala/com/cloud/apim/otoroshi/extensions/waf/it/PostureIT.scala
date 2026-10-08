@@ -15,6 +15,10 @@ class PostureIT extends munit.FunSuite {
 
   override val munitTimeout = scala.concurrent.duration.Duration(5, "min")
 
+  // a rule another suite writes in the table would claim the bare route this suite expects unprotected
+  override def beforeAll(): Unit = Gateway.theTable.acquire()
+  override def afterAll(): Unit  = Gateway.theTable.release()
+
   // the http route is a backoffice-session endpoint, so it is reached with the admin ui's cookie and
   // not an apikey. what is worth testing is the report, which the endpoint returns verbatim
   private def posture(): play.api.libs.json.JsValue =

@@ -52,6 +52,15 @@ object Gateway {
    */
   val theCaller: java.util.concurrent.Semaphore = new java.util.concurrent.Semaphore(1)
 
+  /**
+   * Held by a suite that writes the global preset table, or that reads what it claims.
+   *
+   * There is one table for the whole gateway: one suite writing a catch-all rule while another
+   * expects a bare route to be unprotected makes the second fail at random, and two suites writing
+   * it side by side overwrite each other.
+   */
+  val theTable: java.util.concurrent.Semaphore = new java.util.concurrent.Semaphore(1)
+
   lazy val instance: Otoroshi = {
     val config = ConfigFactory
       .parseString(s"""
@@ -149,11 +158,12 @@ object Gateway {
       plugins: Seq[NgPluginInstance],
       tags: Seq[String] = Seq.empty,
       metadata: Map[String, String] = Map.empty,
-      groups: Seq[String] = Seq("default")
+      groups: Seq[String] = Seq("default"),
+      location: EntityLocation = EntityLocation.default
   ): NgRoute = {
     val domain = s"$id.oto.tools"
     val route  = NgRoute(
-      location = EntityLocation.default,
+      location = location,
       id = s"route_$id",
       name = id,
       description = id,

@@ -187,9 +187,17 @@ object PostureReport {
   }
 
   def table(routes: Seq[NgRoute])(using env: Env): Table = {
-    val slot     = CloudApimSecuritySuiteGlobalPreset.installedSlot
-    val config   = CloudApimSecuritySuiteGlobalPreset.installedConfig
-    val live     = slot.exists(_.enabled)
+    val slot = CloudApimSecuritySuiteGlobalPreset.installedSlot
+    table(routes, CloudApimSecuritySuiteGlobalPreset.installedConfig, installed = slot.isDefined, live = slot.exists(_.enabled))
+  }
+
+  /**
+   * A table resolved as it would be if it were the installed one: how a change is previewed, and how
+   * the routes it would move from one rule to another are found before it is written.
+   */
+  def table(routes: Seq[NgRoute], config: CloudApimSecuritySuiteGlobalPresetConfig, installed: Boolean, live: Boolean)(using
+      env: Env
+  ): Table = {
     val resolved =
       if (!live) Map.empty[String, RouteGovernance]
       else
@@ -209,7 +217,7 @@ object PostureReport {
             alsoMatched = matched.drop(1).map(_.id)
           )
         }.toMap
-    Table(installed = slot.isDefined, enabled = live, config = config, governanceOf = resolved)
+    Table(installed = installed, enabled = live, config = config, governanceOf = resolved)
   }
 
   def all(using env: Env): Seq[RoutePosture] = {

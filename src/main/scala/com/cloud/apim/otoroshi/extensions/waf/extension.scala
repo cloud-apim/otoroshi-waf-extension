@@ -160,6 +160,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   // one console for the whole suite, organised by who is protected rather than by which entity
   // configures it. it stores nothing: a workspace is a rule of the global preset table
   lazy val studio = new com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudio(env)
+  lazy val studioApi = new com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudioApi(env, studio)
   // OPS-2: turns one observed match into an exclusion, having run it first
   lazy val tuning = new com.cloud.apim.otoroshi.extensions.waf.tuning.TuningModule(
     env,
@@ -712,7 +713,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
     )
   )
 
-  override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = security.adminApiRoutes()
+  override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = security.adminApiRoutes() ++ studioApi.routes
 
   // every route goes through the guard, so one added later is closed by default
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = BackofficeAccess.guard(Seq(
