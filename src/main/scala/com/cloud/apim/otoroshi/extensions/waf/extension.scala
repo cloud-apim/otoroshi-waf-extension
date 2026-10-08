@@ -160,7 +160,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   // one console for the whole suite, organised by who is protected rather than by which entity
   // configures it. it stores nothing: a workspace is a rule of the global preset table
   lazy val studio = new com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudio(env)
-  lazy val studioApi = new com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudioApi(env, studio)
+  lazy val studioApi = new com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudioApi(env, this)
   // OPS-2: turns one observed match into an exclusion, having run it first
   lazy val tuning = new com.cloud.apim.otoroshi.extensions.waf.tuning.TuningModule(
     env,
@@ -716,7 +716,13 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
   override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = security.adminApiRoutes() ++ studioApi.routes
 
   // every route goes through the guard, so one added later is closed by default
-  override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = BackofficeAccess.guard(Seq(
+  override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = BackofficeAccess.guard(rawBackofficeRoutes)(using env)
+
+  /**
+   * The routes as their modules declare them, before the guard: the studio api serves the same
+   * handlers on the admin api, with its own checks on who calls.
+   */
+  lazy val rawBackofficeRoutes: Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
       path = "/extensions/cloud-apim/extensions/waf/utils/_compile",
@@ -735,7 +741,7 @@ class CloudApimWafExtension(val env: Env) extends AdminExtension {
       wantsBody = true,
       handle = (_, _, _, body) => handleDescribeRules(body)
     ),
-  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ feeds.backofficeAuthRoutes() ++ studio.backofficeRoutes)(using env)
+  ) ++ reputation.backofficeAuthRoutes() ++ security.backofficeAuthRoutes() ++ tuning.backofficeAuthRoutes() ++ learning.backofficeAuthRoutes() ++ feeds.backofficeAuthRoutes() ++ studio.backofficeRoutes
 
   def handleCompile(body: Option[Source[ByteString, ?]]): Future[Result] = {
     given ExecutionContext = env.otoroshiExecutionContext

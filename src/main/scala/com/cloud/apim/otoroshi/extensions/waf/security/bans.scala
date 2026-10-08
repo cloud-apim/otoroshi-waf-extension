@@ -30,7 +30,9 @@ final case class BanEntry(
     /** Set the first time an operator touches a ban the fabric issued, and never unset. */
     lastAction: Option[String] = None,
     lastActionBy: Option[String] = None,
-    lastActionAt: Option[Long] = None
+    lastActionAt: Option[Long] = None,
+    /** The workspace of the global preset table a ban was asked from, when it was asked from one. */
+    workspace: Option[String] = None
 ) {
   def expired(now: Long): Boolean = until <= now
   def remainingMs(now: Long): Long = math.max(0L, until - now)
@@ -62,7 +64,7 @@ final case class BanEntry(
     "last_action"    -> lastAction,
     "last_action_by" -> lastActionBy,
     "last_action_at" -> lastActionAt
-  )
+  ) ++ workspace.fold(Json.obj())(ws => Json.obj("workspace" -> ws))
 }
 
 object BanEntry {
@@ -82,7 +84,8 @@ object BanEntry {
       timeline = (json \ "timeline").asOpt[JsArray].map(_.value.toSeq).getOrElse(Seq.empty).flatMap(IncidentEvent.read),
       lastAction = (json \ "last_action").asOpt[String],
       lastActionBy = (json \ "last_action_by").asOpt[String],
-      lastActionAt = (json \ "last_action_at").asOpt[Long]
+      lastActionAt = (json \ "last_action_at").asOpt[Long],
+      workspace = (json \ "workspace").asOpt[String]
     )
   }.toOption
 }
@@ -182,7 +185,8 @@ class BanStore(
       score: Int = 0,
       signals: JsValue = JsArray(Seq.empty),
       timeline: Seq[IncidentEvent] = Seq.empty,
-      issuedBy: Option[String] = None
+      issuedBy: Option[String] = None,
+      workspace: Option[String] = None
   ): Future[BanOutcome] = allowlisted(ref) match {
     case Some(allow) =>
       logger.info(s"refused to ban ${ref.key}: allowlisted — ${allow.reason}")
@@ -198,7 +202,8 @@ class BanStore(
         until = now + duration.toMillis,
         issuedBy = issuedBy.getOrElse(nodeId),
         signals = signals,
-        timeline = timeline
+        timeline = timeline,
+        workspace = workspace
       )
       // local first: the node that decided enforces on its very next request, whatever redis does
       cache.put(ref.key, entry)

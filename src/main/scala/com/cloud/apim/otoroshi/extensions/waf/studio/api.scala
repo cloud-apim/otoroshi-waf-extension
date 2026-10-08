@@ -1,18 +1,22 @@
 package com.cloud.apim.otoroshi.extensions.waf.studio
 
 import com.cloud.apim.otoroshi.extensions.waf.analytics.{PostureReport, RouteGovernance}
+import com.cloud.apim.otoroshi.extensions.waf.api.ApiReport
+import com.cloud.apim.otoroshi.extensions.waf.security.*
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import otoroshi.actions.ApiActionContextCapable
 import otoroshi.env.Env
 import otoroshi.events.{AdminApiEvent, Audit}
-import otoroshi.models.ApiKey
+import otoroshi.models.{ApiKey, BackOfficeUser, UserRights}
+import otoroshi.next.analytics.queries.{AnalyticsRuntime, Filters}
 import otoroshi.next.extensions.*
 import otoroshi.next.models.{NgPlugins, NgRoute}
 import otoroshi.security.IdGenerator
 import otoroshi.utils.http.RequestImplicits.*
 import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.*
 import play.api.Logger
 import play.api.libs.json.*
@@ -21,7 +25,9 @@ import play.api.mvc.{RequestHeader, Result, Results}
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.duration.DurationLong
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.Try
 import scala.util.control.NoStackTrace
@@ -110,7 +116,7 @@ final case class ThreatStudioApiRequest(
  * Every read returns the version of the table it was resolved from, and every write can be made
  * conditional on it with `If-Match`; writing the whole table requires it.
  */
-class ThreatStudioApi(env: Env, studio: ThreatStudio) {
+class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
 
   import ThreatStudioApiError.*
 
@@ -119,6 +125,9 @@ class ThreatStudioApi(env: Env, studio: ThreatStudio) {
   private given ev: Env              = env
 
   private val logger = Logger("cloud-apim-threat-studio-api")
+
+  private def studio: ThreatStudio      = ext.studio
+  private def security: SecurityModule  = ext.security
 
   val apiPath = "/api/extensions/cloud-apim/extensions/waf/studio"
 
@@ -132,7 +141,14 @@ class ThreatStudioApi(env: Env, studio: ThreatStudio) {
     "table-version",
     "rule-writes",
     "table-preview",
-    "actor"
+    "actor",
+    "workspace-analytics",
+    "workspace-api-report",
+    "workspace-incidents",
+    "workspace-bans",
+    "route-contract",
+    "workspace-lookups",
+    "module-routes"
   )
 
   // what a caller may do on a workspace, in the words of the studio front
@@ -462,15 +478,349 @@ class ThreatStudioApi(env: Env, studio: ThreatStudio) {
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
+  // what one workspace sees of the gateway
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  // asked for when a workspace claims no route the caller may read: an empty list of route ids means
+  // every route to the queries and the report, and this one means none, in the shape each one answers
+  private val NoRoute = "__threat_studio_no_route__"
+
+  /** A workspace with the routes it claims now. */
+  private final case class Scope(stored: Stored, rule: CloudApimSecuritySuiteGlobalRule, routes: Seq[NgRoute], table: PostureReport.Table) {
+    val claims: Seq[NgRoute] = routes.filter(r => claimedBy(table, r, rule.id))
+    val claimIds: Set[String] = claims.map(_.id).toSet
+    def visible(using call: ThreatStudioApiRequest): Seq[NgRoute] = claims.filter(readable)
+    def visibleIds(using call: ThreatStudioApiRequest): Set[String] = visible.map(_.id).toSet
+    // what the route ids sent to a query or a report become
+    def routeIds(using call: ThreatStudioApiRequest): Seq[String] = visibleIds.toSeq.sorted match {
+      case Seq() => Seq(NoRoute)
+      case ids   => ids
+    }
+    // an incident lists its routes by name, or by id for a route without one
+    def visibleKeys(using call: ThreatStudioApiRequest): Set[String] = visible.flatMap(r => Seq(r.id, r.name)).toSet
+  }
+
+  private def scope(id: String): Future[Scope] = stored().map { s =>
+    val routes = env.proxyState.allRoutes()
+    Scope(s, s.rule(id), routes, s.resolve(routes))
+  }
+
+  private def canRespond(sc: Scope)(using call: ThreatStudioApiRequest): Boolean =
+    permissionsOf(sc.rule, sc.stored.potential(sc.routes, sc.table), sc.routes).contains("incidents:respond")
+
+  private def requireRespond(sc: Scope)(using call: ThreatStudioApiRequest): Unit =
+    if (!canRespond(sc)) throw forbidden("acting on the callers of a workspace needs the right to write every route it claims")
+
+  private def leaderOnly(): Unit =
+    if (!(env.clusterConfig.mode.isOff || env.clusterConfig.mode.isLeader)) throw notFound("leader-only endpoint")
+
+  private def runQuery(queryId: String, filters: Filters, params: JsObject, bucket: Option[String], compare: Boolean, nocache: Boolean)
+      : Future[Either[String, JsObject]] =
+    AnalyticsRuntime.executor match {
+      // what the front reads as "no user analytics exporter", which is what it means here
+      case None           => Future.successful(Left("no active analytics on this gateway"))
+      case Some(executor) => executor.run(queryId, filters, params, bucket, compare, nocache)
+    }
+
+  /**
+   * One of the extension's queries, narrowed to the routes the workspace claims and the caller may
+   * read, in the caller's tenant. Nothing the caller sends chooses the routes: a route filter of its
+   * own only narrows further.
+   */
+  private def analytics(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
+    val queryId = form.select("query").asOpt[String].getOrElse(throw badRequest("'query' is required"))
+    if (!queryId.startsWith("cloudapim_security_") && !queryId.startsWith("cloudapim_waf_"))
+      throw badRequest("only the security and waf queries of the extension (cloudapim_security_*, cloudapim_waf_*) run on a workspace")
+    leaderOnly()
+    val params  = form.select("params").asOpt[JsObject].getOrElse(Json.obj()) ++ Json.obj("route_ids" -> sc.routeIds)
+    val filters = Filters.fromJson(form.select("filters").asOpt[JsObject].getOrElse(Json.obj())).copy(tenant = Some(call.currentTenant.value))
+    runQuery(
+      queryId,
+      filters,
+      params,
+      form.select("bucket").asOpt[String],
+      form.select("compare").asOpt[Boolean].getOrElse(false),
+      form.select("nocache").asOpt[Boolean].getOrElse(false)
+    ).map {
+      case Left(err) if err.contains("no active") => Results.PreconditionFailed(Json.obj("error" -> "precondition_failed", "error_description" -> err))
+      case Left(err) if err.startsWith("unknown") => Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> err))
+      case Left(err)                              => Results.BadRequest(Json.obj("error" -> "bad_request", "error_description" -> err))
+      case Right(res)                             => Results.Ok(res)
+    }
+  }
+
+  private def apiReport(sc: Scope)(using call: ThreatStudioApiRequest): Future[Result] = {
+    val zombieDays = call.req.getQueryString("zombie_days").flatMap(_.toIntOption).filter(_ > 0).getOrElse(90)
+    // what this node saw is published first, so a report asked right after traffic includes it
+    security.apiInventory
+      .publish()
+      .recover { case _ => 0 }
+      .flatMap(_ => ApiReport.json(security, sc.routeIds.toSet, zombieDays))
+      .map(Results.Ok(_))
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // incidents and bans, which are about callers and not about routes
+  // ---------------------------------------------------------------------------------------------
+
+  private def onRoutes(timeline: Seq[IncidentEvent], ids: Set[String]): Seq[IncidentEvent] =
+    timeline.filter(_.routeId.exists(ids.contains))
+
+  private def touches(incident: Incident, ids: Set[String], keys: Set[String]): Boolean =
+    onRoutes(incident.timeline, ids).nonEmpty || incident.routes.exists(keys.contains)
+
+  /** A timeline narrowed to the workspace's routes, with how much of it happened elsewhere. */
+  private def narrowed(timeline: Seq[IncidentEvent], ids: Set[String]): JsObject = {
+    val mine = onRoutes(timeline, ids)
+    Json.obj("timeline" -> JsArray(mine.map(_.json)), "timeline_elsewhere" -> (timeline.size - mine.size))
+  }
+
+  private def banJson(ban: BanEntry, ids: Set[String]): JsObject =
+    ban.json.as[JsObject] ++ narrowed(ban.timeline, ids)
+
+  private def incidentJson(view: IncidentView, ids: Set[String], keys: Set[String]): JsObject = {
+    val mine = onRoutes(view.incident.timeline, ids)
+    view.json.as[JsObject] ++ narrowed(view.incident.timeline, ids) ++ Json.obj(
+      "routes"       -> view.incident.routes.filter(keys.contains).toSeq.sorted,
+      // the latest thing seen on the workspace's routes rather than on someone else's
+      "last_message" -> mine.headOption.map(_.message).getOrElse[String](""),
+      "ban"          -> Json.toJson(view.ban.map(b => banJson(b, ids)))
+    )
+  }
+
+  private def incidentsOf(sc: Scope)(using call: ThreatStudioApiRequest): Future[Seq[IncidentView]] = {
+    val ids  = sc.visibleIds
+    val keys = sc.visibleKeys
+    for {
+      views  <- security.board.all()
+      states <- security.board.workspaceStates(sc.rule.id)
+    } yield views.filter(v => touches(v.incident, ids, keys)).map(v => v.copy(state = states.get(v.key)))
+  }
+
+  private def bansOf(sc: Scope)(using call: ThreatStudioApiRequest): Seq[BanEntry] = {
+    val ids = sc.visibleIds
+    security.bans.all.filter(b => b.workspace.contains(sc.rule.id) || onRoutes(b.timeline, ids).nonEmpty)
+  }
+
+  private def refOf(form: JsObject): IdentityRef =
+    form
+      .select("ref")
+      .asOpt[String]
+      .flatMap(IdentityRef.parse)
+      .orElse(for {
+        kind  <- form.select("kind").asOpt[String]
+        value <- form.select("value").asOpt[String]
+      } yield IdentityRef(kind, value))
+      .orElse(form.select("ip").asOpt[String].map(IdentityRef(IdentityRef.Ip, _)))
+      .getOrElse(throw badRequest("'ref' is required, as 'kind:value'"))
+
+  private def durationOf(form: JsObject): Long =
+    form.select("duration_seconds").asOpt[Long].filter(_ > 0).getOrElse(throw badRequest("'duration_seconds' must be a positive number"))
+
+  /**
+   * Who is acting, the way the security module names its operators.
+   *
+   * Only ever handed to a module's handler, and only once this api has checked the call: an admin of
+   * the tenant for the module routes, a reader of the workspace for its lookups. The rights a handler
+   * checks on its user are the backoffice's, so this one carries all of them.
+   */
+  private def operator(using call: ThreatStudioApiRequest): BackOfficeUser = {
+    val via = call.apikey.clientId
+    BackOfficeUser(
+      randomId = IdGenerator.token,
+      name = call.actor.map(_.name).getOrElse(call.apikey.clientName),
+      email = call.actor.map(a => s"${a.email} via $via").getOrElse(via),
+      profile = Json.obj(),
+      authConfigId = "apikey",
+      simpleLogin = false,
+      tags = Seq.empty,
+      metadata = Map.empty,
+      rights = UserRights.superAdmin,
+      location = otoroshi.models.EntityLocation.default,
+      adminEntityValidators = Map.empty
+    )
+  }
+
+  private def securityAudit(sc: Scope, action: String, ref: IdentityRef, detail: JsObject)(using call: ThreatStudioApiRequest): Unit =
+    CloudApimWafSecurityAudit(Some(operator), action, Some(ref), detail ++ Json.obj("workspace" -> sc.rule.id)).toAnalytics()
+
+  /**
+   * What a workspace has against a caller before banning it: an incident on its routes, or, for an
+   * address, a decision on its routes in the last seven days. A workspace bans for what happened to
+   * it, not for what it was told about.
+   */
+  private def evidenceOf(sc: Scope, ref: IdentityRef)(using call: ThreatStudioApiRequest): Future[Option[Seq[IncidentEvent]]] = {
+    val ids = sc.visibleIds
+    security.board.get(ref.key).flatMap {
+      case Some(view) if onRoutes(view.incident.timeline, ids).nonEmpty => Some(onRoutes(view.incident.timeline, ids)).vfuture
+      case _ if ref.kind == IdentityRef.Ip && ids.nonEmpty && AnalyticsRuntime.executor.isDefined &&
+            (env.clusterConfig.mode.isOff || env.clusterConfig.mode.isLeader) =>
+        val now = Instant.now()
+        runQuery(
+          "cloudapim_security_decisions_log",
+          Filters(from = now.minusSeconds(7L * 24L * 3600L), to = now, tenant = Some(call.currentTenant.value)),
+          Json.obj("source" -> ref.value, "route_ids" -> ids.toSeq.sorted, "limit" -> 1),
+          None,
+          compare = false,
+          nocache = true
+        ).map {
+          case Right(res) if (res \ "data" \ "items").asOpt[JsArray].exists(_.value.nonEmpty) => Some(Seq.empty)
+          case _                                                                              => None
+        }.recover { case _ => None }
+      case _ => Option.empty[Seq[IncidentEvent]].vfuture
+    }
+  }
+
+  private def ban(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
+    requireRespond(sc)
+    val ref      = refOf(form)
+    val duration = durationOf(form)
+    val reason   = form.select("reason").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse(throw badRequest("'reason' is required"))
+    evidenceOf(sc, ref).flatMap {
+      case None           => throw forbidden(s"nothing on the routes of this workspace was seen from ${ref.key}")
+      case Some(evidence) =>
+        security.bans
+          .ban(
+            ref,
+            duration.seconds,
+            reason,
+            Seq("manual", s"workspace:${sc.rule.id}"),
+            timeline = evidence,
+            issuedBy = Some(operator.email),
+            workspace = Some(sc.rule.id)
+          )
+          .map { outcome =>
+            securityAudit(sc, if (outcome.issued) "ban" else "ban-refused", ref, Json.obj("duration_seconds" -> duration, "reason" -> reason))
+            if (outcome.issued) Results.Created(outcome.json) else Results.Conflict(outcome.json)
+          }
+    }
+  }
+
+  private def banOfWorkspace(sc: Scope, ref: IdentityRef)(using call: ThreatStudioApiRequest): BanEntry =
+    bansOf(sc).find(_.ref.key == ref.key).getOrElse(throw notFound(s"no ban of ${ref.key} for this workspace"))
+
+  private def extendBan(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
+    requireRespond(sc)
+    val ref      = refOf(form)
+    val duration = durationOf(form)
+    val current  = banOfWorkspace(sc, ref)
+    if (!current.workspace.contains(sc.rule.id)) throw forbidden("a workspace extends the bans it issued, and only those")
+    security.bans.extend(ref, duration.seconds, operator.email).map {
+      case None       => throw notFound(s"the ban of ${ref.key} has lapsed")
+      case Some(next) =>
+        securityAudit(sc, "extend", ref, Json.obj("duration_seconds" -> duration))
+        Results.Ok(banJson(next, sc.visibleIds))
+    }
+  }
+
+  private def unban(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
+    requireRespond(sc)
+    val ref     = refOf(form)
+    val current = banOfWorkspace(sc, ref)
+    // its own bans, and the ones the fabric issued for what happened on its routes alone
+    val ownsIt  = current.workspace.contains(sc.rule.id) ||
+      (current.workspace.isEmpty && current.timeline.nonEmpty && current.timeline.forall(_.routeId.exists(sc.claimIds.contains)))
+    if (!ownsIt) throw forbidden("this ban was issued for more than this workspace: lifting it is an administrator's call")
+    security.bans.unban(ref).map { done =>
+      securityAudit(sc, "unban", ref, Json.obj())
+      Results.Ok(Json.obj("done" -> done, "ref" -> ref.json))
+    }
+  }
+
+  private def triage(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
+    requireRespond(sc)
+    val key   = form.select("key").asOpt[String].getOrElse(throw badRequest("'key' is required"))
+    val state = form.select("state").asOpt[String].flatMap(IncidentState.parse).getOrElse(throw badRequest("'state' must be open, acknowledged or resolved"))
+    incidentsOf(sc).flatMap { views =>
+      if (!views.exists(_.key == key)) throw notFound("no such incident on this workspace")
+      security.board
+        .setWorkspaceState(sc.rule.id, key, state, operator.email, form.select("note").asOpt[String])
+        .map { entry =>
+          IdentityRef.parse(key).foreach(ref => securityAudit(sc, s"incident-$state", ref, Json.obj()))
+          Results.Ok(entry.json)
+        }
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // the contract a route names
+  // ---------------------------------------------------------------------------------------------
+
+  private lazy val RouteEntities    = new StudioEntities("proxy.otoroshi.io", "routes")
+  private lazy val ContractEntities = new StudioEntities("waf.extensions.cloud-apim.com", "api-contracts")
+
+  private val ContractMeta = "cloud-apim-api-contract"
+
+  private def setRouteContract(sc: Scope, routeId: String, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
+    if (!sc.claimIds.contains(routeId)) throw notFound("no such route in this workspace")
+    val contract = form.value.get("contract_id") match {
+      case Some(JsString(id)) if id.trim.nonEmpty => Some(id.trim)
+      case None | Some(JsNull) | Some(JsString(_)) => None
+      case Some(_)                                => throw badRequest("'contract_id' must be a string or null")
+    }
+    for {
+      _     <- contract match {
+                 case None     => ().vfuture
+                 case Some(id) => ContractEntities.get(id).map(_.getOrElse(throw notFound(s"no such contract '$id'")))
+               }
+      route <- RouteEntities.get(routeId).map(_.getOrElse(throw notFound("this route is not one the admin api can write")))
+      meta   = route.select("metadata").asOpt[JsObject].getOrElse(Json.obj())
+      saved <- RouteEntities.update(route ++ Json.obj("metadata" -> contract.fold(meta - ContractMeta)(id => meta ++ Json.obj(ContractMeta -> id))))
+    } yield Results.Ok(Json.obj("route_id" -> RouteEntities.idOf(saved), "contract_id" -> Json.toJson(contract)))
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // the module routes, on the admin api
+  // ---------------------------------------------------------------------------------------------
+
+  private val modulePrefix = "/extensions/cloud-apim/extensions/waf/"
+  private val studioPrefix = "/extensions/cloud-apim/extensions/waf/studio"
+
+  private lazy val moduleRoutes: Seq[AdminExtensionBackofficeAuthRoute] =
+    ext.rawBackofficeRoutes.filter(r => r.path.startsWith(modulePrefix) && !r.path.startsWith(studioPrefix))
+
+  private def moduleRoute(method: String, suffix: String): AdminExtensionBackofficeAuthRoute =
+    moduleRoutes
+      .find(r => r.method == method && r.path == s"$modulePrefix$suffix")
+      .getOrElse(throw ThreatStudioApiError(500, "internal_error", s"no module route $method $suffix"))
+
+  /** Runs a module's own handler, as the operator the call names. */
+  private def delegate(route: AdminExtensionBackofficeAuthRoute, body: JsValue)(using call: ThreatStudioApiRequest): Future[Result] = {
+    val ctx = new AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute](
+      new org.bigtesting.routd.Route(route.path),
+      route,
+      route.method,
+      route.path,
+      call.req.path
+    )
+    val source = body match {
+      case JsNull => None
+      case json   => Some(Source.single(ByteString(Json.stringify(json))))
+    }
+    route.handle(ctx, call.req, Some(operator), source)
+  }
+
+  /**
+   * Every module route of the backoffice, served on the admin api under `/api`, for an admin of the
+   * tenant: the bans, the allowlist, the feeds, the reputation sources and the rest are the gateway's
+   * and not any one workspace's.
+   */
+  private def mirrored(route: AdminExtensionBackofficeAuthRoute): AdminExtensionAdminApiRoute =
+    this.route(route.method, "", wantsBody = route.wantsBody, absolute = Some(s"/api${route.path}")) {
+      if (!tenantAdmin) throw forbidden("the routes of the whole gateway need an admin of the tenant")
+      delegate(route, call.body)
+    }
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
   // routes
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  private def route(method: String, path: String, wantsBody: Boolean = false)(
+  private def route(method: String, path: String, wantsBody: Boolean = false, absolute: Option[String] = None)(
       handle: ThreatStudioApiRequest ?=> Future[Result]
   ): AdminExtensionAdminApiRoute =
     AdminExtensionAdminApiRoute(
       method = method,
-      path = s"$apiPath$path",
+      path = absolute.getOrElse(s"$apiPath$path"),
       wantsBody = wantsBody,
       handle = (
           ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute],
@@ -587,6 +937,87 @@ class ThreatStudioApi(env: Env, studio: ThreatStudio) {
         before.rule(id)
         before.copy(config = before.config.copy(rules = before.config.rules.filterNot(_.id == id)))
       }.map(_ => Results.NoContent)
+    },
+
+    // what the workspace sees of its traffic
+
+    route("POST", "/workspaces/:id/analytics/_query", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => analytics(sc, call.form))
+    },
+    route("GET", "/workspaces/:id/api-report") {
+      scope(call.param("id")).flatMap(sc => apiReport(sc))
+    },
+
+    // its callers
+
+    route("GET", "/workspaces/:id/incidents") {
+      scope(call.param("id")).flatMap { sc =>
+        val ids  = sc.visibleIds
+        val keys = sc.visibleKeys
+        incidentsOf(sc).map(views => Results.Ok(Json.obj("incidents" -> JsArray(views.map(v => incidentJson(v, ids, keys))))))
+      }
+    },
+    route("POST", "/workspaces/:id/incidents/_state", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => triage(sc, call.form))
+    },
+    route("GET", "/workspaces/:id/bans") {
+      scope(call.param("id")).map { sc =>
+        val ids = sc.visibleIds
+        Results.Ok(Json.obj("bans" -> JsArray(bansOf(sc).map(b => banJson(b, ids)))))
+      }
+    },
+    route("POST", "/workspaces/:id/bans", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => ban(sc, call.form))
+    },
+    route("POST", "/workspaces/:id/bans/_extend", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => extendBan(sc, call.form))
+    },
+    route("POST", "/workspaces/:id/bans/_unban", wantsBody = true) {
+      scope(call.param("id")).flatMap(sc => unban(sc, call.form))
+    },
+
+    // the contract each route of the workspace names
+
+    route("PUT", "/workspaces/:id/routes/:rid/contract", wantsBody = true) {
+      // writing the route checks the caller may write it
+      scope(call.param("id")).flatMap(sc => setRouteContract(sc, call.param("rid"), call.form))
+    },
+
+    // the lookups and computations its pages make, which read nothing of another workspace
+
+    route("POST", "/workspaces/:id/reputation/_lookup", wantsBody = true) {
+      scope(call.param("id")).flatMap(_ => delegate(moduleRoute("POST", "reputation/_lookup"), call.form - "feeds" - "crowdsec"))
+    },
+    route("POST", "/workspaces/:id/reputation/_geo", wantsBody = true) {
+      scope(call.param("id")).flatMap(_ => delegate(moduleRoute("POST", "reputation/_geo"), call.form))
+    },
+    route("POST", "/workspaces/:id/rules/_describe", wantsBody = true) {
+      scope(call.param("id")).flatMap(_ => delegate(moduleRoute("POST", "utils/_rules"), call.form))
+    },
+    route("POST", "/workspaces/:id/bots/_robots_txt", wantsBody = true) {
+      scope(call.param("id")).flatMap(_ => delegate(moduleRoute("POST", "security/_robots_txt"), call.form))
+    },
+    route("GET", "/workspaces/:id/bots/catalog") {
+      scope(call.param("id")).flatMap(_ => delegate(moduleRoute("GET", "security/_bot_catalog"), JsNull))
+    },
+    route("GET", "/workspaces/:id/challenge-presets") {
+      scope(call.param("id")).flatMap(_ => delegate(moduleRoute("GET", "security/_challenge_presets"), JsNull))
+    },
+    route("POST", "/workspaces/:id/challenge-presets/_build", wantsBody = true) {
+      scope(call.param("id")).flatMap(_ => delegate(moduleRoute("POST", "security/_challenge_from_preset"), call.form))
+    },
+    route("POST", "/workspaces/:id/contracts/_check", wantsBody = true) {
+      scope(call.param("id")).flatMap { _ =>
+        // a stored contract is checked only when the caller may read it
+        call.form.select("id").asOpt[String] match {
+          case None     => delegate(moduleRoute("POST", "security/_contract_check"), call.form)
+          case Some(id) =>
+            ContractEntities.get(id).flatMap {
+              case None    => throw notFound(s"no such contract '$id'")
+              case Some(_) => delegate(moduleRoute("POST", "security/_contract_check"), call.form)
+            }
+        }
+      }
     }
-  )
+  ) ++ moduleRoutes.map(mirrored)
 }

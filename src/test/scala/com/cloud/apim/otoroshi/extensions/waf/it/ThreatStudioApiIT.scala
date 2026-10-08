@@ -1,13 +1,11 @@
 package com.cloud.apim.otoroshi.extensions.waf.it
 
+import com.cloud.apim.otoroshi.extensions.waf.it.StudioApiClient.*
 import com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudio
-import otoroshi.models.{EntityLocation, TeamId, TenantId}
 import otoroshi.next.models.NgRoute
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.*
 import play.api.libs.json.*
-import play.api.libs.ws.{WSAuthScheme, WSRequest, WSResponse}
-import play.api.libs.ws.DefaultBodyWritables.writeableOf_String
 
 import scala.concurrent.Await
 import scala.concurrent.duration.*
@@ -26,8 +24,6 @@ class ThreatStudioApiIT extends munit.FunSuite {
   private given otoroshi.env.Env                 = Gateway.instance.env
   private given scala.concurrent.ExecutionContext = Gateway.ec
 
-  private val base = "/api/extensions/cloud-apim/extensions/waf/studio"
-
   private def studio: ThreatStudio =
     Gateway.instance.env.adminExtensions.extension[CloudApimWafExtension].get.studio
 
@@ -35,50 +31,13 @@ class ThreatStudioApiIT extends munit.FunSuite {
   // keys
   // ---------------------------------------------------------------------------------------------
 
-  private final case class Key(id: String) {
-    def secret: String = s"$id-secret"
-  }
-
-  private val superKey    = Key("admin-api-apikey-id")
   private val teamA       = Key("studio-api-team-a")
   private val readerA     = Key("studio-api-reader-a")
   private val tenantAdmin = Key("studio-api-tenant-admin")
 
-  private def createKey(key: Key, rights: JsValue): Unit = {
-    val template = Gateway.await(Gateway.admin("/apis/apim.otoroshi.io/v1/apikeys/_template").get()).json.as[JsObject]
-    val res      = Gateway.post(
-      "/apis/apim.otoroshi.io/v1/apikeys",
-      template ++ Json.obj(
-        "clientId"           -> key.id,
-        "clientSecret"       -> key.secret,
-        "clientName"         -> key.id,
-        "enabled"            -> true,
-        "authorizedEntities" -> Json.arr("group_admin-api-group"),
-        "metadata"           -> Json.obj("otoroshi-access-rights" -> Json.stringify(rights))
-      )
-    )
-    if (res.status > 299) throw new RuntimeException(s"could not create the key ${key.id}: ${res.status} ${res.body}")
-  }
-
-  private def as(key: Key, path: String, headers: (String, String)*): WSRequest =
-    Gateway.ws
-      .url(s"http://127.0.0.1:${Gateway.port}$base$path")
-      .withHttpHeaders((Seq("Host" -> "otoroshi-api.oto.tools", "Content-Type" -> "application/json") ++ headers)*)
-      .withAuth(key.id, if (key == superKey) "admin-api-apikey-secret" else key.secret, WSAuthScheme.BASIC)
-
-  private def get(key: Key, path: String): WSResponse = Gateway.await(as(key, path).get())
-  private def send(key: Key, method: String, path: String, body: JsValue, headers: (String, String)*): WSResponse =
-    Gateway.await(as(key, path, headers*).withMethod(method).withBody(Json.stringify(body)).execute())
-
   // ---------------------------------------------------------------------------------------------
   // the table
   // ---------------------------------------------------------------------------------------------
-
-  private def tagged(tag: String) = CloudApimSecuritySuiteTarget(path = Some("$.tags"), value = JsString(s"Contains($tag)"))
-  private def target(tag: String): JsValue = CloudApimSecuritySuiteTarget.format.writes(tagged(tag))
-
-  private def rule(id: String, tag: String) =
-    CloudApimSecuritySuiteGlobalRule(id = id, name = id, targets = Seq(tagged(tag)))
 
   // ws_a claims two routes of team-a, ws_mixed one of team-a and one of team-b, ws_empty nothing
   private val initialTable = CloudApimSecuritySuiteGlobalPresetConfig(
@@ -109,8 +68,6 @@ class ThreatStudioApiIT extends munit.FunSuite {
   // routes of two teams
   // ---------------------------------------------------------------------------------------------
 
-  private def of(team: String) = EntityLocation(TenantId.default, Seq(TeamId(team)))
-
   private var backend: TestBackend = null
   private var routes: Seq[NgRoute] = Seq.empty
 
@@ -118,9 +75,9 @@ class ThreatStudioApiIT extends munit.FunSuite {
 
   override def beforeAll(): Unit = {
     Gateway.theTable.acquire()
-    createKey(teamA, Json.arr(Json.obj("tenant" -> "default:rw", "teams" -> Json.arr("team-a:rw"))))
-    createKey(readerA, Json.arr(Json.obj("tenant" -> "default:r", "teams" -> Json.arr("team-a:r"))))
-    createKey(tenantAdmin, Json.arr(Json.obj("tenant" -> "default:rw", "teams" -> Json.arr("*:rw"))))
+    createKey(teamA, teamRights("team-a"))
+    createKey(readerA, teamRights("team-a", write = false))
+    createKey(tenantAdmin, tenantAdminRights)
     backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
     routes = Seq(
       Gateway.createRoute("studio-api-a1", backend.port, Seq.empty, tags = Seq("studio-api-a", "studio-api-a1"), location = of("team-a")),
@@ -134,7 +91,7 @@ class ThreatStudioApiIT extends munit.FunSuite {
     try {
       Await.result(studio.writeTable(CloudApimSecuritySuiteGlobalPresetConfig(Seq.empty), Some(false)), 10.seconds)
       routes.foreach(Gateway.deleteRoute)
-      Seq(teamA, readerA, tenantAdmin).foreach(k => Gateway.delete(s"/apis/apim.otoroshi.io/v1/apikeys/${k.id}"))
+      Seq(teamA, readerA, tenantAdmin).foreach(deleteKey)
       if (backend != null) backend.stop()
     } finally Gateway.theTable.release()
   }
