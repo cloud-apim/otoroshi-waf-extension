@@ -285,3 +285,36 @@ entity.
 Reading needs a backoffice session. **Editing the table needs a super admin**, because the table
 lives on the global configuration: that is the danger zone by another name. Everything else — the
 entities, the bans, the allowlist — follows the usual tenant and team rights of the admin API.
+
+## Threat Studio Enterprise
+
+Threat Studio lives in the Otoroshi backoffice, so the people who use it are the administrators of
+your gateway. To open it to the rest of your company — the teams that own the routes a workspace
+protects, the people on call when one of them is attacked, the security team that audits all of it —
+**Threat Studio Enterprise** serves the same studio as a standalone application, with the access
+control an organization expects.
+
+- **Your company login**: users sign in with your identity provider, through the authentication
+  modules of Otoroshi (OpenID Connect, SAML, LDAP...). Nobody needs an Otoroshi account.
+- **Members and roles in every workspace**: add members by email or by group of your directory, each
+  with a role. An `owner` manages the workspace and its members, an `editor` sets its protection, a
+  `responder` acts on the callers (bans, allowlist, incidents), a `viewer` follows the protection and
+  the activity.
+- **Each team on its own routes**: a user only sees the workspaces they belong to, and only what their
+  role allows on the routes their workspace governs. The table, and everything that holds for the
+  whole gateway (shared state, feeds, reputation sources), stays with the administrators of the
+  gateway; auditors read all of it and change nothing.
+- **Secrets kept on the server**: challenge secrets, alert webhooks, CrowdSec and feed keys,
+  geolocation credentials and honeytokens never reach the browser. An administrator reveals one on
+  demand, and every reveal is recorded.
+- **An audit trail**: every change, every refusal and every read of the fragments of a request is
+  kept, with who, when and from where.
+- **The workspaces you already have**: Enterprise works on the same table and the same entities, so
+  your existing workspaces only need an owner to be shared, and the backoffice studio stays available
+  to your gateway administrators.
+
+Every capability of Threat Studio remains in the open source edition. Enterprise adds what it takes
+to share it with your whole organization.
+
+Find out more about Threat Studio Enterprise on the
+[Cloud APIM website](https://www.cloud-apim.com/threat-studio-enterprise).
