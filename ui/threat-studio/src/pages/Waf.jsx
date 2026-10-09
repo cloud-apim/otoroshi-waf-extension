@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useStudio, useWorkspace } from '../App';
+import { useCan, useStudio, useWorkspace } from '../App';
 import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
 import { RuleText } from '../components/rule';
@@ -16,11 +16,10 @@ import {
   useConfirm,
   useToast,
 } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
-import { Resources } from '../lib/entities';
 import { fmtDate, fmtInt, fmtPercent } from '../lib/format';
-import { Learning, Tuning } from '../lib/security';
-import { PRESET_DEFAULTS, replaceWorkspace, saveTable } from '../lib/workspaces';
+import { changesInPlace, useEntities } from '../lib/scope';
+import { workspaceLearning, workspaceTuning } from '../lib/security';
+import { PRESET_DEFAULTS, savePreset } from '../lib/workspaces';
 
 /**
  * The rule engine of this workspace, whole and in the studio.
@@ -56,18 +55,18 @@ export function WafPage() {
 /* --------------------------------------------------------------------------- config */
 
 function ConfigTab({ configRef, enabled }) {
-  const { workspace, table } = useWorkspace();
+  const { workspace } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
-  const writable = canWrite();
-  const preset = { ...PRESET_DEFAULTS, ...(workspace.preset || {}) };
+  const writable = useCan()('config:write');
+  const entities = useEntities();
   const [editing, setEditing] = useState(null);
 
-  const configs = useAsync(() => Resources.wafConfigs.list(), []);
+  const configs = useAsync(() => entities('waf-configs').list(), []);
   const current = (configs.data || []).find((c) => c.id === configRef);
 
   const use = (id) =>
-    saveTable(replaceWorkspace(table, workspace.id, (w) => ({ ...w, preset: { ...preset, waf_config: id, waf: true } })))
+    savePreset(workspace.id, { waf_config: id, waf: true })
       .then(() => {
         studio.reload();
         toast.success('WAF config selected');
@@ -95,8 +94,8 @@ function ConfigTab({ configRef, enabled }) {
               </div>
             </div>
             <button className="btn sm" onClick={() => setEditing(current)}>
-              <Icon name={writable ? 'edit' : 'eye'} />
-              {writable ? 'Edit rules' : 'View rules'}
+              <Icon name={writable && changesInPlace(current) ? 'edit' : 'eye'} />
+              {writable && changesInPlace(current) ? 'Edit rules' : 'View rules'}
             </button>
           </div>
         )}
@@ -110,8 +109,6 @@ function ConfigTab({ configRef, enabled }) {
         selectedId={configRef}
         onSelect={use}
         writable={writable}
-        workspaceId={workspace.id}
-        kind="waf"
         createLabel="New config"
         emptyTitle="No WAF config"
         emptyBody={<p className="muted">A config holds the SecLang rules and the rulesets it composes. The WAF section cannot expand without one.</p>}
@@ -188,9 +185,11 @@ function Proposal({ proposal, onApply, busy }) {
 function CandidateDrawer({ candidate, configRef, onClose, onApplied }) {
   const toast = useToast();
   const confirm = useConfirm();
+  const { workspace } = useWorkspace();
+  const tuning = workspaceTuning(workspace.id);
   const [busy, setBusy] = useState(false);
   const proposals = useAsync(
-    () => (candidate ? Tuning.propose({ sample_id: candidate.id, config_ref: configRef }) : Promise.resolve(null)),
+    () => (candidate ? tuning.propose({ sample_id: candidate.id, config_ref: configRef }) : Promise.resolve(null)),
     [candidate && candidate.id]
   );
 
@@ -209,7 +208,7 @@ function CandidateDrawer({ candidate, configRef, onClose, onApplied }) {
       if (!ok) return;
     }
     setBusy(true);
-    Tuning.apply({ sample_id: candidate.id, config_ref: configRef, seclang: p.seclang, kind: p.kind, reason: 'tuned from Threat Studio', force: risky })
+    tuning.apply({ sample_id: candidate.id, config_ref: configRef, seclang: p.seclang, kind: p.kind, reason: 'tuned from Threat Studio', force: risky })
       .then((r) => {
         if (r && r.error) throw new Error(r.error);
         toast.success('Exclusion applied');
@@ -266,9 +265,11 @@ function CandidateDrawer({ candidate, configRef, onClose, onApplied }) {
 }
 
 function TuningTab({ configRef }) {
-  const writable = canWrite();
+  const { workspace } = useWorkspace();
+  const writable = useCan()('config:write');
   const [open, setOpen] = useState(null);
-  const matches = useAsync(() => Tuning.matches(), []);
+  // the candidates of the workspace's own routes: the api leaves the others out
+  const matches = useAsync(() => workspaceTuning(workspace.id).matches(), [workspace.id]);
 
   const candidates = ((matches.data && matches.data.matches) || []).filter((m) => !configRef || m.config_ref === configRef);
 
@@ -360,9 +361,11 @@ function Stat({ label, value, hint }) {
 
 function LearningReport({ configRef, onApplied }) {
   const toast = useToast();
+  const { workspace } = useWorkspace();
+  const learning = workspaceLearning(workspace.id);
   const [picked, setPicked] = useState({});
   const [busy, setBusy] = useState(false);
-  const report = useAsync(() => Learning.report({ config_ref: configRef }), [configRef]);
+  const report = useAsync(() => learning.report({ config_ref: configRef }), [configRef]);
 
   if (report.loading) return <Loading />;
   if (report.error) return <ErrorAlert error={report.error} />;
@@ -375,7 +378,7 @@ function LearningReport({ configRef, onApplied }) {
 
   const apply = () => {
     setBusy(true);
-    Learning.apply({ config_ref: configRef, keys: chosen.map((e) => e.entry.key), reason: 'applied from a learning run in Threat Studio' })
+    learning.apply({ config_ref: configRef, keys: chosen.map((e) => e.entry.key), reason: 'applied from a learning run in Threat Studio' })
       .then((res) => {
         if (res && res.error) throw new Error(res.error);
         toast.success(`Applied ${res.count} exclusion${res.count === 1 ? '' : 's'}`);
@@ -485,8 +488,10 @@ function LearningReport({ configRef, onApplied }) {
 function LearningTab({ configRef }) {
   const toast = useToast();
   const confirm = useConfirm();
-  const writable = canWrite();
-  const running = useAsync(() => Learning.running(), []);
+  const { workspace } = useWorkspace();
+  const learning = workspaceLearning(workspace.id);
+  const writable = useCan()('config:write');
+  const running = useAsync(() => learning.running(), [workspace.id]);
   const [busy, setBusy] = useState(false);
   const [reportKey, setReportKey] = useState(0);
 
@@ -535,13 +540,13 @@ function LearningTab({ configRef }) {
             <div className="row" style={{ gap: 8 }}>
               {isRunning ? (
                 <>
-                  <button className="btn" disabled={busy} onClick={act(Learning.stop, 'Window stopped')}>
+                  <button className="btn" disabled={busy} onClick={act(learning.stop, 'Window stopped')}>
                     Stop &amp; report
                   </button>
                   <button
                     className="btn danger"
                     disabled={busy}
-                    onClick={act(Learning.discard, 'Window discarded', {
+                    onClick={act(learning.discard, 'Window discarded', {
                       title: 'Discard this window?',
                       message: 'The measurements are dropped and nothing is kept.',
                       danger: true,
@@ -552,7 +557,7 @@ function LearningTab({ configRef }) {
                   </button>
                 </>
               ) : (
-                <button className="btn primary" disabled={busy} onClick={act(Learning.start, 'Window started')}>
+                <button className="btn primary" disabled={busy} onClick={act(learning.start, 'Window started')}>
                   Start a window
                 </button>
               )}

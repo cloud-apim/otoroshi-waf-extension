@@ -4,6 +4,7 @@ import { Icon } from '../components/icons';
 import { CoverageBadge, PostureMarks } from '../components/posture';
 import { Badge, Card, ErrorAlert, Loading, PageHeader, TextInput, useAsync } from '../components/ui';
 import { loadWorkspaceRoutes } from '../lib/workspaces';
+import { adminLink } from '../lib/platform';
 
 function RouteTable({ routes, empty }) {
   if (routes.length === 0) return <div className="chart-empty" style={{ height: 120 }}>{empty}</div>;
@@ -32,15 +33,17 @@ function RouteTable({ routes, empty }) {
                 <PostureMarks posture={r} />
               </td>
               <td style={{ textAlign: 'right' }}>
-                <a
-                  className="copy-btn"
-                  title="Open this route in Otoroshi"
-                  href={`/bo/dashboard/routes/${r.route_id}?tab=flow`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Icon name="external" />
-                </a>
+                {adminLink('/routes') && (
+                  <a
+                    className="copy-btn"
+                    title="Open this route in Otoroshi"
+                    href={adminLink(`/routes/${r.route_id}?tab=flow`)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Icon name="external" />
+                  </a>
+                )}
               </td>
             </tr>
           ))}

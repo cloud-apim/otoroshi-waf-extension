@@ -1,4 +1,4 @@
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { AreaChart } from '../components/charts';
 import { Icon } from '../components/icons';
 import { Lint } from '../components/posture';
@@ -7,7 +7,7 @@ import { Donut, Kpi, NoExporter, Ranked, ShareBar } from '../components/widgets'
 import { fmtInt, fmtPercent } from '../lib/format';
 import { Link } from '../lib/router';
 import { itemsOf, NoExporterError, Q, runQueries, scalarOf, seriesOf, bucketOf } from '../lib/analytics';
-import { Resources } from '../lib/entities';
+import { useEntities } from '../lib/scope';
 import { armedSections, enforcementOf, isCatchAll, lintWorkspace, PRESET_DEFAULTS, SECTIONS } from '../lib/workspaces';
 
 /**
@@ -20,9 +20,15 @@ export function OverviewPage() {
   const { workspace, table } = useWorkspace();
   const scope = (workspace.claims || []).map((r) => r.id);
   const preset = { ...PRESET_DEFAULTS, ...(workspace.preset || {}) };
+  const entities = useEntities();
+  const canReadConfig = useCan()('config:read');
 
+  // reading what enforces needs the configuration; without it the page says what it can from the table alone
   const refs = useAsync(
-    () => Promise.all([Resources.threatPolicies.list(), Resources.wafConfigs.list()]).then(([policies, configs]) => ({ policies, configs })),
+    () =>
+      canReadConfig
+        ? Promise.all([entities('threat-policies').list(), entities('waf-configs').list()]).then(([policies, configs]) => ({ policies, configs }))
+        : Promise.resolve({ policies: [], configs: [] }),
     []
   );
   const stats = useAsync(
@@ -36,7 +42,7 @@ export function OverviewPage() {
           category: Q.byCategory,
           tags: Q.topTags,
         },
-        { period: '7d', scope, compare: true }
+        { period: '7d', workspace: workspace.id, compare: true }
       ),
     [workspace.id, scope.join(',')]
   );

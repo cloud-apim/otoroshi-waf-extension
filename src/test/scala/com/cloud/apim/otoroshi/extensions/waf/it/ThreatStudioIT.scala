@@ -64,6 +64,7 @@ class ThreatStudioIT extends munit.FunSuite {
   private var routes: Seq[NgRoute] = Seq.empty
 
   override def beforeAll(): Unit = {
+    Gateway.theTable.acquire()
     backend = new TestBackend()(using Gateway.system, Gateway.mat, Gateway.ec)
     routes = Seq(
       Gateway.createRoute("studio-public", backend.port, Seq.empty, tags = Seq("public", "v2")),
@@ -81,9 +82,11 @@ class ThreatStudioIT extends munit.FunSuite {
 
   override def afterAll(): Unit = {
     // the table lives on the global configuration, which every other suite in this jvm shares
-    clearTable()
-    routes.foreach(Gateway.deleteRoute)
-    if (backend != null) backend.stop()
+    try {
+      clearTable()
+      routes.foreach(Gateway.deleteRoute)
+      if (backend != null) backend.stop()
+    } finally Gateway.theTable.release()
   }
 
   test("an empty install reports no table rather than an error") {

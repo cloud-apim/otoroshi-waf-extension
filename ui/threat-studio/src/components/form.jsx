@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Icon } from './icons';
-import { Field, LinesInput, NumberInput, Select, TextArea, TextInput, Toggle, useAsync } from './ui';
+import { Field, LinesInput, NumberInput, SecretInput, Select, TextArea, TextInput, Toggle, useAsync } from './ui';
+import { useEntities } from '../lib/scope';
 
 /**
  * A declarative form over an entity.
@@ -101,7 +102,8 @@ function Objects({ value, onChange, fields, addLabel = 'Add', empty }) {
 
 /** Ids of other entities, picked rather than typed. */
 function Refs({ value, onChange, loader, placeholder }) {
-  const options = useAsync(() => loader(), []);
+  const entities = useEntities();
+  const options = useAsync(() => loader(entities), []);
   const items = value || [];
   const all = options.data || [];
   const remaining = all.filter((e) => !items.includes(e.id));
@@ -205,14 +207,15 @@ export function FieldInput({ field, value, onChange }) {
     case 'json':
       return <JsonField value={value} onChange={onChange} rows={field.rows} />;
     case 'secret':
-      return <TextInput value={value} onChange={onChange} placeholder={field.placeholder} type="password" autoComplete="new-password" />;
+      return <SecretInput value={value} onChange={onChange} placeholder={field.placeholder} />;
     default:
       return <TextInput value={value} onChange={onChange} placeholder={field.placeholder} />;
   }
 }
 
 function RefField({ value, onChange, field }) {
-  const options = useAsync(() => field.loader(), []);
+  const entities = useEntities();
+  const options = useAsync(() => field.loader(entities), []);
   return (
     <Select
       value={value ?? ''}

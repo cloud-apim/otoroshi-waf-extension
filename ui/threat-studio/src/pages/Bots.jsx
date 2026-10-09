@@ -1,28 +1,28 @@
 import { useState } from 'react';
-import { useStudio, useWorkspace } from '../App';
+import { useCan, useStudio, useWorkspace } from '../App';
 import { EntitySection } from '../components/entities';
 import { Badge, Card, Loading, Modal, PageHeader, useAsync, useToast } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
-import { Resources } from '../lib/entities';
-import { Security } from '../lib/security';
-import { PRESET_DEFAULTS, replaceWorkspace, saveTable } from '../lib/workspaces';
+import { useEntities } from '../lib/scope';
+import { workspaceSecurity } from '../lib/security';
+import { PRESET_DEFAULTS, savePreset } from '../lib/workspaces';
 
 /** Crawlers: which ones are named, which ones are verified, and what robots.txt says about them. */
 export function BotsPage() {
-  const { workspace, table } = useWorkspace();
+  const { workspace } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
-  const writable = canWrite();
+  const writable = useCan()('config:write');
+  const entities = useEntities();
   const preset = { ...PRESET_DEFAULTS, ...(workspace.preset || {}) };
 
-  const policies = useAsync(() => Resources.botPolicies.list(), []);
-  const challenges = useAsync(() => Resources.challengeProviders.list(), []);
+  const policies = useAsync(() => entities('bot-policies').list(), []);
+  const challenges = useAsync(() => entities('challenge-providers').list(), []);
   const [robots, setRobots] = useState(null);
 
   const current = (policies.data || []).find((p) => p.id === preset.bot_policy) || (policies.data || []).find((p) => p.enabled !== false);
 
   const use = (id) =>
-    saveTable(replaceWorkspace(table, workspace.id, (w) => ({ ...w, preset: { ...preset, bot_policy: id, bots: true } })))
+    savePreset(workspace.id, { bot_policy: id, bots: true })
       .then(() => {
         studio.reload();
         toast.success('Bot policy selected');
@@ -30,7 +30,8 @@ export function BotsPage() {
       .catch(toast.error);
 
   const showRobots = () =>
-    Security.robotsTxt({ policy: current && current.id })
+    workspaceSecurity(workspace.id)
+      .robotsTxt({ policy: current && current.id })
       .then((r) => (r.done ? setRobots(r) : toast.error(r.error || 'no bot policy')))
       .catch(toast.error);
 
@@ -67,8 +68,6 @@ export function BotsPage() {
         selectedId={preset.bot_policy}
         onSelect={use}
         writable={writable}
-        workspaceId={workspace.id}
-        kind="bots"
         createLabel="New policy"
         emptyTitle="No bot policy"
         emptyBody={<p className="muted">Without one the guard still identifies crawlers and contributes signals, but applies no rule of its own.</p>}
@@ -80,6 +79,7 @@ export function BotsPage() {
         title="Challenge providers"
         description="What a challenge tier serves. Proof of work needs nothing external; the vendor backends do."
         state={challenges}
+        writable={writable}
         createLabel="New provider"
         emptyTitle="No challenge provider"
         emptyBody={<p className="muted">A threat policy tier set to <code>challenge</code> needs one of these to have anything to serve.</p>}

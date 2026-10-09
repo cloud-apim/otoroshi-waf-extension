@@ -104,7 +104,7 @@ export function ActivityPage() {
   const scope = (workspace.claims || []).map((r) => r.id);
 
   const state = useAsync(
-    () => runQueries(withTop(QUERIES[tab]), { period, scope, compare: tab === 'decisions' }),
+    () => runQueries(withTop(QUERIES[tab]), { period, workspace: workspace.id, compare: tab === 'decisions' }),
     [workspace.id, tab, period, scope.join(',')]
   );
 

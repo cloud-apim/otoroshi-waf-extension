@@ -1,6 +1,7 @@
 import { EntitySection } from '../components/entities';
 import { Card, PageHeader, useAsync } from '../components/ui';
 import { Resources } from '../lib/entities';
+import { adminLink } from '../lib/platform';
 
 /**
  * What runs before a route is known.
@@ -53,9 +54,11 @@ export function PreRoutingPage() {
           Order is significant — validators run in the order listed, so put the cheap reputation check before the rule
           engine.
         </p>
-        <a className="btn" style={{ marginTop: 14 }} href="/bo/dashboard/dangerzone" target="_blank" rel="noreferrer">
-          Open the danger zone
-        </a>
+        {adminLink('/dangerzone') && (
+          <a className="btn" style={{ marginTop: 14 }} href={adminLink('/dangerzone')} target="_blank" rel="noreferrer">
+            Open the danger zone
+          </a>
+        )}
       </Card>
 
       <EntitySection

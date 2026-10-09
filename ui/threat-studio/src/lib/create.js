@@ -1,6 +1,5 @@
-import { api, EXT_API } from './api';
-import { Resources, tagFor } from './entities';
-import { schemaOf } from './schemas';
+import { backend } from './backend';
+import { currentWorkspace } from './platform';
 
 /**
  * Seeding a new entity.
@@ -12,23 +11,6 @@ import { schemaOf } from './schemas';
  * Nothing is written by these: they return what the editor opens on, so a creation is reviewed in
  * the same form it will later be edited in.
  */
-
-const RESOURCES = {
-  'waf-configs': () => Resources.wafConfigs,
-  'waf-rulesets': () => Resources.wafRulesets,
-  'threat-policies': () => Resources.threatPolicies,
-  'bot-policies': () => Resources.botPolicies,
-  'challenge-providers': () => Resources.challengeProviders,
-  'honeypot-policies': () => Resources.honeypotPolicies,
-  'threat-feeds': () => Resources.threatFeeds,
-  'crowdsec-bouncers': () => Resources.crowdsecBouncers,
-  'asn-databases': () => Resources.asnDatabases,
-  'geo-databases': () => Resources.geoDatabases,
-  'alert-rules': () => Resources.alertRules,
-  'malware-scanners': () => Resources.malwareScanners,
-  'rule-feeds': () => Resources.ruleFeeds,
-  'api-contracts': () => Resources.apiContracts,
-};
 
 /**
  * Where the studio's default differs from the entity template, and why.
@@ -45,32 +27,29 @@ const STUDIO_DEFAULTS = {
   },
 };
 
-export async function seedFor(plural, { workspaceId, kind, patch } = {}) {
-  const resource = resourceOf(plural);
+/**
+ * `resource` is where the entity will be created (see lib/scope.js): in a workspace, its template already carries
+ * the workspace's mark, and the api puts the mark back whatever is sent.
+ */
+export async function seedFor(resource, { patch } = {}) {
   const template = await resource.template();
   return {
     ...template,
-    ...(STUDIO_DEFAULTS[plural] || {}),
+    ...(STUDIO_DEFAULTS[resource.plural] || {}),
     ...(patch || {}),
-    metadata: { ...(template.metadata || {}), ...(workspaceId ? tagFor(workspaceId, kind) : {}) },
+    metadata: { ...(template.metadata || {}) },
   };
 }
 
-export function createEntity(plural, entity) {
-  return resourceOf(plural).create(entity);
-}
-
-/** The schema says it first: an entity the studio has a form for can always be created. */
-export function resourceOf(plural) {
-  const schema = schemaOf(plural);
-  if (schema) return schema.resource();
-  if (RESOURCES[plural]) return RESOURCES[plural]();
-  throw new Error(`the studio does not know how to create ${plural}`);
-}
+// asked of the workspace shown when there is one, of the gateway otherwise
+const ask = (wsOp, globalOp, input) => {
+  const ws = currentWorkspace();
+  return ws ? backend.run(wsOp, ws, input) : backend.runGlobal(globalOp, input);
+};
 
 /** Compiles what a config would run, so nothing is saved that the engine cannot parse. */
 export function compileConfig({ rules = [], rulesets = [], crs = {} }) {
-  return api.post(`${EXT_API}/utils/_compile`, { rules, rulesets, crs });
+  return ask('waf.compile', 'utils.compile', { body: { rules, rulesets, crs } });
 }
 
 /**
@@ -82,7 +61,7 @@ export function compileConfig({ rules = [], rulesets = [], crs = {} }) {
  * cannot fetch anything yet.
  */
 export async function seedFeedFromCatalog(entryId) {
-  const res = await api.post(`${EXT_API}/reputation/_template`, { entry: entryId });
+  const res = await backend.runGlobal('reputation.template', { body: { entry: entryId } });
   if (!res || !res.done) throw new Error((res && res.error) || 'unknown catalog entry');
   return res.feed;
 }
@@ -95,15 +74,15 @@ export async function seedFeedFromCatalog(entryId) {
  * can pass.
  */
 export async function seedChallengeFromPreset(presetId) {
-  const res = await api.post(`${EXT_API}/security/_challenge_from_preset`, { preset: presetId });
+  const res = await ask('challenges.build', 'security.challengeFromPreset', { body: { preset: presetId } });
   if (!res || !res.done) throw new Error((res && res.error) || 'unknown preset');
   return { ...res.provider, enabled: false };
 }
 
 export function listFeedCatalog() {
-  return api.get(`${EXT_API}/reputation/_catalog`);
+  return backend.runGlobal('reputation.catalog');
 }
 
 export function listChallengePresets() {
-  return api.get(`${EXT_API}/security/_challenge_presets`);
+  return ask('challenges.presets', 'security.challengePresets');
 }

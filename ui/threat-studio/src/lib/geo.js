@@ -1,4 +1,5 @@
-import { Reputation } from './security';
+import { backend } from './backend';
+import { currentWorkspace } from './platform';
 
 // Where an address comes from: the network and its AS number from the ASN databases, and the
 // location from the geolocation databases. Without a geolocation database the country is the one
@@ -44,8 +45,14 @@ export function setGeoAttributions(next) {
   attributionListeners.forEach((l) => l(list));
 }
 
+// asked of the workspace shown when there is one, of the gateway otherwise
+function locate(body) {
+  const ws = currentWorkspace();
+  return ws ? backend.run('geo.lookup', ws, { body }) : backend.runGlobal('reputation.geo', { body });
+}
+
 function ask(chunk) {
-  Reputation.geo({ ips: chunk.map(([ip]) => ip) })
+  locate({ ips: chunk.map(([ip]) => ip) })
     .then((res) => {
       setGeoAttributions(res && res.attributions);
       const results = (res && res.results) || {};

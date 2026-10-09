@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { bootstrap } from '../lib/bootstrap';
 import { initials } from '../lib/format';
+import { hasPermission, platform } from '../lib/platform';
 import { Link, useRouter } from '../lib/router';
 import { Icon } from './icons';
 import cloudApimLogo from '../assets/cloud-apim-logo.svg';
@@ -12,20 +13,33 @@ import cloudApimLogo from '../assets/cloud-apim-logo.svg';
  * detectors themselves. The order is the reading order of the console, not an alphabet.
  */
 export const WORKSPACE_PAGES = [
-  { id: 'overview', label: 'Overview', icon: 'grid' },
-  { id: 'activity', label: 'Activity', icon: 'chart' },
-  { id: 'logs', label: 'Logs', icon: 'list' },
-  { id: 'routes', label: 'Routes', icon: 'route' },
-  { id: 'scope', label: 'Scope', icon: 'target' },
-  { id: 'protection', label: 'Protection', icon: 'sliders' },
-  { id: 'api', label: 'API', icon: 'file' },
-  { id: 'waf', label: 'WAF', icon: 'shield' },
-  { id: 'bots', label: 'Bots', icon: 'ghost' },
-  { id: 'reputation', label: 'IP reputation', icon: 'globe' },
-  { id: 'policy', label: 'Threat policy', icon: 'gauge' },
-  { id: 'incidents', label: 'Bans & incidents', icon: 'ban' },
-  { id: 'settings', label: 'Settings', icon: 'settings' },
+  { id: 'overview', label: 'Overview', icon: 'grid', permission: 'workspace:read' },
+  { id: 'activity', label: 'Activity', icon: 'chart', permission: 'activity:read' },
+  { id: 'logs', label: 'Logs', icon: 'list', permission: 'activity:read' },
+  { id: 'routes', label: 'Routes', icon: 'route', permission: 'workspace:read' },
+  { id: 'scope', label: 'Scope', icon: 'target', permission: 'workspace:read' },
+  { id: 'protection', label: 'Protection', icon: 'sliders', permission: 'config:read' },
+  { id: 'api', label: 'API', icon: 'file', permission: 'activity:read' },
+  { id: 'waf', label: 'WAF', icon: 'shield', permission: 'config:read' },
+  { id: 'bots', label: 'Bots', icon: 'ghost', permission: 'config:read' },
+  { id: 'reputation', label: 'IP reputation', icon: 'globe', permission: 'config:read' },
+  { id: 'policy', label: 'Threat policy', icon: 'gauge', permission: 'config:read' },
+  { id: 'incidents', label: 'Bans & incidents', icon: 'ban', permission: 'activity:read' },
+  { id: 'settings', label: 'Settings', icon: 'settings', permission: 'workspace:read' },
 ];
+
+/** The pages of a workspace the signed-in user may open, with the ones the edition adds where it says. */
+export function menuOf(workspace) {
+  const pages = WORKSPACE_PAGES.slice();
+  platform.pages.forEach((p) => {
+    const at = pages.findIndex((x) => x.id === p.after);
+    pages.splice(at < 0 ? pages.length : at + 1, 0, p);
+  });
+  return pages.filter((p) => !p.permission || platform.can(p.permission, workspace));
+}
+
+// the pages of the install are about the whole gateway, which is an administrator's
+export const canSeeInstall = () => hasPermission('admin:read');
 
 /**
  * What belongs to the install rather than to any workspace.
@@ -62,11 +76,11 @@ function SearchBox({ workspaces, currentWorkspace }) {
       items.push({ label: ws.name, hint: 'Workspace', to: `/workspaces/${ws.id}/overview`, icon: 'box' });
     });
     if (currentWorkspace) {
-      WORKSPACE_PAGES.forEach((p) =>
+      menuOf(currentWorkspace).forEach((p) =>
         items.push({ label: p.label, hint: currentWorkspace.name, to: `/workspaces/${currentWorkspace.id}/${p.id}`, icon: p.icon })
       );
     }
-    GLOBAL_PAGES.forEach((p) => items.push({ label: p.label, hint: 'Install', to: `/${p.id}`, icon: p.icon }));
+    if (canSeeInstall()) GLOBAL_PAGES.forEach((p) => items.push({ label: p.label, hint: 'Install', to: `/${p.id}`, icon: p.icon }));
     const needle = q.trim().toLowerCase();
     if (!needle) return [];
     return items.filter((i) => i.label.toLowerCase().includes(needle)).slice(0, 12);
@@ -177,29 +191,38 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
         <img className="brand-mark" src={cloudApimLogo} alt="Cloud APIM" />
         Threat Studio
       </Link>
-      <span
-        className="badge warning experimental"
-        title="Threat Studio is experimental: it does not cover everything the extension can do yet, and may change in future releases"
-      >
-        Experimental
-      </span>
+      {platform.experimental && (
+        <span
+          className="badge warning experimental"
+          title="Threat Studio is experimental: it does not cover everything the extension can do yet, and may change in future releases"
+        >
+          Experimental
+        </span>
+      )}
       <SearchBox workspaces={workspaces} currentWorkspace={currentWorkspace} />
       <nav>
         <Link to="/" className={path === '/' ? 'active' : ''}>
           Workspaces
         </Link>
-        <Link to="/fleet" className={path === '/fleet' ? 'active' : ''}>
-          Fleet
-        </Link>
-        <a href="https://cloud-apim.github.io/otoroshi-waf-extension/" target="_blank" rel="noreferrer">
-          Docs
-        </a>
+        {canSeeInstall() && (
+          <Link to="/fleet" className={path === '/fleet' ? 'active' : ''}>
+            Fleet
+          </Link>
+        )}
+        {platform.links.docs && (
+          <a href={platform.links.docs} target="_blank" rel="noreferrer">
+            Docs
+          </a>
+        )}
       </nav>
+      {platform.topbar.map((Item, i) => (typeof Item === 'function' ? <Item key={i} /> : <span key={i}>{Item}</span>))}
       <ThemeMenu theme={theme} />
-      <a className="btn sm" href={bootstrap.adminUrl} title="Back to the Otoroshi admin console">
-        <Icon name="arrowLeft" />
-        Back to Otoroshi
-      </a>
+      {platform.links.admin && (
+        <a className="btn sm" href={platform.links.admin} title="Back to the Otoroshi admin console">
+          <Icon name="arrowLeft" />
+          Back to Otoroshi
+        </a>
+      )}
       <div className="user" title={user.email}>
         <span className="avatar">{initials(user.name || user.email)}</span>
         <span className="truncate" style={{ maxWidth: 140 }}>
@@ -230,22 +253,24 @@ export function WorkspaceSidebar({ workspace, workspaces, page }) {
         ))}
       </select>
       <div className="section">
-        {WORKSPACE_PAGES.map((p) => (
+        {menuOf(workspace).map((p) => (
           <Link key={p.id} to={`/workspaces/${workspace.id}/${p.id}`} className={`navlink ${page === p.id ? 'active' : ''}`}>
             <Icon name={p.icon} />
             {p.label}
           </Link>
         ))}
       </div>
-      <div className="section">
-        <div className="label">Install</div>
-        {GLOBAL_PAGES.map((p) => (
-          <Link key={p.id} to={`/${p.id}`} className="navlink muted">
-            <Icon name={p.icon} />
-            {p.label}
-          </Link>
-        ))}
-      </div>
+      {canSeeInstall() && (
+        <div className="section">
+          <div className="label">Install</div>
+          {GLOBAL_PAGES.map((p) => (
+            <Link key={p.id} to={`/${p.id}`} className="navlink muted">
+              <Icon name={p.icon} />
+              {p.label}
+            </Link>
+          ))}
+        </div>
+      )}
     </aside>
   );
 }

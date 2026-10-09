@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { EntityEditor } from './editor';
 import { Badge, ErrorAlert, Field, Loading, Modal, Select, useToast } from './ui';
 import { listChallengePresets, listFeedCatalog, seedChallengeFromPreset, seedFeedFromCatalog, seedFor } from '../lib/create';
+import { useEntities } from '../lib/scope';
 
 /**
  * Creating an entity, in the form it will later be edited in.
@@ -161,8 +162,9 @@ function PresetPicker({ onClose, onPicked }) {
 
 const PICKERS = { 'threat-feeds': CatalogPicker, 'challenge-providers': PresetPicker };
 
-export function EntityCreator({ plural, open, onClose, onCreated, workspaceId, kind }) {
+export function EntityCreator({ plural, open, onClose, onCreated }) {
   const toast = useToast();
+  const resource = useEntities()(plural);
   const [seed, setSeed] = useState(null);
   const [error, setError] = useState(null);
   const Picker = PICKERS[plural];
@@ -176,7 +178,7 @@ export function EntityCreator({ plural, open, onClose, onCreated, workspaceId, k
       return;
     }
     if (Picker) return; // the picker decides what to seed from
-    seedFor(plural, { workspaceId, kind }).then(setSeed).catch(setError);
+    seedFor(resource).then(setSeed).catch(setError);
   }, [open, plural]);
 
   if (!open) return null;
@@ -189,7 +191,7 @@ export function EntityCreator({ plural, open, onClose, onCreated, workspaceId, k
         onPicked={(choice) => {
           setPicked(true);
           const seeding = !choice
-            ? seedFor(plural, { workspaceId, kind })
+            ? seedFor(resource)
             : plural === 'threat-feeds'
               ? seedFeedFromCatalog(choice)
               : seedChallengeFromPreset(choice);

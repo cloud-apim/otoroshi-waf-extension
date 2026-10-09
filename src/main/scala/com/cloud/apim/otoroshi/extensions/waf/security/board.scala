@@ -126,6 +126,9 @@ class IncidentBoard(
 
   private def incidentsKey: String = s"$prefix:incidents"
   private def stateKey: String     = s"$prefix:incidents:state"
+  // one hash per workspace of the global preset table: two teams watching the same caller each say
+  // where they are with it, and neither overwrites the other or the state the console keeps
+  private def workspaceStateKey(workspace: String): String = s"$prefix:incidents:state:workspace:$workspace"
 
   /** Per node, so the merged list stays readable however many nodes are running. */
   private val published: Int = 200
@@ -176,9 +179,11 @@ class IncidentBoard(
         Seq.empty
       }
 
-  private def states(): Future[Map[String, IncidentState]] =
+  private def states(): Future[Map[String, IncidentState]] = statesAt(stateKey)
+
+  private def statesAt(key: String): Future[Map[String, IncidentState]] =
     store
-      .hgetall(stateKey)
+      .hgetall(key)
       .map(_.values.toSeq.flatMap(v => Try(Json.parse(v)).toOption.flatMap(IncidentState.read)).map(s => (s.key, s)).toMap)
       .recover { case err: Throwable =>
         logger.warn("could not read the incident states", err)
@@ -231,6 +236,30 @@ class IncidentBoard(
           entry
         }
     }
+  }
+
+  /** Where one workspace is with each caller it has triaged. */
+  def workspaceStates(workspace: String): Future[Map[String, IncidentState]] = statesAt(workspaceStateKey(workspace))
+
+  def setWorkspaceState(workspace: String, key: String, state: String, by: String, note: Option[String]): Future[IncidentState] = {
+    val hash  = workspaceStateKey(workspace)
+    val entry = IncidentState(key, state, by, System.currentTimeMillis(), note.map(_.trim).filter(_.nonEmpty))
+    val write =
+      if (state == IncidentState.Open) store.hdel(hash, Seq(key)).map(_ => ())
+      else store.hset(hash, key, Json.stringify(entry.json)).flatMap(_ => store.pexpire(hash, IncidentBoard.stateRetention.toMillis)).map(_ => ())
+    // pruned as it is written, since nothing else knows which workspaces have a hash
+    write
+      .flatMap(_ => statesAt(hash))
+      .flatMap { all =>
+        val cutoff = System.currentTimeMillis() - IncidentBoard.stateRetention.toMillis
+        val stale  = all.values.filter(_.at < cutoff).map(_.key).toSeq
+        if (stale.isEmpty) ().vfuture else store.hdel(hash, stale).map(_ => ())
+      }
+      .map(_ => entry)
+      .recover { case err: Throwable =>
+        logger.error(s"could not record the state of incident $key for workspace $workspace", err)
+        entry
+      }
   }
 
   /** Drops state rows nobody will look at again, so the hash does not grow without bound. */

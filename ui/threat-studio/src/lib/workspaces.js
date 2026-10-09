@@ -1,4 +1,4 @@
-import { api, STUDIO_API } from './api';
+import { backend } from './backend';
 import { randomId } from './entities';
 
 /**
@@ -6,10 +6,12 @@ import { randomId } from './entities';
  *
  * There is no workspace entity anywhere: the studio reads the table off the global plugins, resolved
  * against the router by the extension (the selectors go through the expression language, so only the
- * gateway can answer which routes a rule claims), and writes it back whole.
+ * gateway can answer which routes a rule claims), with only the routes the signed-in user may read
+ * and what they may do on each rule.
  *
- * The table is ordered and the first matching rule wins, so the order of this array is not a display
- * preference — it is the configuration. Everything that reorders goes through `move`.
+ * The table is ordered and the first matching rule wins, so its order is not a display preference —
+ * it is the configuration. Each write below changes one thing of one rule, and the api relays it to
+ * the table as it stands when it writes: a page never sends back a copy of the whole table it read.
  */
 
 export const PRESET_DEFAULTS = {
@@ -52,12 +54,6 @@ export const PRESET_DEFAULTS = {
 /** Where a route names its own API contract, for a workspace that leaves it to each route. */
 export const CONTRACT_META = 'cloud-apim-api-contract';
 
-/** Sets or clears the contract a route names in its metadata. */
-export function routeContractOps(route, contractId) {
-  const has = !!(route.metadata || {})[CONTRACT_META];
-  if (contractId) return [{ op: has ? 'replace' : 'add', path: `/metadata/${CONTRACT_META}`, value: contractId }];
-  return has ? [{ op: 'remove', path: `/metadata/${CONTRACT_META}` }] : [];
-}
 
 /** The sections a preset expands into, in the order they run. */
 export const SECTIONS = [
@@ -95,33 +91,45 @@ export const SENSITIVE_DETECTORS = [
 ];
 
 export function loadTable() {
-  return api.get(`${STUDIO_API}/workspaces`);
+  return backend.workspaces.list();
 }
 
 export function loadWorkspaceRoutes(id) {
-  return api.get(`${STUDIO_API}/workspaces/${encodeURIComponent(id)}/routes`);
+  return backend.run('workspace.routes', id);
 }
 
-/** The payload the extension expects: the table, whole, in order. */
-function payloadOf(table, { slotEnabled } = {}) {
-  return {
-    skip_protected_routes: table.skip_protected_routes !== false,
-    ...(slotEnabled === undefined ? {} : { slot_enabled: slotEnabled }),
-    rules: (table.workspaces || []).map((w) => ({
-      id: w.id,
-      name: w.name,
-      enabled: w.enabled !== false,
-      skip: !!w.skip,
-      targets: w.targets || [],
-      preset: { ...PRESET_DEFAULTS, ...(w.preset || {}) },
-    })),
-  };
-}
+/* ---------- writing one thing of one rule ---------- */
 
-/** Saves and returns the table as the extension resolved it again — counts included. */
-export function saveTable(table, opts) {
-  return api.put(`${STUDIO_API}/workspaces`, payloadOf(table, opts));
-}
+/** The fields of the protection a page edits; the others keep their value. */
+export const savePreset = (wsId, patch) => backend.run('preset.save', wsId, { body: patch });
+
+export const renameWorkspace = (wsId, name) => backend.run('workspace.rename', wsId, { body: { name } });
+
+/** The contract a route of the workspace names, or none. */
+export const setRouteContract = (wsId, routeId, contractId) =>
+  backend.run('routes.setContract', wsId, { rid: routeId, body: { contract_id: contractId || null } });
+
+// what changes which rule wins a route is the table's, and its administrators'
+
+/** `{ targets, enabled, skip }`, any of them. */
+export const saveScope = (wsId, scope) => backend.runGlobal('workspaces.setScope', { ws: wsId, body: scope });
+
+export const moveWorkspaceTo = (wsId, to) => backend.runGlobal('workspaces.move', { ws: wsId, body: { to } });
+
+/** `{ id, name, targets, position, preset }`: the api puts it above the first catch-all when no position is given. */
+export const createWorkspace = (form) => backend.runGlobal('workspaces.create', { body: form });
+
+export const deleteWorkspace = (wsId) => backend.runGlobal('workspaces.delete', { ws: wsId });
+
+/** What saving a scope, moving or deleting a workspace would do to the routes: `{ changes, hidden, allowed, reason }`. */
+export const previewScope = (wsId, scope) => backend.runGlobal('workspaces.previewScope', { ws: wsId, body: scope });
+
+export const previewMove = (wsId, to) => backend.runGlobal('workspaces.previewMove', { ws: wsId, body: { to } });
+
+export const previewDelete = (wsId) => backend.runGlobal('workspaces.previewDelete', { ws: wsId });
+
+/** `{ enabled, skip_protected_routes }`, any of them: `enabled` is the slot of the global preset. */
+export const saveTableSettings = (settings) => backend.runGlobal('table.settings', { body: settings });
 
 export function emptyWorkspace(name) {
   return {

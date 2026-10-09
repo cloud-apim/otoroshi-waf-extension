@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { FormFields } from './form';
 import { Icon } from './icons';
 import { Badge, Drawer, ErrorAlert, Loading, useConfirm, useToast } from './ui';
-import { compileConfig, createEntity } from '../lib/create';
+import { compileConfig } from '../lib/create';
 import { schemaOf } from '../lib/schemas';
+import { changesInPlace, isOwn, useEntities, writerOf } from '../lib/scope';
 
 /* a dotted key reaches into a nested object, which is how the CRS dials are stored */
 function get(obj, path) {
@@ -60,8 +61,9 @@ function CompileBadge({ entity }) {
  * the footer rather than hidden, because an edited view is only honest if the whole one is one click
  * away.
  */
-export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted, writable = true, mode = 'edit' }) {
+export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted, writable: canWrite = true, mode = 'edit', forkUse = false }) {
   const schema = schemaOf(plural);
+  const resource = useEntities()(plural);
   const toast = useToast();
   const confirm = useConfirm();
   const fields = useMemo(() => (schema ? schema.sections.flatMap((s) => s.fields) : []), [schema]);
@@ -78,6 +80,13 @@ export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted
   if (!schema) return null;
 
   const creating = mode === 'create';
+  // an entity the workspace shares with what is outside it is copied to be changed, or changed for everything
+  // that uses it by an administrator of the gateway
+  const shared = !creating && !isOwn(entity);
+  const managed = !!(entity._studio && entity._studio.managed);
+  const writable = canWrite && (creating || changesInPlace(entity));
+  const writer = creating ? resource : writerOf(resource, entity);
+  const elsewhere = (entity._studio && entity._studio.usage && entity._studio.usage.elsewhere) || 0;
   const draft = unflatten(entity, values);
   const dirty = JSON.stringify(draft) !== JSON.stringify(entity);
   const named = !!(draft.name || '').trim();
@@ -85,7 +94,7 @@ export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted
   const save = () => {
     setBusy(true);
     setError(null);
-    const write = creating ? createEntity(plural, draft) : schema.resource().update(draft);
+    const write = creating ? resource.create(draft) : writer.update(draft);
     write
       .then(() => {
         toast.success(creating ? `${schema.label} created` : `${schema.label} saved`);
@@ -109,13 +118,25 @@ export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted
     });
     if (!ok) return;
     setBusy(true);
-    schema
-      .resource()
+    writer
       .delete(entity.id)
       .then(() => {
         toast.success(`${schema.label} deleted`);
         onClose();
         if (onDeleted) onDeleted(entity);
+      })
+      .catch(toast.error)
+      .finally(() => setBusy(false));
+  };
+
+  const fork = () => {
+    setBusy(true);
+    resource
+      .fork(entity.id, { use: forkUse })
+      .then((copy) => {
+        toast.success(`${schema.label} copied into this workspace${forkUse ? ', and used in place of the original' : ''}`);
+        onClose();
+        if (onSaved) onSaved(copy);
       })
       .catch(toast.error)
       .finally(() => setBusy(false));
@@ -129,6 +150,8 @@ export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted
         <span className="row" style={{ gap: 10 }}>
           {creating ? `New ${schema.label.toLowerCase()}` : entity.name}
           {plural === 'waf-configs' && <CompileBadge entity={draft} />}
+          {shared && <Badge title="Something outside this workspace uses it, so it is changed by copying it">shared</Badge>}
+          {managed && <Badge kind="info" title="Installed by a rule feed: the next pack replaces what is written here">managed by a rule feed</Badge>}
         </span>
       }
       onClose={onClose}
@@ -143,6 +166,12 @@ export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted
             )}
           </div>
           <div className="row" style={{ gap: 8 }}>
+            {canWrite && shared && resource.fork && (
+              <button className="btn" onClick={fork} disabled={busy}>
+                <Icon name="copy" />
+                Copy into this workspace
+              </button>
+            )}
             <button className="btn" onClick={onClose} disabled={busy}>
               {creating ? 'Cancel' : dirty ? 'Discard' : 'Close'}
             </button>
@@ -156,6 +185,12 @@ export function EntityEditor({ plural, entity, open, onClose, onSaved, onDeleted
       }
     >
       {error && <ErrorAlert error={error} />}
+      {shared && writable && (
+        <div className="alert" style={{ marginBottom: 14 }}>
+          Shared: saving changes it for everything that uses it{elsewhere > 0 ? ` — ${elsewhere} use${elsewhere === 1 ? '' : 's'} outside this workspace` : ''}.
+          Copy it into this workspace to change it here alone.
+        </div>
+      )}
       <div>
         <div className="mono faint small" style={{ marginBottom: 12 }}>
           {entity.id}

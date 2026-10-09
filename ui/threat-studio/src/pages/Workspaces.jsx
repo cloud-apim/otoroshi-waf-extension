@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useStudio } from '../App';
 import { Icon } from '../components/icons';
+import { useRouteChangesConfirm } from '../components/changes';
 import { Lint } from '../components/posture';
 import {
   Badge,
@@ -12,21 +13,21 @@ import {
   Modal,
   PageHeader,
   TextInput,
-  useConfirm,
   useToast,
 } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
+import { hasPermission } from '../lib/platform';
 import { Link, useRouter } from '../lib/router';
 import { fmtInt } from '../lib/format';
 import {
-  addWorkspace,
   armedSections,
+  createWorkspace,
+  deleteWorkspace,
   emptyWorkspace,
   isCatchAll,
   lintWorkspace,
-  moveWorkspace,
-  removeWorkspace,
-  saveTable,
+  moveWorkspaceTo,
+  previewDelete,
+  previewMove,
 } from '../lib/workspaces';
 
 function targetSummary(ws) {
@@ -106,23 +107,28 @@ function WorkspaceRow({ ws, table, onMove, onDelete, busy }) {
 export function WorkspacesPage() {
   const studio = useStudio();
   const toast = useToast();
-  const confirm = useConfirm();
+  const confirmChanges = useRouteChangesConfirm();
   const { navigate } = useRouter();
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
 
   const table = studio.table;
-  const writable = canWrite();
+  // the table decides which rule wins each route: changing it is an administrator's
+  const writable = hasPermission('admin');
 
-  const apply = (next, message) => {
+  const apply = (write, message) => {
     setBusy(true);
-    return saveTable(next)
+    return write()
       .then(() => {
         studio.reload();
         if (message) toast.success(message);
+        return true;
       })
-      .catch(toast.error)
+      .catch((e) => {
+        toast.error(e);
+        return false;
+      })
       .finally(() => setBusy(false));
   };
 
@@ -130,18 +136,39 @@ export function WorkspacesPage() {
     const ws = emptyWorkspace(name.trim() || 'New workspace');
     setCreating(false);
     setName('');
-    apply(addWorkspace(table, ws)).then(() => navigate(`/workspaces/${ws.id}/scope`));
+    // no position: the api puts it above the catch-all, the only place a narrow rule can ever win
+    apply(() => createWorkspace({ id: ws.id, name: ws.name, targets: ws.targets, preset: ws.preset })).then(
+      (ok) => ok && navigate(`/workspaces/${ws.id}/scope`)
+    );
   };
 
-  const remove = async (ws) => {
-    const ok = await confirm({
-      title: `Delete ${ws.name}?`,
-      message: `The routes it governs fall through to the rules below it, and to nothing at all if there are none. The entities it uses are not deleted.`,
-      danger: true,
-      confirmLabel: 'Delete',
-    });
-    if (ok) apply(removeWorkspace(table, ws.id), 'Workspace deleted');
-  };
+  // a change of the table is shown with the routes it moves before it is made
+  const guarded = (load, opts, write, message) =>
+    load()
+      .then((preview) => confirmChanges(preview, opts))
+      .then((ok) => ok && apply(write, message))
+      .catch(toast.error);
+
+  const remove = (ws) =>
+    guarded(
+      () => previewDelete(ws.id),
+      {
+        always: true,
+        title: `Delete ${ws.name}?`,
+        message: `The routes it governs fall through to the rules below it, and to nothing at all if there are none. The entities it uses are not deleted.`,
+        danger: true,
+        confirmLabel: 'Delete',
+      },
+      () => deleteWorkspace(ws.id),
+      'Workspace deleted'
+    );
+
+  const move = (ws, at) =>
+    guarded(
+      () => previewMove(ws.id, at),
+      { title: `Move ${ws.name}?`, message: 'The first rule that matches a route wins it: moving this one changes who wins these routes.', confirmLabel: 'Move' },
+      () => moveWorkspaceTo(ws.id, at)
+    );
 
   if (studio.loading && !studio.loaded) return <div className="content"><Loading /></div>;
   if (studio.error) return <div className="content"><ErrorAlert error={studio.error} /></div>;
@@ -254,7 +281,10 @@ export function WorkspacesPage() {
                 ws={ws}
                 table={table}
                 busy={busy || !writable}
-                onMove={(id, delta) => apply(moveWorkspace(table, id, delta))}
+                onMove={(id, delta) => {
+                  const at = workspaces.findIndex((w) => w.id === id) + delta;
+                  if (at >= 0 && at < workspaces.length) move(workspaces.find((w) => w.id === id), at);
+                }}
                 onDelete={remove}
               />
             ))}
@@ -264,7 +294,7 @@ export function WorkspacesPage() {
 
       {!writable && (
         <p className="faint small" style={{ marginTop: 14 }}>
-          The table lives on the global configuration, so editing it needs a super admin. Everything else here is
+          The table decides which rule wins each route, so changing it is an administrator's. Everything else here is
           readable.
         </p>
       )}

@@ -3,6 +3,7 @@ import { EntityCreator } from './create';
 import { EntityEditor } from './editor';
 import { Icon } from './icons';
 import { Badge, Card, Empty, ErrorAlert, Loading, StatusBadge } from './ui';
+import { changesInPlace, isOwn } from '../lib/scope';
 
 
 /**
@@ -68,6 +69,7 @@ export function EntityList({
                 <div className="row" style={{ gap: 8 }}>
                   <span style={{ fontWeight: 500 }}>{e.name}</span>
                   {selectedId === e.id && <Badge kind="info">in use here</Badge>}
+                  {!isOwn(e) && <Badge title="Something outside this workspace uses it, so it is changed by copying it">shared</Badge>}
                 </div>
                 {e.description && <div className="faint small truncate">{e.description}</div>}
               </td>
@@ -86,7 +88,7 @@ export function EntityList({
                 {onOpen && (
                   <button className="btn sm" onClick={() => onOpen(e)}>
                     <Icon name="edit" />
-                    {writable ? 'Edit' : 'View'}
+                    {writable && changesInPlace(e) ? 'Edit' : 'View'}
                   </button>
                 )}
               </td>
@@ -132,8 +134,6 @@ export function EntitySection({
   emptyBody,
   createLabel = 'New',
   writable = true,
-  workspaceId,
-  kind,
   onChanged,
   // optional controlled edition: when a parent passes `editing`/`onEditingChange`, opening the
   // editor is driven from there, so a button outside this section (the WAF page's "Edit rules")
@@ -181,6 +181,7 @@ export function EntitySection({
         entity={editing}
         open={!!editing}
         writable={writable}
+        forkUse={!!editing && editing.id === selectedId}
         onClose={() => setEditing(null)}
         onSaved={changed}
         onDeleted={changed}
@@ -188,8 +189,6 @@ export function EntitySection({
       <EntityCreator
         plural={plural}
         open={creating}
-        workspaceId={workspaceId}
-        kind={kind}
         onClose={() => setCreating(false)}
         onCreated={changed}
       />

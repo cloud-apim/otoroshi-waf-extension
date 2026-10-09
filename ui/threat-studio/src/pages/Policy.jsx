@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { useStudio, useWorkspace } from '../App';
+import { useCan, useStudio, useWorkspace } from '../App';
 import { EntitySection } from '../components/entities';
 import { Icon } from '../components/icons';
 import { Badge, Card, PageHeader, useAsync, useToast } from '../components/ui';
-import { canWrite } from '../lib/bootstrap';
-import { Resources } from '../lib/entities';
-import { PRESET_DEFAULTS, replaceWorkspace, saveTable } from '../lib/workspaces';
+import { useEntities } from '../lib/scope';
+import { PRESET_DEFAULTS, savePreset } from '../lib/workspaces';
 
 const DENYING = new Set(['deny', 'ban']);
 
@@ -44,18 +43,19 @@ function wafReach(policy) {
  * nothing, which is why its dry run is called out rather than left in a form.
  */
 export function PolicyPage() {
-  const { workspace, table } = useWorkspace();
+  const { workspace } = useWorkspace();
   const studio = useStudio();
   const toast = useToast();
-  const writable = canWrite();
+  const writable = useCan()('config:write');
+  const entities = useEntities();
   const preset = { ...PRESET_DEFAULTS, ...(workspace.preset || {}) };
 
   const [editing, setEditing] = useState(null);
-  const policies = useAsync(() => Resources.threatPolicies.list(), []);
+  const policies = useAsync(() => entities('threat-policies').list(), []);
   const current = (policies.data || []).find((p) => p.id === preset.threat_policy);
 
   const use = (id) =>
-    saveTable(replaceWorkspace(table, workspace.id, (w) => ({ ...w, preset: { ...preset, threat_policy: id } })))
+    savePreset(workspace.id, { threat_policy: id })
       .then(() => {
         studio.reload();
         toast.success('Threat policy selected');
@@ -154,8 +154,6 @@ export function PolicyPage() {
         selectedId={preset.threat_policy}
         onSelect={use}
         writable={writable}
-        workspaceId={workspace.id}
-        kind="policy"
         createLabel="New policy"
         emptyTitle="No threat policy"
         emptyBody={<p className="muted">Without one the built-in dry-run policy applies: everything is recorded, nothing is enforced.</p>}

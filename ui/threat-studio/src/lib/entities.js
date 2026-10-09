@@ -1,4 +1,4 @@
-import { api, ENTITIES_API } from './api';
+import { backend } from './backend';
 
 // Threat Studio stores nothing of its own. Every entity it creates is a plain otoroshi entity of the
 // Threat Protection extension, tagged with the metadata below so the studio can find back the ones a
@@ -20,32 +20,29 @@ const written = (p) => {
   return p.finally(() => (lastWrite = Date.now()));
 };
 
+// Every entity of a kind, the gateway's (`entities.*` of `globalOps`, core/ops.js).
 function resource(plural, idField = 'id') {
-  const base = `${ENTITIES_API}/${plural}`;
+  const run = (name, input = {}) => backend.runGlobal(name, { kind: plural, ...input });
   return {
     plural,
     idField,
-    // filters is a map of json path -> value, e.g. { 'metadata.threat_studio_workspace': 'rule_1' }
-    list(filters = {}) {
-      const params = new URLSearchParams({ in_mem: inMem() });
-      Object.entries(filters).forEach(([k, v]) => params.append(`filter.${k}`, String(v)));
-      return api.get(`${base}?${params.toString()}`).then((r) => (Array.isArray(r) ? r : []));
+    list() {
+      return run('entities.list', { query: { in_mem: inMem() } }).then((r) => (Array.isArray(r) ? r : []));
     },
     get(id) {
-      return api.get(`${base}/${encodeURIComponent(id)}?in_mem=${inMem()}`);
+      return run('entities.get', { eid: id, query: { in_mem: inMem() } });
     },
-    template(params = {}) {
-      const qs = new URLSearchParams(params).toString();
-      return api.get(`${base}/_template${qs ? '?' + qs : ''}`);
+    template() {
+      return run('entities.template');
     },
     create(entity) {
-      return written(api.post(base, entity));
+      return written(run('entities.create', { body: entity }));
     },
     update(entity) {
-      return written(api.put(`${base}/${encodeURIComponent(entity[idField])}`, entity));
+      return written(run('entities.update', { eid: entity[idField], body: entity }));
     },
     delete(id) {
-      return written(api.delete(`${base}/${encodeURIComponent(id)}`));
+      return written(run('entities.delete', { eid: id }));
     },
   };
 }
@@ -65,13 +62,11 @@ export const Resources = {
   malwareScanners: resource('malware-scanners'),
   ruleFeeds: resource('rule-feeds'),
   apiContracts: resource('api-contracts'),
-  routes: { list: (filters = {}) => {
-    const params = new URLSearchParams({ in_mem: inMem() });
-    Object.entries(filters).forEach(([k, v]) => params.append(`filter.${k}`, String(v)));
-    return api.get(`/bo/api/proxy/apis/proxy.otoroshi.io/v1/routes?${params.toString()}`).then((r) => (Array.isArray(r) ? r : []));
+  routes: {
+    list: () => backend.runGlobal('routes.list', { query: { in_mem: inMem() } }).then((r) => (Array.isArray(r) ? r : [])),
+    // a JSON patch on one route: the studio only ever touches a metadata entry of its own
+    patch: (id, ops) => written(backend.runGlobal('routes.patch', { rid: id, body: ops })),
   },
-  // a JSON patch on one route: the studio only ever touches a metadata entry of its own
-  patch: (id, ops) => written(api.patch(`/bo/api/proxy/apis/proxy.otoroshi.io/v1/routes/${encodeURIComponent(id)}`, ops)) },
 };
 
 /** The entities of a kind that were created for a workspace. */
