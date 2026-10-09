@@ -6,12 +6,13 @@ import { installBackend, localBackend } from './lib/backend';
 import { installPlatform } from './lib/platform';
 
 loadBootstrap().then(async () => {
-  // the OSS studio: the admin api through the backoffice session, and what a super admin of the gateway sees
+  // the OSS studio: the admin api through the backoffice session, and every page of the gateway, as the rest of
+  // the backoffice shows them: what the signed-in user may do there, the admin api decides with their rights
   installBackend(localBackend());
   installPlatform({
     edition: 'oss',
     experimental: true,
-    permissions: bootstrap.user.superAdmin ? ['admin:read', 'admin'] : [],
+    permissions: ['admin:read', 'admin'],
     links: { admin: bootstrap.adminUrl },
   });
   const { App } = await import('./App');

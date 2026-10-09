@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.waf.studio
 
+import com.cloud.apim.otoroshi.extensions.waf.access.BackofficeAccess
 import com.cloud.apim.otoroshi.extensions.waf.analytics.{PostureReport, RouteGovernance}
 import com.cloud.apim.otoroshi.extensions.waf.api.ApiReport
 import com.cloud.apim.otoroshi.extensions.waf.security.*
@@ -92,8 +93,11 @@ final case class ThreatStudioApiRequest(
     case JsNull      => Json.obj()
     case _           => throw ThreatStudioApiError.badRequest("the body must be a json object")
   }
-  // read when the call is built, so a malformed header is refused before anything runs
-  val actor: Option[StudioActor] = StudioActor.of(req)
+  // a call relayed by the backoffice (`/bo/api/proxy`), which signs the person it is made for
+  val relayed: Boolean = req.headers.get("Otoroshi-BackOffice-User").isDefined
+  // read when the call is built, so a malformed header is refused before anything runs; nobody renames
+  // the person a relayed call is made for
+  val actor: Option[StudioActor] = if (relayed) None else StudioActor.of(req)
   // the version a client read the table at, quoted or not, weak or not
   def ifMatch: Option[String] =
     req.headers.get("If-Match").map(_.trim.stripPrefix("W/").stripPrefix("\"").stripSuffix("\"")).filter(_.nonEmpty)
@@ -115,6 +119,13 @@ final case class ThreatStudioApiRequest(
  *
  * Every read returns the version of the table it was resolved from, and every write can be made
  * conditional on it with `If-Match`; writing the whole table requires it.
+ *
+ * A person signed in to the backoffice uses the studio as the rest of the backoffice: their own rights
+ * decide what they read and change, the extension's backoffice routes are guarded for them the same
+ * way (BackofficeAccess), and what they do is done in their name. What keeps a workspace to what it
+ * owns and saw (the entities of the other workspaces, the shared ones it may not change, the bans it
+ * did not issue) is for the callers acting for the members of a workspace: an edition's service
+ * account.
  */
 class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
 
@@ -223,6 +234,15 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     case Right(Some(u)) => u.rights.superAdmin || u.rights.tenantAdmin(call.currentTenant)
   }
 
+  /** The person signed in to the backoffice, for a call it relays. */
+  private def person(using call: ThreatStudioApiRequest): Option[BackOfficeUser] =
+    if (call.relayed) call.backOfficeUser.toOption.flatten else None
+
+  // a ban holds on every route of the gateway: for a person, it is a super admin's, as on the
+  // extension's own backoffice routes
+  private def requireGatewayWrite()(using call: ThreatStudioApiRequest): Unit =
+    if (person.exists(!_.rights.superAdmin)) throw forbidden("this action requires a super admin")
+
   private def claimedBy(table: PostureReport.Table, route: NgRoute, ruleId: String): Boolean =
     table.governanceOf.get(route.id).flatMap(_.workspaceId).contains(ruleId)
 
@@ -306,11 +326,12 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     val table   = s.resolve(routes)
     val claimed = routes.filter(r => claimedBy(table, r, id))
     val also    = routes.filter(r => table.governanceOf.get(r.id).exists(_.alsoMatched.contains(id)))
-    // with the contract each route names for itself, which the workspace's pages set
+    // with the contract each route names for itself, which the workspace's pages set on the routes the
+    // admin api stores (`stored`): the ones an api or a service descriptor generates are not written here
     def postures(rs: Seq[NgRoute]): JsArray =
       JsArray(rs.filter(readable).map { r =>
         PostureReport.of(r, table.governanceOf.getOrElse(r.id, RouteGovernance.none)).json.as[JsObject] ++
-        Json.obj("contract" -> Json.toJson(r.metadata.get(ContractMeta)))
+        Json.obj("contract" -> Json.toJson(r.metadata.get(ContractMeta)), "stored" -> env.proxyState.rawRoute(r.id).isDefined)
       })
     Json.obj(
       "routes"        -> postures(claimed),
@@ -648,11 +669,12 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
   /**
    * Who is acting, the way the security module names its operators.
    *
-   * Only ever handed to a module's handler, and only once this api has checked the call: an admin of
-   * the tenant for the module routes, a reader of the workspace for its lookups. The rights a handler
-   * checks on its user are the backoffice's, so this one carries all of them.
+   * A person signed in to the backoffice, as they are. Anyone else is named after the call, and is
+   * only ever handed to a module's handler once this api has checked the call: an admin of the tenant
+   * for the module routes, a reader of the workspace for its lookups. The rights a handler checks on
+   * its user are the backoffice's, so this one carries all of them.
    */
-  private def operator(using call: ThreatStudioApiRequest): BackOfficeUser = {
+  private def operator(using call: ThreatStudioApiRequest): BackOfficeUser = person.getOrElse {
     val via = call.apikey.clientId
     BackOfficeUser(
       randomId = IdGenerator.token,
@@ -701,10 +723,12 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
 
   private def ban(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
     requireRespond(sc)
+    requireGatewayWrite()
     val ref      = refOf(form)
     val duration = durationOf(form)
     val reason   = form.select("reason").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse(throw badRequest("'reason' is required"))
-    evidenceOf(sc, ref).flatMap {
+    // a person bans whoever they choose, as on the backoffice; what the workspace saw goes on the ban
+    evidenceOf(sc, ref).map(_.orElse(person.map(_ => Seq.empty))).flatMap {
       case None           => throw forbidden(s"nothing on the routes of this workspace was seen from ${ref.key}")
       case Some(evidence) =>
         security.bans
@@ -729,10 +753,11 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
 
   private def extendBan(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
     requireRespond(sc)
+    requireGatewayWrite()
     val ref      = refOf(form)
     val duration = durationOf(form)
     val current  = banOfWorkspace(sc, ref)
-    if (!current.workspace.contains(sc.rule.id)) throw forbidden("a workspace extends the bans it issued, and only those")
+    if (person.isEmpty && !current.workspace.contains(sc.rule.id)) throw forbidden("a workspace extends the bans it issued, and only those")
     security.bans.extend(ref, duration.seconds, operator.email).map {
       case None       => throw notFound(s"the ban of ${ref.key} has lapsed")
       case Some(next) =>
@@ -743,12 +768,13 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
 
   private def unban(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] = {
     requireRespond(sc)
+    requireGatewayWrite()
     val ref     = refOf(form)
     val current = banOfWorkspace(sc, ref)
     // its own bans, and the ones the fabric issued for what happened on its routes alone
     val ownsIt  = current.workspace.contains(sc.rule.id) ||
       (current.workspace.isEmpty && current.timeline.nonEmpty && current.timeline.forall(_.routeId.exists(sc.claimIds.contains)))
-    if (!ownsIt) throw forbidden("this ban was issued for more than this workspace: lifting it is an administrator's call")
+    if (person.isEmpty && !ownsIt) throw forbidden("this ban was issued for more than this workspace: lifting it is an administrator's call")
     security.bans.unban(ref).map { done =>
       securityAudit(sc, "unban", ref, Json.obj())
       Results.Ok(Json.obj("done" -> done, "ref" -> ref.json))
@@ -812,9 +838,10 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
       .find(r => r.method == method && r.path == s"$modulePrefix$suffix")
       .getOrElse(throw ThreatStudioApiError(500, "internal_error", s"no module route $method $suffix"))
 
-  /** Runs a module's own handler, as the operator the call names. */
+  /** Runs a module's own handler, as the operator the call names: for a person, behind the guard of the backoffice. */
   private def delegate(route: AdminExtensionBackofficeAuthRoute, body: JsValue)(using call: ThreatStudioApiRequest): Future[Result] = {
-    val ctx = new AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute](
+    val handler = if (person.isDefined) BackofficeAccess.guard(route) else route
+    val ctx     = new AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute](
       new org.bigtesting.routd.Route(route.path),
       route,
       route.method,
@@ -825,17 +852,17 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
       case JsNull => None
       case json   => Some(Source.single(ByteString(Json.stringify(json))))
     }
-    route.handle(ctx, call.req, Some(operator), source)
+    handler.handle(ctx, call.req, Some(operator), source)
   }
 
   /**
    * Every module route of the backoffice, served on the admin api under `/api`, for an admin of the
    * tenant: the bans, the allowlist, the feeds, the reputation sources and the rest are the gateway's
-   * and not any one workspace's.
+   * and not any one workspace's. A person reaches them as on the backoffice, guarded the same way.
    */
   private def mirrored(route: AdminExtensionBackofficeAuthRoute): AdminExtensionAdminApiRoute =
     this.route(route.method, "", wantsBody = route.wantsBody, absolute = Some(s"/api${route.path}")) {
-      if (!tenantAdmin) throw forbidden("the routes of the whole gateway need an admin of the tenant")
+      if (person.isEmpty && !tenantAdmin) throw forbidden("the routes of the whole gateway need an admin of the tenant")
       delegate(route, call.body)
     }
 
@@ -929,19 +956,30 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     )
   }
 
+  /** What a workspace sees of an entity: for a person, whatever their rights let them read. */
+  private def sees(g: EntityGraph, ws: String, kind: StudioKind, id: String)(using call: ThreatStudioApiRequest): Boolean =
+    if (person.isDefined) kind.referenceable && g.kindOf(id).contains(kind) && g.entity(id).exists(e => call.canUserReadJson(e))
+    else g.visible(ws, kind, id)
+
+  /** Whether a workspace changes an entity it sees: a person, when their rights let them write it. */
+  private def changes(g: EntityGraph, ws: String, id: String)(using call: ThreatStudioApiRequest): Boolean =
+    person.isDefined || g.owns(ws, id)
+
   private def visibleEntity(g: EntityGraph, sc: Scope, kind: StudioKind, id: String)(using call: ThreatStudioApiRequest): Future[JsObject] =
-    if (!g.visible(sc.rule.id, kind, id)) Future.failed(notFound(s"no such ${kind.plural} '$id'"))
+    if (!sees(g, sc.rule.id, kind, id)) Future.failed(notFound(s"no such ${kind.plural} '$id'"))
     else entitiesOf(kind).get(id).map(_.getOrElse(throw notFound(s"no such ${kind.plural} '$id'")))
 
   private def ownEntity(g: EntityGraph, sc: Scope, kind: StudioKind, id: String)(using call: ThreatStudioApiRequest): Future[JsObject] =
     visibleEntity(g, sc, kind, id).map { e =>
-      if (!g.owns(sc.rule.id, id))
+      if (!changes(g, sc.rule.id, id))
         throw conflict(s"this ${kind.plural} is shared with what is outside the workspace: copy it into the workspace to change it", Json.obj("shared_entity" -> id))
       e
     }
 
   /** What an entity of the workspace names has to be visible to the workspace. */
-  private def checkRefs(g: EntityGraph, sc: Scope, kind: StudioKind, entity: JsObject, current: Option[JsObject]): Unit = {
+  private def checkRefs(g: EntityGraph, sc: Scope, kind: StudioKind, entity: JsObject, current: Option[JsObject])(using
+      call: ThreatStudioApiRequest
+  ): Unit = {
     def changed(field: String): Boolean = current.forall(c => c.select(field).asOpt[JsValue] != entity.select(field).asOpt[JsValue])
     val refs: Seq[(StudioKind, String)] = kind.plural match {
       case "waf-configs" if changed("rulesets")               =>
@@ -950,17 +988,19 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
         entity.select("challenge_provider").asOpt[String].filter(_.nonEmpty).toSeq.map(ChallengeProviders -> _)
       case _                                                  => Seq.empty
     }
-    refs.foreach { case (k, id) => if (!g.visible(sc.rule.id, k, id)) throw notFound(s"no such ${k.plural} '$id'") }
+    refs.foreach { case (k, id) => if (!sees(g, sc.rule.id, k, id)) throw notFound(s"no such ${k.plural} '$id'") }
   }
 
   /** The entities a preset names, when it changes them, have to be visible to the workspace. */
-  private def checkPresetRefs(g: EntityGraph, ws: String, before: CloudApimSecuritySuitePresetConfig, after: CloudApimSecuritySuitePresetConfig): Unit = {
+  private def checkPresetRefs(g: EntityGraph, ws: String, before: CloudApimSecuritySuitePresetConfig, after: CloudApimSecuritySuitePresetConfig)(using
+      call: ThreatStudioApiRequest
+  ): Unit = {
     val b = before.json
     val a = after.json
     StudioKind.referenceable.flatMap(k => k.presetField.map(k -> _)).foreach { case (kind, field) =>
       val ref = a.select(field).asOpt[String].filter(_.nonEmpty)
       if (ref != b.select(field).asOpt[String].filter(_.nonEmpty)) ref.foreach { id =>
-        if (!g.visible(ws, kind, id)) throw notFound(s"no such ${kind.plural} '$id'")
+        if (!sees(g, ws, kind, id)) throw notFound(s"no such ${kind.plural} '$id'")
       }
     }
   }
@@ -999,14 +1039,19 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
       ownEntity(g, sc, kind, id).flatMap { current =>
         val next = SecretSentinel.unmasked(form, current).as[JsObject] ++ Json.obj("id" -> id)
         checkRefs(g, sc, kind, next, Some(current))
-        entitiesOf(kind).update(marked(sc, kind, next)).map(saved => Results.Ok(Json.obj("entity" -> saved, "ownership" -> "workspace")))
+        // what a person changes without the workspace owning it stays whoever's it was
+        val own  = g.owns(sc.rule.id, id)
+        entitiesOf(kind)
+          .update(if (own) marked(sc, kind, next) else next)
+          .map(saved => Results.Ok(Json.obj("entity" -> saved, "ownership" -> (if (own) "workspace" else "shared"))))
       }
     }
 
   private def deleteEntity(sc: Scope, kind: StudioKind, id: String)(using call: ThreatStudioApiRequest): Future[Result] =
     graph(sc).flatMap { g =>
       ownEntity(g, sc, kind, id).flatMap { _ =>
-        if (g.referencersOf(id).nonEmpty) throw conflict(s"this ${kind.plural} is still used", Json.obj("usage" -> g.usage(sc.rule.id, id)))
+        // a person deletes as on the backoffice, where what still names it is theirs to mend
+        if (person.isEmpty && g.referencersOf(id).nonEmpty) throw conflict(s"this ${kind.plural} is still used", Json.obj("usage" -> g.usage(sc.rule.id, id)))
         entitiesOf(kind).delete(id).map(_ => Results.NoContent)
       }
     }
@@ -1051,11 +1096,12 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
       result.body.consumeData.map(bytes => (result.header.status, Try(Json.parse(bytes.utf8String)).getOrElse(JsNull)))
     }
 
-  /** The false positive candidates of the workspace's routes. */
+  /** The false positive candidates of the workspace's routes: a person gets every one, as on the backoffice. */
   private def matchesOf(sc: Scope)(using call: ThreatStudioApiRequest): Future[(Int, JsObject, Seq[JsObject])] = {
     val ids = sc.visibleIds
     delegateJson(moduleRoute("GET", "tuning/_matches"), JsNull).map { case (status, json) =>
-      val mine = (json \ "matches").asOpt[Seq[JsObject]].getOrElse(Seq.empty).filter(m => (m \ "route_id").asOpt[String].exists(ids.contains))
+      val all  = (json \ "matches").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+      val mine = if (person.isDefined) all else all.filter(m => (m \ "route_id").asOpt[String].exists(ids.contains))
       (status, json.asOpt[JsObject].getOrElse(Json.obj()), mine)
     }
   }
@@ -1092,10 +1138,10 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
       g      <- graph(sc)
       sample <- sampleOf(sc, form)
       ref     = configRefOf(form, sample)
-      _       = if (action == "_apply") { if (!g.owns(sc.rule.id, ref)) throw conflict("this waf config is shared: copy it into the workspace to tune it", Json.obj("shared_entity" -> ref)) }
-                else if (!g.visible(sc.rule.id, WafConfigs, ref)) throw notFound(s"no such waf-configs '$ref'")
+      _       = if (action == "_apply") { if (!changes(g, sc.rule.id, ref)) throw conflict("this waf config is shared: copy it into the workspace to tune it", Json.obj("shared_entity" -> ref)) }
+                else if (!sees(g, sc.rule.id, WafConfigs, ref)) throw notFound(s"no such waf-configs '$ref'")
       result <- delegate(moduleRoute("POST", s"tuning/$action"), form ++ Json.obj("config_ref" -> ref))
-      _      <- if (action == "_apply" && result.header.status < 300) markManagedRulesets(sc, ref) else ().vfuture
+      _      <- if (action == "_apply" && result.header.status < 300 && g.owns(sc.rule.id, ref)) markManagedRulesets(sc, ref) else ().vfuture
     } yield result
 
   private def learning(sc: Scope, action: String, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
@@ -1103,15 +1149,15 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
       g      <- graph(sc)
       ref     = configRefOf(form, None)
       // a window counts every route the config runs on: a config shared with others would report on them
-      _       = if (!g.owns(sc.rule.id, ref)) throw conflict("this waf config is shared: copy it into the workspace to learn on it", Json.obj("shared_entity" -> ref))
+      _       = if (!changes(g, sc.rule.id, ref)) throw conflict("this waf config is shared: copy it into the workspace to learn on it", Json.obj("shared_entity" -> ref))
       result <- delegate(moduleRoute("POST", s"learning/$action"), form ++ Json.obj("config_ref" -> ref))
-      _      <- if (action == "_apply" && result.header.status < 300) markManagedRulesets(sc, ref) else ().vfuture
+      _      <- if (action == "_apply" && result.header.status < 300 && g.owns(sc.rule.id, ref)) markManagedRulesets(sc, ref) else ().vfuture
     } yield result
 
   private def compile(sc: Scope, form: JsObject)(using call: ThreatStudioApiRequest): Future[Result] =
     graph(sc).flatMap { g =>
       form.select("rulesets").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.trim.nonEmpty).foreach { id =>
-        if (!g.visible(sc.rule.id, Rulesets, id)) throw notFound(s"no such waf-rulesets '$id'")
+        if (!sees(g, sc.rule.id, Rulesets, id)) throw notFound(s"no such waf-rulesets '$id'")
       }
       delegate(moduleRoute("POST", "utils/_compile"), form)
     }
@@ -1358,7 +1404,7 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
         for {
           g        <- graph(sc)
           readable <- entitiesOf(kind).all()
-        } yield Results.Ok(JsArray(readable.filter(e => g.visible(sc.rule.id, kind, EntityGraph.idOf(e))).map(e => itemJson(g, sc, e))))
+        } yield Results.Ok(JsArray(readable.filter(e => sees(g, sc.rule.id, kind, EntityGraph.idOf(e))).map(e => itemJson(g, sc, e))))
       }
     },
     route("GET", "/workspaces/:id/entities/:kind/_template") {
@@ -1419,7 +1465,7 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
           g             <- graph(sc)
           (status, json) <- delegateJson(moduleRoute("GET", "learning/_running"), JsNull)
         } yield {
-          val running = (json \ "running").asOpt[Seq[String]].getOrElse(Seq.empty).filter(id => g.visible(sc.rule.id, WafConfigs, id))
+          val running = (json \ "running").asOpt[Seq[String]].getOrElse(Seq.empty).filter(id => sees(g, sc.rule.id, WafConfigs, id))
           Results.Status(status)(json.asOpt[JsObject].getOrElse(Json.obj()) ++ Json.obj("running" -> running))
         }
       }

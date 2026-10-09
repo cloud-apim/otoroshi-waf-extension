@@ -140,8 +140,10 @@ final class EntityGraph(
    * confidential, so of the shared ones a workspace sees only those it already uses.
    */
   def visible(ws: String, kind: StudioKind, id: String): Boolean =
-    kind.referenceable && byId.get(id).exists(_._1 == kind) &&
+    kind.referenceable && kindOf(id).contains(kind) &&
     (owns(ws, id) || (ownerOf(id).isEmpty && (kind.plural != "api-contracts" || usedBy(ws, id))))
+
+  def kindOf(id: String): Option[StudioKind] = byId.get(id).map(_._1)
 
   def entity(id: String): Option[JsObject] = byId.get(id).map(_._2)
 

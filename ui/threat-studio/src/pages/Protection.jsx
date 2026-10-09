@@ -38,7 +38,11 @@ import {
 function RouteContracts({ workspace, contracts, writable }) {
   const toast = useToast();
   const claims = (workspace.claims || []).length;
-  const routes = useAsync(() => loadWorkspaceRoutes(workspace.id).then((r) => (r && r.routes) || []), [workspace.id, claims]);
+  // the routes the admin api stores: the ones an api or a service descriptor generates take no contract here
+  const routes = useAsync(
+    () => loadWorkspaceRoutes(workspace.id).then((r) => ((r && r.routes) || []).filter((route) => route.stored !== false)),
+    [workspace.id, claims]
+  );
   const [busy, setBusy] = useState(null);
 
   const link = (route, contractId) => {
