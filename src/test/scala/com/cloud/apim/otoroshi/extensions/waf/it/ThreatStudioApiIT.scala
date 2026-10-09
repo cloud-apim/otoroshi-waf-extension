@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.waf.it
 
 import com.cloud.apim.otoroshi.extensions.waf.it.StudioApiClient.*
 import com.cloud.apim.otoroshi.extensions.waf.studio.ThreatStudio
+import otoroshi.models.{EntityLocation, TeamId, TenantId}
 import otoroshi.next.models.NgRoute
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.CloudApimWafExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.waf.plugins.*
@@ -206,6 +207,50 @@ class ThreatStudioApiIT extends munit.FunSuite {
     assertEquals(send(teamA, "DELETE", "/workspaces/ws_mixed", JsNull).status, 403)
     assertEquals(send(teamA, "DELETE", "/workspaces/ws_a", JsNull).status, 204)
     assert(!ruleIds().contains("ws_a"))
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // another tenant
+  // ---------------------------------------------------------------------------------------------
+
+  test("an admin of another tenant makes a workspace there, and what the workspace owns stays in that tenant") {
+    // the service account of a SaaS: it administers the tenant of its customers, and nothing else
+    val tenant   = "studio-api-customers"
+    val key      = Key("studio-api-customers-admin")
+    val inTenant = "Otoroshi-Tenant" -> tenant
+    val made     = Gateway.post("/apis/organize.otoroshi.io/v1/tenants", Json.obj("id" -> tenant, "name" -> tenant, "description" -> "", "metadata" -> Json.obj()))
+    assert(made.status < 300, made.body)
+    createKey(key, Json.arr(Json.obj("tenant" -> s"$tenant:rw", "teams" -> Json.arr("*:rw"))))
+    val route = Gateway.createRoute("studio-api-c1", backend.port, Seq.empty, tags = Seq("studio-api-c"), location = EntityLocation(TenantId(tenant), Seq(TeamId.all)))
+    try {
+      val created = send(key, "POST", "/workspaces", Json.obj("id" -> "ws_customer", "name" -> "customer", "targets" -> Json.arr(target("studio-api-c"))), inTenant)
+      assertEquals(created.status, 201, created.body)
+      assertEquals(claims(created.json.as[JsObject]), Set(routeId("studio-api-c1")))
+
+      // an entity of the workspace: in the tenant of the caller, not in the one of the template, whether it
+      // is sent without a location, or as the studio front sends it, from the template
+      val template = Gateway.await(as(key, "/workspaces/ws_customer/entities/waf-configs/_template", inTenant).get())
+      assertEquals(template.status, 200, template.body)
+      assertEquals((template.json \ "_loc" \ "tenant").as[String], tenant)
+      val fromTemplate = send(key, "POST", "/workspaces/ws_customer/entities/waf-configs", template.json.as[JsObject] ++ Json.obj("name" -> "from the template"), inTenant)
+      assertEquals(fromTemplate.status, 201, fromTemplate.body)
+      val config = send(key, "POST", "/workspaces/ws_customer/entities/waf-configs", Json.obj("name" -> "customer config"), inTenant)
+      assertEquals(config.status, 201, config.body)
+      assertEquals((config.json \ "entity" \ "_loc" \ "tenant").as[String], tenant)
+      val id = (config.json \ "entity" \ "id").as[String]
+      val listed = Gateway.await(as(key, "/workspaces/ws_customer/entities/waf-configs", inTenant).get())
+      assertEquals(listed.status, 200, listed.body)
+      assert(listed.body.contains(id), listed.body)
+      assertEquals(send(key, "PUT", s"/workspaces/ws_customer/entities/waf-configs/$id", (config.json \ "entity").as[JsObject] ++ Json.obj("name" -> "renamed"), inTenant).status, 200)
+      assertEquals(send(key, "DELETE", s"/workspaces/ws_customer/entities/waf-configs/$id", JsNull, inTenant).status, 204)
+      val other = (fromTemplate.json \ "entity" \ "id").as[String]
+      assertEquals(send(key, "DELETE", s"/workspaces/ws_customer/entities/waf-configs/$other", JsNull, inTenant).status, 204)
+      assertEquals(send(key, "DELETE", "/workspaces/ws_customer", JsNull, inTenant).status, 204)
+    } finally {
+      Gateway.deleteRoute(route)
+      deleteKey(key)
+      Gateway.delete(s"/apis/organize.otoroshi.io/v1/tenants/$tenant")
+    }
   }
 
   // ---------------------------------------------------------------------------------------------

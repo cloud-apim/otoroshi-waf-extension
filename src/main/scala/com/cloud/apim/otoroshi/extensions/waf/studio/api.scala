@@ -1006,8 +1006,9 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
   }
 
   // where the entities a caller creates go: for a caller limited to some teams, the teams it may write,
-  // so it still sees what it created; anyone else keeps the location of the template
-  private def locationFor(using call: ThreatStudioApiRequest): Option[JsObject] = call.backOfficeUser match {
+  // so it still sees what it created; anyone else keeps the location it starts from (the template's, or
+  // the one of the entity it copies), in the tenant it calls for, as the admin api places what it creates
+  private def locationFor(from: Option[JsObject])(using call: ThreatStudioApiRequest): JsObject = call.backOfficeUser match {
     case Right(Some(user)) if !(user.rights.superAdmin || user.rights.tenantAdmin(call.currentTenant)) =>
       val tenant = call.currentTenant.value
       val teams  = user.rights.rights
@@ -1016,8 +1017,8 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
         .filter(t => t.canWrite && !t.value.startsWith("*"))
         .map(_.value)
         .distinct
-      Some(Json.obj("tenant" -> tenant, "teams" -> teams))
-    case _ => None
+      Json.obj("tenant" -> tenant, "teams" -> teams)
+    case _ => from.getOrElse(Json.obj()) ++ Json.obj("tenant" -> call.currentTenant.value)
   }
 
   private def marked(sc: Scope, kind: StudioKind, entity: JsObject): JsObject =
@@ -1030,7 +1031,7 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     graph(sc).flatMap { g =>
       val seeded = entitiesOf(kind).template() ++ (form - "id")
       checkRefs(g, sc, kind, seeded, None)
-      val located = if (form.value.contains("_loc")) seeded else locationFor.fold(seeded)(loc => seeded ++ Json.obj("_loc" -> loc))
+      val located = if (form.value.contains("_loc")) seeded else seeded ++ Json.obj("_loc" -> locationFor(seeded.select("_loc").asOpt[JsObject]))
       entitiesOf(kind).create(marked(sc, kind, located)).map(saved => Results.Created(Json.obj("entity" -> saved, "ownership" -> "workspace")))
     }
 
@@ -1070,7 +1071,7 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
           "id"       -> EntityGraph.idOf(template),
           "name"     -> name,
           "metadata" -> Json.obj(),
-          "_loc"     -> locationFor.orElse(source.select("_loc").asOpt[JsObject]).getOrElse(Json.obj())
+          "_loc"     -> locationFor(source.select("_loc").asOpt[JsObject])
         )
         entitiesOf(kind).create(marked(sc, kind, copy)).flatMap { saved =>
           val newId = EntityGraph.idOf(saved)
@@ -1409,7 +1410,11 @@ class ThreatStudioApi(env: Env, ext: CloudApimWafExtension) {
     },
     route("GET", "/workspaces/:id/entities/:kind/_template") {
       val kind = kindOf(call.param("kind"))
-      scope(call.param("id")).map(sc => Results.Ok(marked(sc, kind, entitiesOf(kind).template())))
+      // located where the caller would create it: what the studio front sends back as it is
+      scope(call.param("id")).map { sc =>
+        val template = entitiesOf(kind).template()
+        Results.Ok(marked(sc, kind, template ++ Json.obj("_loc" -> locationFor(template.select("_loc").asOpt[JsObject]))))
+      }
     },
     route("POST", "/workspaces/:id/entities/:kind", wantsBody = true) {
       val kind = kindOf(call.param("kind"))
