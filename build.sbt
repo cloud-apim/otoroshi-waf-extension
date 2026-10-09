@@ -50,7 +50,7 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       // 18.0.0-dev is the locally published otoroshi, for the extensible analytics projections that
       // OPS-1 needs. back to a released version once they ship.
-      "fr.maif" %% "otoroshi" % "18.0.0-preview9" % "provided",
+      "fr.maif" %% "otoroshi" % "18.0.0-rc1" % "provided",
       "com.cloud-apim" %% "seclang-engine" % "2.5.1" excludeAll (all: _*),
       "com.cloud-apim" %% "seclang-engine-coreruleset" % "2.5.1" excludeAll (all: _*),
       munit % Test,
