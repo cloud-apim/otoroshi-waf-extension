@@ -282,9 +282,23 @@ entity.
 
 ## Permissions
 
-Reading needs a backoffice session. **Editing the table needs a super admin**, because the table
-lives on the global configuration: that is the danger zone by another name. Everything else — the
-entities, the bans, the allowlist — follows the usual tenant and team rights of the admin API.
+The studio goes through the backoffice session, with the rights of the person signed in: every page
+is shown to everyone, and the admin API decides what each person may actually do there.
+
+- **Reading** needs a backoffice session. The routes you may not read are left out of what the
+  studio lists, and counted.
+- **The table** is written where you may write what the change reaches: every route whose workspace
+  or protection it changes, and every route the rules it edits claim. A change that reaches no route
+  yet — a rule that claims nothing — needs an admin of the tenant, since whatever route comes to match
+  it later gets what was written. A workspace whose routes you cannot all write is read-only to you.
+- **Entities** follow the usual tenant and team rights of the admin API.
+- **What holds on every route of the gateway, or has it reach an address, needs a super admin**:
+  banning, extending and lifting a ban, the allowlist, forgetting a score, applying an exclusion,
+  running a learning window, refreshing or promoting a feed, testing an alert or a scanner, and
+  fetching a contract from a URL. What only computes from what it is sent — compiling rules,
+  proposing an exclusion, checking a contract — stays open to anyone signed in.
+
+What you do is recorded in your name, on the bans and in the audit.
 
 ## Threat Studio Enterprise
 
