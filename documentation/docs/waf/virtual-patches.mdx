@@ -1,0 +1,123 @@
+---
+sidebar_position: 10
+title: Virtual patches
+description: Rulesets that refuse what one vulnerability needs, in front of a backend not updated yet.
+---
+
+# Virtual patches
+
+A virtual patch is a ruleset that refuses the requests a known vulnerability needs, in front of a
+backend that is not updated yet. It buys the time an update takes; it never replaces the update.
+
+[Rule feeds](./feeds.mdx) are how virtual patches will be delivered. Until a feed is plugged in, the
+patches on this page are added by hand as a [ruleset](./rulesets.mdx): each block below is one entry
+of its `rules` (in Threat Studio, **WAF rulesets → New ruleset**, then one **Add a rule** per block;
+through the admin API, one string per block). List the ruleset in the WAF configuration of the
+routes it protects, first, so it decides before the CRS spends time on a body it is going to refuse.
+The configuration still needs `SecRuleEngine On`, which a CRS baseline already carries.
+
+Virtual patch ids sit in the `9900000` band: outside the CRS's six digits, and outside the
+`1000`–`99999` band left to your own rules.
+
+## PHP2Shell (CVE-2026-109618, CVE-2026-109619)
+
+Two unauthenticated remote code executions in the PHP engine itself, disclosed on 21 October 2026.
+They are reached while PHP parses the request body, before any application code runs, so every PHP
+application is exposed whatever its own code: WordPress, Drupal, Magento, Laravel. Every PHP
+version since 5.4 is affected, under mod_php, PHP-FPM, php-cgi, FrankenPHP and LiteSpeed.
+
+**The fix is PHP 8.5.12, 8.4.27, 8.3.36 or 8.2.35.** See the
+[PHP announcement](https://www.php.net/archive/2026.php) and its advisories,
+[GHSA-w8hw-w9fx-j79w](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w) and
+[GHSA-6wmf-4rv5-p3rp](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp).
+
+### What the patch refuses
+
+| Rule | Refuses | Why |
+|---|---|---|
+| `9900001` | A multipart body carrying the `PHP_SESSION_UPLOAD_PROGRESS` field | Session upload progress is the trigger of the confirmed session paths |
+| `9900002` | A field name nested 16 levels deep or more (`a[x][x]…`), in the query, a form or a file field | Nested names multiply the memory PHP spends parsing them |
+| `9900003` | The same nesting in a multipart field name | Same reason, in the body PHP parses before anything else |
+
+```text title="php2shell.conf"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)multipart" \
+    "id:9900001,phase:2,deny,status:403,log,severity:'CRITICAL',\
+    msg:'PHP2Shell: session upload progress field in a multipart body',\
+    tag:'CVE-2026-109618',tag:'CVE-2026-109619',tag:'virtual-patch',chain"
+    SecRule REQUEST_BODY "@rx (?i)php_session_upload_progress" "t:none"
+
+SecRule ARGS_NAMES|FILES_NAMES "@rx (?:\[[^\]]*\]){16}" \
+    "id:9900002,phase:2,deny,status:403,log,severity:'CRITICAL',\
+    msg:'PHP2Shell: field name nested 16 levels deep',\
+    tag:'CVE-2026-109618',tag:'CVE-2026-109619',tag:'virtual-patch'"
+
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)multipart" \
+    "id:9900003,phase:2,deny,status:403,log,severity:'CRITICAL',\
+    msg:'PHP2Shell: multipart field name nested 16 levels deep',\
+    tag:'CVE-2026-109618',tag:'CVE-2026-109619',tag:'virtual-patch',chain"
+    SecRule REQUEST_BODY "@rx (?i)content-disposition[^\r\n]*?\bname\s*=\s*[\x22\x27]?[^\x22\x27\r\n;\[]*(?:\[[^\]\r\n]*\]){16}" "t:none"
+```
+
+The multipart rules read the raw body rather than the parsed fields. PHP reads a field name
+quoted, single-quoted or bare, followed by other parameters or not; on the raw body, the rule does
+not depend on the WAF parsing every one of those writings into the same field. The field is refused
+however its name is written, in any letter case, and whatever the case of the `Content-Type`.
+
+### Do not let the field escape the inspection window
+
+The engine only sees the first `input_body_limit` bytes of a body (2 MB by default). A field placed
+after that much padding is never seen, and with the default `oversize_body_action` the body is
+forwarded anyway. On the WAF configuration of PHP routes, refuse what cannot be inspected whole:
+
+```json
+{
+  "input_body_limit": 33554432,
+  "oversize_body_action": "reject"
+}
+```
+
+Match `input_body_limit` to the `post_max_size` PHP is told to keep: the advisory recommends `8M`
+for an application that takes no uploads and `32M` for one that does. A body PHP would refuse anyway
+loses nothing by being refused earlier.
+
+### Optional: multipart only where uploads happen
+
+If the application takes uploads on a few known paths, refusing multipart everywhere else closes
+both CVEs' multipart paths on the rest of the site, padded or not. Replace the paths with yours:
+
+```text title="php2shell-uploads.conf"
+SecRule REQUEST_HEADERS:Content-Type "@rx (?i)multipart" \
+    "id:9900004,phase:1,deny,status:403,log,\
+    msg:'PHP2Shell: multipart body outside the upload paths',\
+    tag:'CVE-2026-109618',tag:'CVE-2026-109619',tag:'virtual-patch',chain"
+    SecRule REQUEST_FILENAME "!@rx ^/(?:wp-admin/async-upload\.php|wp-admin/media-new\.php)$"
+```
+
+### What can go wrong
+
+- **An application that tracks upload progress on purpose** gets its uploads refused by `9900001`.
+  Few do (browsers report upload progress themselves), and those that do get it back once PHP is
+  updated. Until then, take their upload path out of the rule, with an entry placed before the patch:
+  `SecRule REQUEST_FILENAME "@streq /upload.php" "id:9900100,phase:1,pass,nolog,ctl:ruleRemoveById=9900001"`.
+- **A renamed field.** PHP's `session.upload_progress.name` changes the field's name. If it is set,
+  put that name in `9900001`.
+- **Deep form builders.** Sixteen levels is well past what forms use. If one goes deeper, raise the
+  `{16}` of `9900002` and `9900003`.
+
+### What it does not cover
+
+A WAF only sees requests, and some paths to these bugs are not in a request:
+
+- on PHP 8.5, the fatal error backtrace path, which needs no particular body;
+- per-request settings (`php_value`, `php_flag`, `PHP_VALUE`) that raise a warning before the
+  request starts;
+- traffic that reaches PHP without going through the gateway.
+
+Update PHP. Until then, the PHP advisory's own mitigations go with this patch, in `php.ini` or the
+FPM pool (never `ini_set()` or `.user.ini`), followed by a restart of every worker:
+
+```ini
+session.upload_progress.enabled = 0
+fatal_error_backtraces = 0   ; PHP 8.5 only
+post_max_size = 8M           ; 32M if the application takes uploads
+```
