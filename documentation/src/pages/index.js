@@ -127,7 +127,7 @@ const layers = [
 
 const quickstart = `# grab otoroshi and the extension
 curl -L -o otoroshi.jar \\
-  'https://github.com/MAIF/otoroshi/releases/download/v18.0.0-preview6/otoroshi.jar'
+  'https://github.com/MAIF/otoroshi/releases/download/v18.0.0/otoroshi.jar'
 # the threat protection suite jar, from github.com/cloud-apim/otoroshi-waf-extension/releases/latest
 curl -L -o waf.jar \\
   '.../releases/download/<version>/otoroshi-waf-extension_3-<version>.jar'
